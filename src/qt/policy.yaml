@@ -149,3 +149,32 @@ macro:                             # S01-S03; part ג recommendations where the 
     growth+_inflation-: [equities, corporate_bonds, cash]
     growth-_inflation-: [long_govt_bonds, cash]
     growth-_inflation+: [inflation_linked_govt_bonds, commodities, cash]
+
+sector_scorecard:                  # S04-S05; part ג recommendations where the course is silent
+  universe: [XLK, XLY, XLI, XLE, XLRE, XLC, XLF, XLV, XLU, XLB, XLP]   # S04-R9
+  benchmark: SPY
+  type:                            # D-S04-1 (c): 092 + industrials cyclical; sub-industry overrides allowed (A&D)
+    XLRE: cyclical
+    XLF: cyclical
+    XLY: cyclical
+    XLB: cyclical
+    XLI: cyclical
+    XLC: cyclical
+    XLE: cyclical
+    XLK: growth
+    XLV: defensive
+    XLU: defensive
+    XLP: defensive
+  rs_periods: {1w: 5, 1m: 21, 3m: 63, 6m: 126, 1y: 252}   # S04-R11, trading days
+  rs_ma: {qma: 63, yma: 252}       # S04-R14: confirmation only
+  cycle_table:                     # S04-R5 (069): ++ / + / - per phase; unlisted = no sign
+    recovery: {XLI: "++", XLB: "++", XLRE: "+", XLF: "+", XLY: "+", XLK: "+", XLU: "-", XLP: "-"}
+    expansion: {XLY: "+", XLI: "+", XLRE: "+", XLC: "+"}
+    slowdown: {XLY: "-", XLB: "-", XLP: "+", XLU: "+", XLC: "+", XLV: "+"}
+    recession: {XLV: "+", XLU: "+", XLP: "+"}
+  macro_points: {"++": 9, "+": 6, "": 3, "-": 0}          # D-S04-6 (c), approved 20.10 (mapping not from course)
+  stance_shift: 3                  # S04-R7 tilt: hot => cyclicals +3 / defensives -3; cold the reverse (not from course: the size)
+  buckets: {long: 3, short: 3}     # D-S04-3
+  industry_min_stocks: 15          # D-S05-2
+  similar_band_pp: 3.0             # same band as S06 (D-S06-9)
+  ism_trend_months: 3              # D-S05-5

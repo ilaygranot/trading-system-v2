@@ -24,9 +24,10 @@
 | `qt/timing.py` | Six of the seven traffic-light sources from daily bars, high-interval veto, extended price, candidate levels (levels color comes from the agent, `levels_pending` until then) | S09, decision 16 |
 | `qt/macro.py` | Stage 1: HY spread stress (MA250, distance, yearly change), 10Y−3M curve, commodities, real rate. Stage 2: 0–10 scoring per indicator, activity scale with zones and grey bands, ISM states, inflation vs 2–3%, labor, separate Fed scale, compass now, stance. Stage 3: bear line, breadth flags, quadrant ⇒ assets | S01–S03, decisions 14, 15, D-S02-9 |
 | `qt/data/macro_feed.py` | FRED series with ALFRED vintages; manual monthly file for ISM and NFIB | architecture 9 |
+| `qt/sectors.py` | Sector scorecard: RS vs SPY over 5 periods ⇒ rank, expected-growth rank, macro points 0/3/6/9 from the cycle table tilted by the stance, total ⇒ 3 long / 3 short; confirmations as flags (cycle pairs, three horizons, expectation change); industries vs sector, ISM streaks | S04–S05, D-S04-2/3/6 |
 | `qt/screening.py` | EG1/EG2 with the ±99 code, EPS 0 ⇒ −0.1, cleaned group averages + median, rounded-up SG1 gate, universe gates with rule ids, profiles L1–L8 + tags, ranking, short profiles, guidance ≥ 8%, loss-to-profit, R34/J6 conflict flag | S06, decisions 11–13 |
 
-Not yet: sectors and industries (S04–S05), the agents and Critic, approval queue, scheduler.
+Not yet: deep dive and watchlist (S07–S08), daily position management, the agents and Critic, approval queue, scheduler.
 
 ## Run
 

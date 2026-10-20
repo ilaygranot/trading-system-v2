@@ -81,6 +81,8 @@ class Context:
     gross_limit: float | None = None     # raised only by Ilay (1.5 / 1.8)
     macro_bias: str | None = None        # from qt.macro.stance (S02-R47)
     market_trend: Literal["up", "down", "sideways"] | None = None   # the index trend itself (S03-R13)
+    sector_buckets: dict[str, str] = field(default_factory=dict)      # ETF -> long/neutral/short (S04 scorecard)
+    sector_flags: dict[str, list[str]] = field(default_factory=dict)  # ETF -> e.g. ["expectations_weakening"]
 
 
 # ---------- individual checks ----------
@@ -145,6 +147,21 @@ def check_macro_alignment(p: TradeProposal, c: Context) -> list[Finding]:
             out.append(violation("S02-R3", "short against a bullish macro stance needs well-founded reasons"))
     elif p.direction == "long" and c.macro_bias == "bearish":
         out.append(flag("S02-R47", "long in a bearish ('cold') stance: prefer defensive sectors"))
+    return out
+
+
+def check_sector_alignment(p: TradeProposal, c: Context) -> list[Finding]:
+    """S04-R19: no forced long in a weak sector; a short in a strong sector only in specific scenarios.
+    S04-R34: a long where sector expectations are weakening needs a reason (AT-S04-7)."""
+    b = c.sector_buckets.get(p.sector)
+    out = []
+    if p.direction == "long" and b == "short":
+        out.append(violation("S04-R19", f"long against the sector: {p.sector} is in the short bucket; explain why "
+                             "the opportunity is strong enough"))
+    elif p.direction == "short" and b == "long":
+        out.append(flag("S04-R19", f"short in a strong sector ({p.sector}): only in a specific scenario"))
+    if p.direction == "long" and "expectations_weakening" in c.sector_flags.get(p.sector, []):
+        out.append(violation("S04-R34", f"{p.sector} growth expectations weakened vs last month: stay away or explain"))
     return out
 
 
@@ -330,7 +347,7 @@ def check_conduct(p: TradeProposal, c: Context) -> list[Finding]:
 
 
 ENTRY_CHECKS = (check_readiness, check_portfolio_state, check_process, check_scope, check_macro_alignment,
-                check_definition, check_traffic_light,
+                check_sector_alignment, check_definition, check_traffic_light,
                 check_floors, check_stop, check_reward_risk, check_horizon, check_sizing, check_exposure,
                 check_options, check_sectors, check_conduct)
 
