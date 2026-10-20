@@ -1,4 +1,5 @@
-"""Command line: `qt check trade.yaml`, `qt macro stance.yaml`, `qt rules`, `qt replay`."""
+"""Command line: `qt check trade.yaml`, `qt macro stance.yaml`, `qt rules`, `qt replay`,
+`qt run daily|resume|status`."""
 from __future__ import annotations
 
 import argparse
@@ -73,6 +74,40 @@ def _replay(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run(args: argparse.Namespace) -> int:
+    from datetime import date
+
+    from qt.daily import PIPELINES, load_portfolio
+    from qt.data.providers import FMP, Yahoo
+    from qt.data.store import Store
+    from qt.db import DB
+    from qt.runs import AlreadyRunning, Runner
+
+    db = DB(args.db) if args.db else DB()
+    if db.url == ":memory:" and args.what != "status":
+        print("set QT_DATABASE_URL (or --db) so the run can be resumed")
+    services = {}
+    if args.what in ("daily", "resume"):
+        store = Store(db)
+        services = {"prices": Yahoo(store), "prices_fallback": FMP(store),
+                    "portfolio": load_portfolio(args.portfolio)}
+    runner = Runner(db, PIPELINES, services)
+    try:
+        if args.what == "status":
+            for r in runner.status(args.limit):
+                print(f"{r['id']}  {r['status']}  {r['error'] or ''}")
+                for s in r["steps"]:
+                    print(f"   {s['step']:<8} {s['subject'] or '-':<8} {s['status']:<7} x{s['attempts']} {s['error'] or ''}")
+            return 0
+        rid = runner.resume(args.run_id) if args.what == "resume" else \
+            runner.start(args.what, date.fromisoformat(args.as_of) if args.as_of else date.today())
+    except AlreadyRunning as e:
+        print(f"already running: {e}")
+        return 0
+    print(rid)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="qt")
     sub = ap.add_subparsers(required=True)
@@ -85,6 +120,14 @@ def main(argv: list[str] | None = None) -> int:
     m.set_defaults(fn=_macro)
     sub.add_parser("rules", help="list hard rules and playbook version").set_defaults(fn=_rules)
     sub.add_parser("replay", help="replay the lecturer's trades").set_defaults(fn=_replay)
+    r = sub.add_parser("run", help="scheduled runs: daily | resume <run-id> | status")
+    r.add_argument("what", choices=["daily", "resume", "status"])
+    r.add_argument("run_id", nargs="?")
+    r.add_argument("--as-of")
+    r.add_argument("--portfolio", default="portfolio.yaml", help="cash, peak equity and open positions (YAML)")
+    r.add_argument("--db", help="database URL or SQLite path (default QT_DATABASE_URL)")
+    r.add_argument("--limit", type=int, default=10)
+    r.set_defaults(fn=_run)
     args = ap.parse_args(argv)
     return args.fn(args)
 

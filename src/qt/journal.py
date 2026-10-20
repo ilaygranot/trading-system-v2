@@ -1,4 +1,4 @@
-"""Decision journal (architecture 7.1). Append-only SQLite.
+"""Decision journal (architecture 7.1). Append-only, on Postgres or SQLite (qt.db).
 
 Every decision, by code or agent, records: what was decided, on what basis (fact sheet, playbook and
 prompt versions, model), why (reasoning, cited rules, confidence, deviations), what the Critic said,
@@ -7,55 +7,71 @@ what Ilay decided, and a measurable prediction with a check date. Outcomes are w
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from qt.db import DB, dumps
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS decisions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  created_at TEXT NOT NULL,
+  id {ID},
+  created_at {TS} NOT NULL,
   decided_by TEXT NOT NULL,              -- code | agent:A6 | ilay
   card_id TEXT,                          -- decision card (DC-xx) or rule id
   subject TEXT NOT NULL,                 -- e.g. BA, macro, portfolio
   action TEXT,                           -- enter | add | exit | reduce | classify | ...
   choice TEXT NOT NULL,
-  options_considered TEXT,               -- JSON list
+  options_considered {JSON},
   status TEXT,                           -- engine verdict status
-  findings TEXT,                         -- JSON list of findings
-  facts TEXT,                            -- JSON fact sheet snapshot
+  findings {JSON},
+  facts {JSON},                          -- fact sheet snapshot
   reasoning TEXT,
-  cited_rules TEXT,                      -- JSON list
+  cited_rules {JSON},
   confidence TEXT,                       -- low | medium | high
-  deviations TEXT,                       -- JSON list of overrides (deviation from default)
+  deviations {JSON},                     -- overrides (deviation from default)
   playbook_version TEXT NOT NULL,
   prompt_version TEXT,
   model TEXT,
   critic TEXT,
   prediction TEXT,                       -- measurable statement
-  check_on TEXT                          -- ISO date to measure the prediction
+  check_on TEXT,                         -- ISO date to measure the prediction
+  run_id TEXT                            -- the run that made it (runtime plan 5)
 );
 CREATE TABLE IF NOT EXISTS ilay_reviews (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  decision_id INTEGER NOT NULL REFERENCES decisions(id),
-  created_at TEXT NOT NULL,
+  id {ID},
+  decision_id BIGINT NOT NULL REFERENCES decisions(id),
+  created_at {TS} NOT NULL,
   verdict TEXT NOT NULL CHECK (verdict IN ('approved', 'modified', 'rejected')),
   note TEXT
 );
 CREATE TABLE IF NOT EXISTS outcomes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  decision_id INTEGER NOT NULL REFERENCES decisions(id),
-  measured_at TEXT NOT NULL,
-  result TEXT NOT NULL,                  -- JSON: hit/miss, R multiple, MFE/MAE, ...
+  id {ID},
+  decision_id BIGINT NOT NULL REFERENCES decisions(id),
+  measured_at {TS} NOT NULL,
+  result {JSON} NOT NULL,                -- hit/miss, R multiple, MFE/MAE, ...
   correct INTEGER                        -- 1 / 0 / NULL (undetermined)
 );
+"""
+
+APPEND_ONLY = {
+    "sqlite": """
 CREATE TRIGGER IF NOT EXISTS decisions_no_update BEFORE UPDATE ON decisions
 BEGIN SELECT RAISE(ABORT, 'journal is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS decisions_no_delete BEFORE DELETE ON decisions
 BEGIN SELECT RAISE(ABORT, 'journal is append-only'); END;
-"""
+""",
+    "postgres": """
+CREATE OR REPLACE FUNCTION qt_append_only() RETURNS trigger AS $$
+BEGIN RAISE EXCEPTION 'journal is append-only'; END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS decisions_append_only ON decisions;
+CREATE TRIGGER decisions_append_only BEFORE UPDATE OR DELETE ON decisions
+FOR EACH ROW EXECUTE FUNCTION qt_append_only();
+""",
+}
+
+JSON_COLS = ("options_considered", "findings", "facts", "cited_rules", "deviations")
 
 
 @dataclass
@@ -86,52 +102,52 @@ def _now() -> str:
 
 
 class Journal:
-    def __init__(self, path: str | Path = ":memory:"):
-        self.db = sqlite3.connect(str(path))
-        self.db.row_factory = sqlite3.Row
-        self.db.executescript(SCHEMA)
+    """Append-only on both backends: `db` is a qt.db.DB, a URL or a SQLite path (default in-memory)."""
 
-    def record(self, d: Decision) -> int:
+    def __init__(self, db: DB | str | Path | None = ":memory:"):
+        self.db = db if isinstance(db, DB) else DB(db)
+        self.db.ddl(SCHEMA)
+        self.db.ddl(APPEND_ONLY[self.db.dialect])
+
+    def record(self, d: Decision, run_id: str | None = None) -> int:
         row = dict(
             created_at=_now(), decided_by=d.decided_by, card_id=d.card_id, subject=d.subject, action=d.action,
-            choice=d.choice, options_considered=json.dumps(d.options_considered, ensure_ascii=False),
-            status=d.status, findings=json.dumps(d.findings, ensure_ascii=False, default=str),
-            facts=json.dumps(d.facts, ensure_ascii=False, default=str), reasoning=d.reasoning,
-            cited_rules=json.dumps(d.cited_rules), confidence=d.confidence,
-            deviations=json.dumps(d.deviations, ensure_ascii=False, default=str),
+            choice=d.choice, options_considered=dumps(d.options_considered), status=d.status,
+            findings=dumps(d.findings), facts=dumps(d.facts), reasoning=d.reasoning,
+            cited_rules=dumps(d.cited_rules), confidence=d.confidence, deviations=dumps(d.deviations),
             playbook_version=d.playbook_version, prompt_version=d.prompt_version, model=d.model,
-            critic=d.critic, prediction=d.prediction, check_on=d.check_on.isoformat() if d.check_on else None)
-        cur = self.db.execute(f"INSERT INTO decisions ({','.join(row)}) VALUES ({','.join('?' * len(row))})",
-                              list(row.values()))
-        self.db.commit()
-        return int(cur.lastrowid)
+            critic=d.critic, prediction=d.prediction, check_on=d.check_on.isoformat() if d.check_on else None,
+            run_id=run_id)
+        return self.db.insert("decisions", row)
 
     def review(self, decision_id: int, verdict: str, note: str = "") -> None:
-        self.db.execute("INSERT INTO ilay_reviews (decision_id, created_at, verdict, note) VALUES (?,?,?,?)",
-                        (decision_id, _now(), verdict, note))
-        self.db.commit()
+        self.db.insert("ilay_reviews", dict(decision_id=decision_id, created_at=_now(), verdict=verdict, note=note))
 
     def record_outcome(self, decision_id: int, result: dict[str, Any], correct: bool | None) -> None:
-        self.db.execute("INSERT INTO outcomes (decision_id, measured_at, result, correct) VALUES (?,?,?,?)",
-                        (decision_id, _now(), json.dumps(result, default=str), None if correct is None else int(correct)))
-        self.db.commit()
+        self.db.insert("outcomes", dict(decision_id=decision_id, measured_at=_now(), result=dumps(result),
+                                        correct=None if correct is None else int(correct)))
 
-    def due_predictions(self, on: date) -> list[sqlite3.Row]:
+    def due_predictions(self, on: date) -> list[dict]:
         """Decisions whose prediction check date has arrived and that have no outcome yet."""
-        return self.db.execute(
+        return self.db.all(
             "SELECT * FROM decisions d WHERE prediction IS NOT NULL AND check_on <= ? "
             "AND NOT EXISTS (SELECT 1 FROM outcomes o WHERE o.decision_id = d.id) ORDER BY check_on",
-            (on.isoformat(),)).fetchall()
+            (on.isoformat(),), JSON_COLS)
 
-    def get(self, decision_id: int) -> sqlite3.Row:
-        return self.db.execute("SELECT * FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+    def get(self, decision_id: int) -> dict | None:
+        return self.db.one("SELECT * FROM decisions WHERE id = ?", (decision_id,), JSON_COLS)
 
-    def deviation_success(self) -> list[sqlite3.Row]:
+    def deviation_success(self) -> list[dict]:
         """Per-rule hit rate of deviations from default: the metric that shows if flexibility works (7.3)."""
-        return self.db.execute(
-            "SELECT json_extract(dev.value, '$.rule_id') AS rule_id, COUNT(*) AS n, "
-            "SUM(o.correct) AS correct FROM decisions d, json_each(d.deviations) dev "
-            "JOIN outcomes o ON o.decision_id = d.id GROUP BY rule_id").fetchall()
+        if self.db.pg:
+            q = ("SELECT dev->>'rule_id' AS rule_id, COUNT(*) AS n, SUM(o.correct) AS correct "
+                 "FROM decisions d CROSS JOIN LATERAL jsonb_array_elements(d.deviations) dev "
+                 "JOIN outcomes o ON o.decision_id = d.id GROUP BY 1")
+        else:
+            q = ("SELECT json_extract(dev.value, '$.rule_id') AS rule_id, COUNT(*) AS n, "
+                 "SUM(o.correct) AS correct FROM decisions d, json_each(d.deviations) dev "
+                 "JOIN outcomes o ON o.decision_id = d.id GROUP BY rule_id")
+        return self.db.all(q)
 
 
 def decision_from_verdict(verdict, subject: str, playbook_version: str, decided_by: str = "code",

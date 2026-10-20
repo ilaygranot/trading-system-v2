@@ -1,4 +1,3 @@
-import sqlite3
 from datetime import date
 
 import pytest
@@ -22,8 +21,8 @@ def test_playbook_has_the_41_approved_hard_rules():
     assert pb.tier("S99-R1") is Tier.DEFAULT            # unknown R => default (safe direction)
 
 
-def test_journal_records_verdict_and_is_append_only():
-    j = Journal()
+def test_journal_records_verdict_and_is_append_only(db):
+    j = Journal(db)
     facts = FactSheet()
     f = facts.add("X.adr60", 3.0, "yahoo:v8/chart", date(2023, 5, 1))
     p = TradeProposal("X", "long", entry=10, stop=8.8, target=14, target_source="technical_level", horizon_months=2,
@@ -33,8 +32,8 @@ def test_journal_records_verdict_and_is_append_only():
     did = j.record(decision_from_verdict(v, "X", load_playbook().version, facts=facts.to_list(),
                                          prediction="reaches 14 within 60 days", check_on=date(2023, 7, 1)))
     row = j.get(did)
-    assert row["status"] == "ready_for_approval" and "S13-R6" in row["deviations"]
-    with pytest.raises(sqlite3.DatabaseError):
+    assert row["status"] == "ready_for_approval" and row["deviations"][0]["rule_id"] == "S13-R6"
+    with pytest.raises(db.error, match="append-only"):
         j.db.execute("UPDATE decisions SET choice='x' WHERE id=?", (did,))
     assert [r["id"] for r in j.due_predictions(date(2023, 7, 1))] == [did]
     j.review(did, "approved")
