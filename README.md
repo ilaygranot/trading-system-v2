@@ -27,9 +27,10 @@
 | `qt/sectors.py` | Sector scorecard: RS vs SPY over 5 periods ⇒ rank, expected-growth rank, macro points 0/3/6/9 from the cycle table tilted by the stance, total ⇒ 3 long / 3 short; confirmations as flags (cycle pairs, three horizons, expectation change); industries vs sector, ISM streaks | S04–S05, D-S04-2/3/6 |
 | `qt/deepdive.py` | Deep dive numbers: core YoY trend, operating leverage, profit source, acceleration, gap vs sector, health (rules out a long only), FCF from operations, dilution, net debt / EBITDA trend, liquidity, guidance-derived growth, premium needing a written justification, target price from the 3-year multiple (sector fallback, peer regression as info), surprises; the gate to the watchlist (questions 1–3, catalyst ⇒ cold, valuation is never a reason) | S07, D-S07-3/4/6/7/8 |
 | `qt/watchlist.py` | Watchlist: main / guidance / event lists, computed fields, day-60 review flag, spread ratio, heat with a written reason and frozen triggers, no direction flip, composition warnings, tradability, catalyst classes A/B/C/D, guidance vs previous midpoint, the early and full idea-to-trade gate | S08, D-S08-1..8 |
+| `qt/manage.py` | Daily review of open positions: stop exits, 60/40 trailing stop and option profit take (preapproved standing orders), growing winner trim to 24%, portfolio stop, tactical regime block plus the 084 cut order to below 50%, VIX flag, high net into a shock, adverse catalyst, beta disconnect, daily metrics | S12, D-S12-4/5/6 |
 | `qt/screening.py` | EG1/EG2 with the ±99 code, EPS 0 ⇒ −0.1, cleaned group averages + median, rounded-up SG1 gate, universe gates with rule ids, profiles L1–L8 + tags, ranking, short profiles, guidance ≥ 8%, loss-to-profit, R34/J6 conflict flag | S06, decisions 11–13 |
 
-Not yet: daily position management, the agents and Critic, approval queue, scheduler.
+Not yet: the agents and Critic, approval queue, scheduler.
 
 ## Run
 
