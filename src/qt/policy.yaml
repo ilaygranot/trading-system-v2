@@ -112,3 +112,40 @@ screening:                         # S06; part ג recommendations where the cour
   loss_to_profit_multiple: 2.0     # S06-R40: next-year EPS >= 2x the loss (inferred from examples)
   long_rank: [L1, L2, L7, L3, L6, L4, L3*, L8]            # decision 12; L3* = L3 with y2_below_sector; L5 dropped
   short_rank: [S_acute, S_consistent, S_relative]          # D-S06-11
+
+macro:                             # S01-S03; part ג recommendations where the course is silent
+  hy_ma_days: 250                  # S01-R3: MA of ~1 year of trading days
+  hy_chg_short_days: 60            # S01-R5
+  curve_pair: [DGS10, DGS3MO]      # D-S01-2: 10Y - 3M, monthly average < 0 = inverted (not from course: the pair)
+  commodity_extreme_yoy_pct: 100.0 # S01-R17
+  activity_indicators: [ism_pmi, ism_nmi, michigan, permits, small_business]   # D-S02-7 (a): five, scale = 50
+  level_ref:                       # D-S02-6
+    ism_pmi: {kind: fixed, value: 50}
+    ism_nmi: {kind: fixed, value: 50}
+    michigan: {kind: linear_trend}           # 068 Excel method (≈85 sanity check)
+    permits: {kind: moving_average, months: 24}
+    small_business: {kind: moving_average, months: 60}
+  points: {level: 3, yoy: 3, half: 2, quarter: 2}   # S02-R41 (096)
+  zones:                           # decision 14 (by the course, 096): percent of max
+    extreme_cold_max: 10
+    grey_low: [10, 20]
+    hot_min: 50
+    grey_high: [80, 90]
+    extreme_heat_min: 90
+  bias: {extreme_heat: neutral, hot: bullish, cold: bearish, extreme_cold: cautious_optimism}  # S02-R47
+  ism_trend_months: 3              # D-S02-3 (c)
+  ism_extreme_low: 40              # D-S02-4 (c) / 068: rising from ≈40 => positive cycle
+  ism_extreme_band: 2              # "≈40": within 2 points counts as the extreme (not from course)
+  inflation_target: 2.0            # decision 15
+  inflation_range: [2.0, 3.0]      # decision 15 (096)
+  unemployment_ma_months: 60       # S02-R24: 5-year average
+  fed_points: {ffr_down: 4, m2_above_trend: 3, balance_sheet_up: 3}   # D-S02-8 (b), not from course: the weights
+  bear_drawdown_pct: 20.0          # S03-R6
+  correction_drawdown_pct: 10.0    # not from course: label only, between bull and bear
+  breadth_ma200: {high: 80, low: 20}   # D-S03-3
+  weekly_breaks_flag_pct: 40.0     # D-S03-3
+  quadrant_assets:                 # S03-R4 (066 slide)
+    growth+_inflation+: [equities, commodities, real_estate]
+    growth+_inflation-: [equities, corporate_bonds, cash]
+    growth-_inflation-: [long_govt_bonds, cash]
+    growth-_inflation+: [inflation_linked_govt_bonds, commodities, cash]

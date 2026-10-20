@@ -1,4 +1,4 @@
-"""Command line: `qt check trade.yaml`, `qt rules`, `qt replay`."""
+"""Command line: `qt check trade.yaml`, `qt macro stance.yaml`, `qt rules`, `qt replay`."""
 from __future__ import annotations
 
 import argparse
@@ -24,7 +24,8 @@ def _check(args: argparse.Namespace) -> int:
     pf = spec.get("portfolio", {})
     ctx = Context(Portfolio(pf.get("equity", 100_000), [Position(**p) for p in pf.get("positions", [])]),
                   regime=spec.get("regime", "portfolio"), readiness=Readiness(**spec.get("readiness", {})),
-                  gross_limit=spec.get("gross_limit"))
+                  gross_limit=spec.get("gross_limit"), macro_bias=spec.get("macro_bias"),
+                  market_trend=spec.get("market_trend"))
     overrides = tuple(Override(o["rule_id"], o["principle"], tuple(o["fact_ids"]), o["reason"])
                       for o in spec.get("overrides", []))
     v = evaluate(proposal, ctx, overrides, tuple(spec.get("approvals", [])))
@@ -34,6 +35,26 @@ def _check(args: argparse.Namespace) -> int:
     if args.journal:
         did = Journal(args.journal).record(decision_from_verdict(v, proposal.symbol, load_playbook().version))
         print(f"journal entry #{did}")
+    return 0
+
+
+def _macro(args: argparse.Namespace) -> int:
+    from dataclasses import asdict
+
+    from qt import macro as M
+    spec = yaml.safe_load(Path(args.file).read_text(encoding="utf-8"))
+    scores = [M.score_indicator(n, *(v[k] for k in ("now", "m3", "m6", "m12", "ref")))
+              for n, v in spec["indicators"].items()]
+    fed = spec.get("fed")
+    st = M.stance(scores,
+                  fed=M.fed_scale(fed["ffr"], fed["m2_yoy"], fed["balance_sheet"]) if fed else None,
+                  infl=M.inflation(spec["cpi_yoy"]) if "cpi_yoy" in spec else None,
+                  ism=M.ism_state(spec["ism_pmi_history"]) if "ism_pmi_history" in spec else None,
+                  grey_choice=spec.get("grey_choice"), previous_zone=spec.get("previous_zone"))
+    out = asdict(st)
+    if st.compass_now:
+        out["assets"] = M.preferred_assets(st.compass_now)
+    print(json.dumps(out, indent=1, default=str))
     return 0
 
 
@@ -59,6 +80,9 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("file")
     c.add_argument("--journal", help="SQLite journal path to record the verdict")
     c.set_defaults(fn=_check)
+    m = sub.add_parser("macro", help="compute the macro stance from indicator values (YAML)")
+    m.add_argument("file")
+    m.set_defaults(fn=_macro)
     sub.add_parser("rules", help="list hard rules and playbook version").set_defaults(fn=_rules)
     sub.add_parser("replay", help="replay the lecturer's trades").set_defaults(fn=_replay)
     args = ap.parse_args(argv)

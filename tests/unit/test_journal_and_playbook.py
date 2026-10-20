@@ -14,7 +14,8 @@ from qt.rules.engine import Override
 
 def test_playbook_has_the_41_approved_hard_rules():
     pb = load_playbook()
-    assert len(pb.hard_rules()) == 41
+    assert len([r for r in pb.hard_rules() if r.startswith("S")]) == 41
+    assert pb.tier("V1-SCOPE") is Tier.HARD              # decision 1, kept in the repo (_scope.csv)
     assert pb.tier("S12-R24") is Tier.DEFAULT           # VIX jump: flag only
     assert pb.tier("S12-R25") is Tier.HARD              # ATR 20-60 regime switch
     assert pb.tier("S06-J6") is Tier.JUDGMENT

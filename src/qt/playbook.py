@@ -2,7 +2,7 @@
 
 Every R rule has a tier: hard (code blocks), default (code flags), judgment (agent decides)
 or out-of-v1. All J rules are judgment. Rules missing from the CSVs are `default` (architecture 3.4).
-_fixes.csv overrides the chapter files.
+_fixes.csv overrides the chapter files. _scope.csv holds the v1 scope rule (decision 1); it lives in this repo.
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def _tiers_dir() -> Path:
 @lru_cache(maxsize=None)
 def load_playbook(tiers_dir: str | None = None) -> Playbook:
     d = Path(tiers_dir) if tiers_dir else _tiers_dir()
-    files = sorted(d.glob("S*.csv")) + [d / "_fixes.csv"]
+    files = sorted(d.glob("S*.csv")) + [d / "_fixes.csv", d / "_scope.csv"]
     rules: dict[str, Rule] = {}
     digest = hashlib.sha256()
     for path in files:

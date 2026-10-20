@@ -31,6 +31,9 @@ class TradeProposal:
     action: Literal["enter", "add", "exit", "reduce"] = "enter"
     stage: Literal["initial", "full"] = "full"
     instrument: Literal["stock", "option"] = "stock"
+    underlying: Literal["stock", "sector_etf", "index_etf", "bond", "commodity", "other"] = "stock"
+    country: str = "US"
+    hedged: bool = False
     sector: str = ""
     entry: float | None = None
     stop: float | None = None
@@ -76,6 +79,8 @@ class Context:
     vix: VixReading | None = None
     readiness: Readiness = field(default_factory=Readiness)
     gross_limit: float | None = None     # raised only by Ilay (1.5 / 1.8)
+    macro_bias: str | None = None        # from qt.macro.stance (S02-R47)
+    market_trend: Literal["up", "down", "sideways"] | None = None   # the index trend itself (S03-R13)
 
 
 # ---------- individual checks ----------
@@ -113,6 +118,33 @@ def check_process(p: TradeProposal, c: Context) -> list[Finding]:
         out.append(violation("S12-R17", "reversing a frozen idea needs the full process again"))
     if not p.journaled:
         out.append(violation("S13-R29", "entry/add must be recorded in the decision journal first"))
+    return out
+
+
+def check_scope(p: TradeProposal, c: Context) -> list[Finding]:
+    """Decision 1: US only; underlying = stocks and sector ETFs (options on them allowed)."""
+    out = []
+    if p.country.upper() not in ("US", "USA"):
+        out.append(violation("V1-SCOPE", f"{p.symbol}: market {p.country} is outside v1 (US only)", country=p.country))
+    if p.underlying not in ("stock", "sector_etf"):
+        out.append(violation("V1-SCOPE", f"{p.symbol}: underlying '{p.underlying}' is outside v1 "
+                             "(stocks and sector ETFs only)", underlying=p.underlying))
+    if p.underlying == "bond":
+        out.append(violation("S03-R5", "no bonds in the trading account"))
+    return out
+
+
+def check_macro_alignment(p: TradeProposal, c: Context) -> list[Finding]:
+    """S02-R3 and S03-R13: don't load shorts against a rising market or a bullish stance without strong reasons."""
+    out = []
+    if p.direction == "short" and not p.hedged:
+        if c.market_trend == "up":
+            out.append(violation("S03-R13", "short against a rising market: the market is always right; look for "
+                                 "the leading territories instead"))
+        if c.macro_bias == "bullish":
+            out.append(violation("S02-R3", "short against a bullish macro stance needs well-founded reasons"))
+    elif p.direction == "long" and c.macro_bias == "bearish":
+        out.append(flag("S02-R47", "long in a bearish ('cold') stance: prefer defensive sectors"))
     return out
 
 
@@ -297,7 +329,8 @@ def check_conduct(p: TradeProposal, c: Context) -> list[Finding]:
     return out
 
 
-ENTRY_CHECKS = (check_readiness, check_portfolio_state, check_process, check_definition, check_traffic_light,
+ENTRY_CHECKS = (check_readiness, check_portfolio_state, check_process, check_scope, check_macro_alignment,
+                check_definition, check_traffic_light,
                 check_floors, check_stop, check_reward_risk, check_horizon, check_sizing, check_exposure,
                 check_options, check_sectors, check_conduct)
 
