@@ -8,6 +8,7 @@ dependencies = ["pyyaml>=6", "requests>=2.31"]
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 postgres = ["psycopg[binary]>=3.1"]
+agents = ["anthropic>=1.16"]
 
 [project.scripts]
 qt = "qt.cli:main"
@@ -20,7 +21,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-qt = ["policy.yaml"]
+qt = ["policy.yaml", "agents/*.yaml", "agents/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

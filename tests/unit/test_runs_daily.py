@@ -42,7 +42,7 @@ def test_daily_run_end_to_end(db):
     rid = r.start("daily", AS_OF)
     st = r.status()[0]
     assert st["id"] == rid and st["status"] == "done"
-    assert [s["step"] for s in st["steps"]] == ["fetch", "calc", "rules", "journal", "queue", "notify"]
+    assert [s["step"] for s in st["steps"]] == ["fetch", "calc", "rules", "agents", "journal", "queue", "notify"]
     items = db.all("SELECT rule_id, status FROM approval_queue", json_cols=())
     rules = {i["rule_id"]: i["status"] for i in items}
     assert rules["S12-R11"] == "standing_order"            # BA ~200 vs entry 150 / stop 140: 60/40 trail

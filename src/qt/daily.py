@@ -1,7 +1,7 @@
 """The daily run without agents (runtime plan 10, step 3): data, code numbers and rules only.
 
-fetch -> calc -> rules -> journal -> queue -> notify. Agents (A5, A6, A7) and the Critic slot in between
-rules and queue later. The portfolio comes from a YAML file (cash, peak equity, open positions); nothing
+fetch -> calc -> rules -> agents -> journal -> queue -> notify. The agents step runs A7 on positions with an
+event against them when an agent runner is configured; A5 and A6 join it as their inputs arrive. The portfolio comes from a YAML file (cash, peak equity, open positions); nothing
 here sends an order: the queue holds proposals and the standing orders approved with each trade.
 """
 from __future__ import annotations
@@ -137,6 +137,28 @@ def rules(ctx: RunContext, _: str) -> dict:
             "regime": review.regime, "metrics": review.metrics, "actions": acts}
 
 
+def agents(ctx: RunContext, _: str) -> dict:
+    """A7 on each open position with an event against it (DC-21). Without an agent runner (no API key yet),
+    the step records that agents are off and the code's proposals stand alone."""
+    runner = ctx.services.get("agents")
+    if runner is None:
+        return {"enabled": False}
+    from qt.facts import FactSheet
+    snap, r = ctx.out("fetch"), ctx.out("rules")
+    out = {}
+    for p in snap["portfolio"].get("positions", []):
+        if not p.get("adverse_catalyst"):
+            continue
+        fs = FactSheet()
+        price = ctx.out("calc")["prices"].get(p["symbol"])
+        if price is not None:
+            fs.add(f"{p['symbol']}.close", price, snap["sources"].get(p["symbol"], ""), ctx.as_of)
+        world = {"position": p, "regime": r["regime"], "metrics": r["metrics"], "event": p.get("event", "")}
+        res = runner.decide("A7", "DC-21", fs, world, run_id=ctx.run_id, step="agents", subject=p["symbol"])
+        out[p["symbol"]] = {"option": res.option, "status": res.status, "decision_id": res.decision_id}
+    return {"enabled": True, "decisions": out}
+
+
 def journal(ctx: RunContext, _: str) -> dict:
     """One journal entry per action, tagged with the run (re-running the step adds nothing twice)."""
     j = Journal(ctx.db)
@@ -178,6 +200,6 @@ def notify(ctx: RunContext, _: str) -> dict:
     return {"text": text}
 
 
-DAILY = (Step("fetch", fetch), Step("calc", calc), Step("rules", rules), Step("journal", journal),
+DAILY = (Step("fetch", fetch), Step("calc", calc), Step("rules", rules), Step("agents", agents), Step("journal", journal),
          Step("queue", queue), Step("notify", notify))
 PIPELINES = {"daily": DAILY}

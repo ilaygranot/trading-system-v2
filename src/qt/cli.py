@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -91,6 +92,9 @@ def _run(args: argparse.Namespace) -> int:
         store = Store(db)
         services = {"prices": Yahoo(store), "prices_fallback": FMP(store),
                     "portfolio": load_portfolio(args.portfolio)}
+        if os.environ.get("ANTHROPIC_API_KEY"):
+            from qt.agents import AgentRunner
+            services["agents"] = AgentRunner(db)
     runner = Runner(db, PIPELINES, services)
     try:
         if args.what == "status":

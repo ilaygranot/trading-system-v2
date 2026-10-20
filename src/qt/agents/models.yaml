@@ -1,0 +1,28 @@
+# Pinned models per agent (runtime plan 8.2). Changing a model is a deliberate change that must pass the
+# course test set (8.3), never a silent update. Prices per million tokens (input, output, cache read),
+# used for the agent_calls cost and the daily budget.
+models:
+  opus: claude-opus-5-5
+  sonnet: claude-sonnet-5-5
+  haiku: claude-haiku-5-5
+prices:                       # USD per 1M tokens: input, output, cache_read, cache_write (5m)
+  claude-opus-5-5: [4.00, 20.00, 0.20, 5.00]
+  claude-sonnet-5-5: [2.00, 10.00, 0.20, 2.50]
+  claude-haiku-5-5: [0.10, 0.50, 0.01, 0.125]
+agents:                       # model, effort, and the model to escalate to (flagged conflict, event, critic issue)
+  A1: {model: opus, effort: high}
+  A2: {model: opus, effort: high, routine: {model: sonnet, effort: medium}}
+  A3: {model: sonnet, effort: medium, escalate: opus}
+  A4: {model: opus, effort: high}
+  A5: {model: sonnet, effort: medium, escalate: opus, screen: {model: haiku, effort: low}}
+  A6: {model: opus, effort: high}
+  A7: {model: sonnet, effort: medium, escalate: opus}
+  A8: {model: sonnet, effort: low}
+  C: {model: sonnet, effort: high, escalate: opus, always_opus_for: [A6]}
+  L: {model: opus, effort: high}
+fallbacks: default            # server-side refusal fallback (beta server-side-fallback-2026-07-01); not on Haiku
+max_tokens: 16000
+budget:
+  monthly_usd: 150            # also set as the Anthropic console limit (runtime plan 8.4)
+  daily_usd: 10               # over it, only A7 and the Critic keep running, and Ilay gets a message
+  always_run: [A7, C]
