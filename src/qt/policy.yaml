@@ -77,3 +77,38 @@ conduct:
   fomo_move_pct: 40.0              # S13-R5 example: +40% in two weeks
   fomo_window_days: 14
   no_entry_before: "10:00"         # S10-R25, New York time
+
+timing:                            # S09; part ג recommendations where the course is silent
+  price_behavior_intervals: [year, quarter, month, week]   # S09-R11, D-S09-2 (a)
+  counted_intervals: [quarter, month, week, day]           # PSAR / Volatility Stop, D-S09-2 (a)
+  sma_periods: [21, 63, 252]       # D-S09-3 (b), 082
+  extended_days: 21                # D-S09-4 (a): >21 sessions with the daily low not touching MA21
+  rsi_period: 20                   # S09-R19
+  rsi_slope_days: 3                # not from course: "rising/falling" over 3 sessions
+  rsi_settled_days: 5              # not from course: "for a while" above 50
+  macd: [20, 60, 10]               # S09-R21: EMA20 - EMA60, signal EMA10
+  psar: [0.02, 0.2]                # S09-R22: step 0.02, max 0.2
+  vol_stop:                        # S09-R23: [ATR period, multiplier]
+    day: [20, 2.5]
+    week: [50, 2.0]
+    month: [24, 1.5]
+    quarter: [8, 1.5]              # D-S09-5: multiplier NOT VERIFIED (check video 080 part 10)
+  atr_ratio_wait: 1.5              # D-S09-10: ATR20/ATR60 >= 1.5 => flag "wait 1-2 weeks"
+
+screening:                         # S06; part ג recommendations where the course is silent
+  exchanges: [NASDAQ, NYSE]        # S06-R5
+  eps_zero_replacement: -0.1       # D-S06-4
+  coded_growth_pct: 99.0           # S06-R14
+  base_effect_eps: 0.10            # D-S06-6 (c): |base EPS| <= 0.10 excluded from growth averages
+  base_effect_growth_pct: 200.0    # D-S06-6 (c)
+  outlier_growth_pct: 500.0        # 070 safety net
+  pe_outlier: 500.0                # S06-R20
+  similar_band_pp: 3.0             # D-S06-9: "like the sector" = within ±3 points both years
+  verify_growth_pct: 200.0         # S06-R21
+  mismatch_pct: 10.0               # S06-R43 / D-S07-6: second source differs > 10% => star
+  short_float_max_pct: 20.0        # S06-R36
+  days_to_cover_max: 10.0          # D-S06-12
+  guidance_change_min_pct: 8.0     # S06-R39, decision 13
+  loss_to_profit_multiple: 2.0     # S06-R40: next-year EPS >= 2x the loss (inferred from examples)
+  long_rank: [L1, L2, L7, L3, L6, L4, L3*, L8]            # decision 12; L3* = L3 with y2_below_sector; L5 dropped
+  short_rank: [S_acute, S_consistent, S_relative]          # D-S06-11
