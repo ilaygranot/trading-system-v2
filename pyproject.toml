@@ -1,0 +1,28 @@
+[project]
+name = "quantum-trader"
+version = "0.1.0"
+description = "Decision-support system for swing trading per the Quantum Trader course playbook (v1)"
+requires-python = ">=3.11"
+dependencies = ["pyyaml>=6", "requests>=2.31"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+qt = "qt.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+qt = ["policy.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["network: needs live data providers (skipped by default; run with -m network)"]
+addopts = "-m 'not network'"

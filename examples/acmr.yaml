@@ -1,0 +1,21 @@
+# ACMR, May 2023 (lesson 101): initial position, k=3 because the daily range is high
+trade:
+  symbol: ACMR
+  direction: long
+  stage: initial
+  sector: XLK
+  entry: 10.7
+  stop: 9.05
+  target: 16.05
+  target_source: own_multiple_target
+  horizon_months: 3.9
+  catalyst_chain: "analyst coverage expected (101:113-119)"
+  adr_pct: 5.12
+  requested_pct: 6
+  market_cap: 600000000
+  price: 10.7
+  revenue: 388000000
+  traffic_light: orange
+  reasons: {DC-19: "ADR60 5.1% is high; 3x per 102 and 084-R04"}
+portfolio:
+  equity: 100000
