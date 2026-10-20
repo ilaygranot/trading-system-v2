@@ -29,11 +29,12 @@
 | `qt/watchlist.py` | Watchlist: main / guidance / event lists, computed fields, day-60 review flag, spread ratio, heat with a written reason and frozen triggers, no direction flip, composition warnings, tradability, catalyst classes A/B/C/D, guidance vs previous midpoint, the early and full idea-to-trade gate | S08, D-S08-1..8 |
 | `qt/manage.py` | Daily review of open positions: stop exits, 60/40 trailing stop and option profit take (preapproved standing orders), growing winner trim to 24%, portfolio stop, tactical regime block plus the 084 cut order to below 50%, VIX flag, high net into a shock, adverse catalyst, beta disconnect, daily metrics | S12, D-S12-4/5/6 |
 | `qt/db.py`, `qt/runs.py`, `qt/daily.py` | One database layer (Postgres via `QT_DATABASE_URL`, SQLite for tests and local); runs and steps with resume, a lock per run kind, events and agent-call tables; the daily run without agents: fetch (one snapshot per run, provider fallback, stale data blocks entries) → calc (ATR 20-60 regime, VIX) → rules (daily review) → journal → approval queue → notify | runtime plan 3.3, 5 |
+| `qt/agents/` | The agents: 23 decision cards as closed-option JSON schemas, the five context parts (role, the stage's Playbook chapters + tiers + decisions, fact sheet, world state, the full card) with the fixed parts cached, models pinned per agent in `models.yaml`, code checks (facts exist, rule ids, deviations need a J principle, never on hard rules) with one retry, the Critic with escalation, refusal fallback, every call and cost in `agent_calls`, daily budget | architecture 5–6, runtime plan 8 |
 | `qt/screening.py` | EG1/EG2 with the ±99 code, EPS 0 ⇒ −0.1, cleaned group averages + median, rounded-up SG1 gate, universe gates with rule ids, profiles L1–L8 + tags, ranking, short profiles, guidance ≥ 8%, loss-to-profit, R34/J6 conflict flag | S06, decisions 11–13 |
 
 Run it: `qt run daily --as-of 2026-10-19 --portfolio examples/portfolio.yaml`, `qt run status`, `qt run resume <run-id>`.
 
-Not yet: the agents and Critic, approval queue, scheduler.
+Not yet: Telegram approval bot and detail page, scheduler (render.yaml), the course test set for the agents.
 
 ## Run
 
