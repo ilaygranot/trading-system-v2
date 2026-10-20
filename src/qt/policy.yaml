@@ -1,0 +1,79 @@
+# Every number the code enforces, with where it comes from.
+# Source of truth: playbook/decisions.md (sections א and ד) and playbook/tiers/*.csv.
+# Changing a value here is a Playbook change: it needs Ilay's approval and a new playbook_version.
+playbook_version: "2026-10-20"
+
+sizing:
+  initial_position_pct: 6.0        # S11-R5, decision 4
+  full_position_pct: 12.0          # S11-R6, decision 4
+  max_risk_per_trade_pct: 3.0      # decision 5 (not from course); a size cap, reduces quantity (W13)
+
+exposure:
+  gross_max: 1.2                   # S11-R15, decision 7; raise to 1.5/1.8 only with Ilay's approval
+  gross_steps: [1.2, 1.5, 1.8]
+
+options:
+  total_cap_pct: 20.0              # S11-R22, decision 6 (no options experience)
+  short_dated_cap_pct: 10.0        # "short" = expiry within short_dated_days
+  short_dated_days: 31
+  contract_too_costly_pct: 3.0     # S10-R15 term #9: one contract > 3% of account
+  profit_take_gain_pct: 150.0      # S12-R11: options 60/40 at +150%
+  profit_take_share: 0.60
+
+stop:
+  adr_period_days: 60              # S11-R24, D-S11-8 (084 definition: mean of (H-L)/C)
+  k_default: 4.0                   # S11-R11, decision 3/5 (20.10 evening)
+  k_hard_min: 3.0                  # entry stop only; trailing 60/40 stop is exempt (fix 10)
+  k_needs_reason_below: 4.0        # 3x..4x allowed with a written reason (DC-19)
+  huge_stop_pct: 30.0              # 084-R05; term #10
+  adr_route_to_options_pct: 10.0   # ADR60 > 10% => check as an option (term #10, rounding not from course)
+
+reward_risk:
+  min_ratio: 3.0                   # S10-R3, S11-R8, decision 9 (also options, from premium)
+  target_sources: [technical_level, own_multiple_target, all_time_high_target]
+
+horizon:
+  default_max_months: 3            # decision 2
+  extended_max_months: 6           # only with a documented catalyst chain
+  # beyond 6 months => flag horizon_beyond_6m, not a block (part ד decision 2)
+
+portfolio_stop:
+  drawdown_pct: 15.0               # S12-R1, decision 8; latched until Ilay releases (part ד decision 4)
+
+winner:
+  rebalance_flag_pct: 24.0         # S12-R12 term #16 (choice not from course)
+  rebalance_mandatory_pct: 30.0    # S12-R12
+
+sixty_forty:
+  stock_trigger_r: 3.0             # D-S12-4: open profit >= 3R (not from course)
+  stock_keep_share: 0.60           # keep 60% of open profit "no matter what"
+
+sectors:
+  min_sectors: 4                   # S11-R2, decision 10
+  min_sectors_with_shorts: 3       # documented exception, Ilay approves
+
+floors:
+  long_min_market_cap: 500_000_000       # S06-R6
+  long_min_price: 5.0              # S06-R9
+  long_min_revenue: 300_000_000        # S06-R10
+  long_priority_cap_range: [2_000_000_000, 30_000_000_000]
+  short_min_market_cap: 10_000_000_000     # S06-R8, S10-R13
+  short_priority_min_cap: 20_000_000_000
+
+regime:
+  atr_short: 20                    # S12-R25 (084): ATR20 - ATR60 of S&P 500
+  atr_long: 60
+  sigma_pct: 0.325
+  vix_jump_ratio: 1.4              # S12-R24: ~40% above recent low => FLAG ONLY (Ilay 20.10)
+  vix_low_window_days: 20          # D-S12-2: window not from course
+  vix_hist_mean: 19.5
+
+traffic_light:
+  red_sources_for_red: 4           # S09-R13 term #5: 4+ of 7 red => red
+
+conduct:
+  reentries_after_stops: 2         # D-S13-1: third entry after two stops is flagged
+  reentry_window_days: 30
+  fomo_move_pct: 40.0              # S13-R5 example: +40% in two weeks
+  fomo_window_days: 14
+  no_entry_before: "10:00"         # S10-R25, New York time

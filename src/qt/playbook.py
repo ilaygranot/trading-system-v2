@@ -1,0 +1,71 @@
+"""Rule tiers from the Playbook (playbook/tiers/*.csv).
+
+Every R rule has a tier: hard (code blocks), default (code flags), judgment (agent decides)
+or out-of-v1. All J rules are judgment. Rules missing from the CSVs are `default` (architecture 3.4).
+_fixes.csv overrides the chapter files.
+"""
+from __future__ import annotations
+
+import csv
+import hashlib
+import os
+from dataclasses import dataclass
+from enum import Enum
+from functools import lru_cache
+from pathlib import Path
+
+DEFAULT_TIERS_DIR = Path(__file__).resolve().parents[2] / "playbook_snapshot"
+
+
+class Tier(str, Enum):
+    HARD = "hard"
+    DEFAULT = "default"
+    JUDGMENT = "judgment"
+    OUT_OF_V1 = "out-of-v1"
+
+
+@dataclass(frozen=True)
+class Rule:
+    rule_id: str
+    tier: Tier
+    reason: str = ""
+    course_wording: str = ""
+
+
+class Playbook:
+    def __init__(self, rules: dict[str, Rule], version: str):
+        self.rules = rules
+        self.version = version
+
+    def tier(self, rule_id: str) -> Tier:
+        if "-J" in rule_id:
+            return Tier.JUDGMENT
+        rule = self.rules.get(rule_id)
+        return rule.tier if rule else Tier.DEFAULT
+
+    def is_hard(self, rule_id: str) -> bool:
+        return self.tier(rule_id) is Tier.HARD
+
+    def hard_rules(self) -> list[str]:
+        return sorted(r for r, rule in self.rules.items() if rule.tier is Tier.HARD)
+
+
+def _tiers_dir() -> Path:
+    return Path(os.environ.get("QT_TIERS_DIR", DEFAULT_TIERS_DIR))
+
+
+@lru_cache(maxsize=None)
+def load_playbook(tiers_dir: str | None = None) -> Playbook:
+    d = Path(tiers_dir) if tiers_dir else _tiers_dir()
+    files = sorted(d.glob("S*.csv")) + [d / "_fixes.csv"]
+    rules: dict[str, Rule] = {}
+    digest = hashlib.sha256()
+    for path in files:
+        if not path.exists():
+            continue
+        raw = path.read_bytes()
+        digest.update(raw)
+        for row in csv.DictReader(raw.decode("utf-8").splitlines()):
+            rid = row["rule_id"].strip()
+            rules[rid] = Rule(rid, Tier(row["tier"].strip()), row.get("reason", ""), row.get("course_wording", ""))
+    return Playbook(rules, version=digest.hexdigest()[:12])
