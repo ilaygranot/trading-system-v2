@@ -60,6 +60,15 @@ class Yahoo:
         body = get_json(url, self.store, session=self.session)
         return body["quoteSummary"]["result"][0], "yahoo:v10/quoteSummary"
 
+    def quote(self, symbol: str) -> tuple[float | None, str]:
+        """The latest price before the open: the pre-market price when Yahoo has one, else the last close."""
+        pr = self.summary(symbol)[0].get("price", {})
+        for k in ("preMarketPrice", "regularMarketPrice"):
+            v = (pr.get(k) or {}).get("raw") if isinstance(pr.get(k), dict) else pr.get(k)
+            if v:
+                return float(v), f"yahoo:price.{k}"
+        return None, "yahoo:price"
+
     def estimates(self, symbol: str) -> tuple[dict[str, Any], str]:
         """F1/F2 EPS and revenue estimates, 90-day EPS trend, revisions, short interest, next earnings."""
         s, src = self.summary(symbol)

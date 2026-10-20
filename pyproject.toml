@@ -3,12 +3,13 @@ name = "quantum-trader"
 version = "0.1.0"
 description = "Decision-support system for swing trading per the Quantum Trader course playbook (v1)"
 requires-python = ">=3.11"
-dependencies = ["pyyaml>=6", "requests>=2.31"]
+dependencies = ["pyyaml>=6", "requests>=2.31", "tzdata>=2024.1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 postgres = ["psycopg[binary]>=3.1"]
 agents = ["anthropic>=1.16"]
+web = ["gunicorn>=22"]
 
 [project.scripts]
 qt = "qt.cli:main"
