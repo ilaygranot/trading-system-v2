@@ -30,11 +30,17 @@
 | `qt/manage.py` | Daily review of open positions: stop exits, 60/40 trailing stop and option profit take (preapproved standing orders), growing winner trim to 24%, portfolio stop, tactical regime block plus the 084 cut order to below 50%, VIX flag, high net into a shock, adverse catalyst, beta disconnect, daily metrics | S12, D-S12-4/5/6 |
 | `qt/db.py`, `qt/runs.py`, `qt/daily.py` | One database layer (Postgres via `QT_DATABASE_URL`, SQLite for tests and local); runs and steps with resume, a lock per run kind, events and agent-call tables; the daily run without agents: fetch (one snapshot per run, provider fallback, stale data blocks entries) → calc (ATR 20-60 regime, VIX) → rules (daily review) → journal → approval queue → notify | runtime plan 3.3, 5 |
 | `qt/agents/` | The agents: 23 decision cards as closed-option JSON schemas, the five context parts (role, the stage's Playbook chapters + tiers + decisions, fact sheet, world state, the full card) with the fixed parts cached, models pinned per agent in `models.yaml`, code checks (facts exist, rule ids, deviations need a J principle, never on hard rules) with one retry, the Critic with escalation, refusal fallback, every call and cost in `agent_calls`, daily budget | architecture 5–6, runtime plan 8 |
+| `qt/approvals.py`, `qt/telegram.py`, `qt/web.py` | The approval queue: every item valid until the next open, approve / reject (with an optional reason) / postpone one session, all journalled as Ilay's review; expired ⇒ "not reviewed"; approvals become paper orders filled at the next open; standing-order exits fill without waiting; the premarket recheck sends a moved item back as "changed". The Telegram bot (one message per item with buttons, signed details link, answers only Ilay's chat id, "resume run" button, portfolio and monthly macro files by upload) and the web service (webhook, item page, password dashboard with runs, queue, paper orders, cost) | runtime plan 6–7, 9 |
+| `qt/schedule.py`, `qt/pipelines.py`, `qt/app.py`, `render.yaml` | New York time with the NYSE holidays; premarket (expire, quotes, recheck), weekly (runs, cost per agent, queue discipline) and monthly (waits for the manual ISM file, FRED, stance into the queue) runs; the cron entry point (one firing of each DST pair runs, the other resumes a failure once, alert with a resume button, optional heartbeat); the Render Blueprint (web, four cron jobs, Postgres) | runtime plan 3–5 |
 | `qt/screening.py` | EG1/EG2 with the ±99 code, EPS 0 ⇒ −0.1, cleaned group averages + median, rounded-up SG1 gate, universe gates with rule ids, profiles L1–L8 + tags, ranking, short profiles, guidance ≥ 8%, loss-to-profit, R34/J6 conflict flag | S06, decisions 11–13 |
 
 Run it: `qt run daily --as-of 2026-10-19 --portfolio examples/portfolio.yaml`, `qt run status`, `qt run resume <run-id>`.
 
-Not yet: Telegram approval bot and detail page, scheduler (render.yaml), the course test set for the agents.
+Cloud: `qt run daily|premarket|weekly|monthly --scheduled` (cron), `gunicorn qt.web:application` (web), `qt set-webhook`
+(once after the first deploy). See `docs/render-setup.md`.
+
+Not yet: the course test set for the agents (Opus vs Sonnet), A1-A6 / A8 / L wired into the runs (only A7 on
+open positions is), the weekly screening run (S06) and the export of the journal to Drive.
 
 ## Run
 

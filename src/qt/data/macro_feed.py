@@ -49,7 +49,11 @@ def yoy_pct(monthly: list[float]) -> list[float]:
 
 def load_manual(path: str | Path, as_of: date) -> dict[str, list[float]]:
     """Manual monthly series up to the month before `as_of` (a month's report is published the next month)."""
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    return parse_manual(Path(path).read_text(encoding="utf-8"), as_of)
+
+
+def parse_manual(text: str, as_of: date) -> dict[str, list[float]]:
+    raw = yaml.safe_load(text) or {}
     cutoff = f"{as_of.year:04d}-{as_of.month:02d}"
     out = {}
     for name, rows in raw.items():

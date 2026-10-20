@@ -42,12 +42,12 @@ def test_daily_run_end_to_end(db):
     rid = r.start("daily", AS_OF)
     st = r.status()[0]
     assert st["id"] == rid and st["status"] == "done"
-    assert [s["step"] for s in st["steps"]] == ["fetch", "calc", "rules", "agents", "journal", "queue", "notify"]
+    assert [s["step"] for s in st["steps"]] == ["fetch", "fill", "calc", "rules", "agents", "journal", "queue", "notify"]
     items = db.all("SELECT rule_id, status FROM approval_queue", json_cols=())
     rules = {i["rule_id"]: i["status"] for i in items}
     assert rules["S12-R11"] == "standing_order"            # BA ~200 vs entry 150 / stop 140: 60/40 trail
     assert rules["S12-R24"] == "info"                      # VIX jump is a flag only
-    assert sent and sent[0].startswith("daily 2023-05-31")
+    assert sent and sent[0].startswith("יומית 2023-05-31")
     n = len(items)
     r2 = _runner(db).start("daily", AS_OF)                  # a re-run of the same day adds no queue item
     assert len(db.all("SELECT id FROM approval_queue")) == n and r2 != rid

@@ -1,5 +1,5 @@
 """Command line: `qt check trade.yaml`, `qt macro stance.yaml`, `qt rules`, `qt replay`,
-`qt run daily|resume|status`."""
+`qt run daily|premarket|weekly|monthly|resume|status [--scheduled]`, `qt web`, `qt set-webhook`."""
 from __future__ import annotations
 
 import argparse
@@ -78,24 +78,18 @@ def _replay(args: argparse.Namespace) -> int:
 def _run(args: argparse.Namespace) -> int:
     from datetime import date
 
-    from qt.daily import PIPELINES, load_portfolio
-    from qt.data.providers import FMP, Yahoo
-    from qt.data.store import Store
+    from qt import app
     from qt.db import DB
-    from qt.runs import AlreadyRunning, Runner
+    from qt.runs import AlreadyRunning
 
     db = DB(args.db) if args.db else DB()
     if db.url == ":memory:" and args.what != "status":
         print("set QT_DATABASE_URL (or --db) so the run can be resumed")
-    services = {}
-    if args.what in ("daily", "resume"):
-        store = Store(db)
-        services = {"prices": Yahoo(store), "prices_fallback": FMP(store),
-                    "portfolio": load_portfolio(args.portfolio)}
-        if os.environ.get("ANTHROPIC_API_KEY"):
-            from qt.agents import AgentRunner
-            services["agents"] = AgentRunner(db)
-    runner = Runner(db, PIPELINES, services)
+    if args.scheduled:
+        print(app.scheduled(args.what, db))
+        return 0
+    svc = app.services(db, args.portfolio) if args.what != "status" else {}
+    runner = app.runner(db, svc)
     try:
         if args.what == "status":
             for r in runner.status(args.limit):
@@ -104,11 +98,31 @@ def _run(args: argparse.Namespace) -> int:
                     print(f"   {s['step']:<8} {s['subject'] or '-':<8} {s['status']:<7} x{s['attempts']} {s['error'] or ''}")
             return 0
         rid = runner.resume(args.run_id) if args.what == "resume" else \
-            runner.start(args.what, date.fromisoformat(args.as_of) if args.as_of else date.today())
+            runner.start(args.what, date.fromisoformat(args.as_of) if args.as_of else app.as_of_today())
     except AlreadyRunning as e:
         print(f"already running: {e}")
         return 0
     print(rid)
+    return 0
+
+
+def _web(args: argparse.Namespace) -> int:
+    from qt.web import serve
+    serve(args.port)
+    return 0
+
+
+def _webhook(args: argparse.Namespace) -> int:
+    """Point the bot at the web service (once, after the first deploy)."""
+    from qt.telegram import Telegram
+    bot = Telegram.from_env()
+    secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET")
+    base = args.url or os.environ.get("QT_PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL")
+    if bot is None or not secret or not base:
+        print("need TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET and the public URL")
+        return 1
+    bot.set_webhook(f"{base.rstrip('/')}/telegram/{secret}", secret)
+    print("webhook set")
     return 0
 
 
@@ -124,14 +138,21 @@ def main(argv: list[str] | None = None) -> int:
     m.set_defaults(fn=_macro)
     sub.add_parser("rules", help="list hard rules and playbook version").set_defaults(fn=_rules)
     sub.add_parser("replay", help="replay the lecturer's trades").set_defaults(fn=_replay)
-    r = sub.add_parser("run", help="scheduled runs: daily | resume <run-id> | status")
-    r.add_argument("what", choices=["daily", "resume", "status"])
+    r = sub.add_parser("run", help="runs: daily | premarket | weekly | monthly | resume <run-id> | status")
+    r.add_argument("what", choices=["daily", "premarket", "weekly", "monthly", "resume", "status"])
     r.add_argument("run_id", nargs="?")
     r.add_argument("--as-of")
-    r.add_argument("--portfolio", default="portfolio.yaml", help="cash, peak equity and open positions (YAML)")
+    r.add_argument("--portfolio", help="cash, peak equity and open positions (YAML; default QT_PORTFOLIO, "
+                                       "else the last file sent to the bot)")
+    r.add_argument("--scheduled", action="store_true", help="cron mode: run only when due in New York time")
     r.add_argument("--db", help="database URL or SQLite path (default QT_DATABASE_URL)")
     r.add_argument("--limit", type=int, default=10)
     r.set_defaults(fn=_run)
+    w = sub.add_parser("web", help="the dashboard and Telegram webhook (local; gunicorn qt.web:application in the cloud)")
+    w.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
+    w.set_defaults(fn=_web)
+    sub.add_parser("set-webhook", help="point the Telegram bot at the web service").set_defaults(fn=_webhook)
+    sub.choices["set-webhook"].add_argument("--url")
     args = ap.parse_args(argv)
     return args.fn(args)
 

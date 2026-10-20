@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS ilay_reviews (
   id {ID},
   decision_id BIGINT NOT NULL REFERENCES decisions(id),
   created_at {TS} NOT NULL,
-  verdict TEXT NOT NULL CHECK (verdict IN ('approved', 'modified', 'rejected')),
+  verdict TEXT NOT NULL CHECK (verdict IN ('approved', 'modified', 'rejected', 'not_reviewed', 'changed')),
   note TEXT
 );
 CREATE TABLE IF NOT EXISTS outcomes (

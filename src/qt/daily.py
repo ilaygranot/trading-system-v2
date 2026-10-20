@@ -1,8 +1,9 @@
 """The daily run without agents (runtime plan 10, step 3): data, code numbers and rules only.
 
-fetch -> calc -> rules -> agents -> journal -> queue -> notify. The agents step runs A7 on positions with an
-event against them when an agent runner is configured; A5 and A6 join it as their inputs arrive. The portfolio comes from a YAML file (cash, peak equity, open positions); nothing
-here sends an order: the queue holds proposals and the standing orders approved with each trade.
+fetch -> fill -> calc -> rules -> agents -> journal -> queue -> notify. The agents step runs A7 on positions with an
+event against them when an agent runner is configured; A5 and A6 join it as their inputs arrive. The portfolio
+comes from a YAML file (cash, peak equity, open positions); nothing here sends an order: the queue holds
+proposals and the standing orders approved with each trade, and approvals become paper orders (qt.approvals).
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import yaml
 
 from qt.calc.portfolio import PortfolioStop
 from qt.calc.volatility import Bar, atr_20_60_series, regime_transitions, vix_check
-from qt.db import dumps
+from qt.approvals import Queue
 from qt.journal import Decision, Journal
 from qt.manage import Held, daily_review
 from qt.playbook import load_playbook
@@ -23,24 +24,6 @@ from qt.runs import RunContext, Step
 
 INDEX, VIX = "^GSPC", "^VIX"
 HISTORY_DAYS = 400                     # enough for ATR60 and the VIX low window
-
-QUEUE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS approval_queue (
-  id {ID},
-  run_id TEXT NOT NULL,
-  as_of TEXT NOT NULL,
-  item_key TEXT NOT NULL UNIQUE,         -- as_of + symbol + rule + kind: one item per day per action
-  kind TEXT NOT NULL,                    -- exit | tighten_stop | sell | reduce | block_new_risk | flag
-  rule_id TEXT NOT NULL,
-  symbol TEXT,
-  status TEXT NOT NULL,                  -- pending | standing_order | info | approved | rejected | changed
-  payload {JSON} NOT NULL,
-  created_at {TS} NOT NULL,
-  decided_at {TS},
-  decided_note TEXT
-);
-"""
-
 
 def load_portfolio(path: str | Path) -> dict:
     return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
@@ -58,9 +41,11 @@ def _bars(rows: list[list]) -> list[Bar]:
 
 def fetch(ctx: RunContext, _: str) -> dict:
     """Rule 2: the only step that reads providers. Primary, then fallback; missing data marks the run stale."""
-    pf = ctx.services["portfolio"]
+    pf = ctx.services.get("portfolio")
+    if pf is None:
+        raise RuntimeError("no portfolio: send portfolio.yaml to the bot (or set QT_PORTFOLIO)")
     symbols = sorted({p["symbol"] for p in pf.get("positions", []) if p.get("instrument", "stock") == "stock"}
-                     | {INDEX, VIX})
+                     | {o["symbol"] for o in Queue(ctx.db).open_orders()} | {INDEX, VIX})
     start = ctx.as_of - timedelta(days=HISTORY_DAYS)
     out: dict[str, Any] = {"bars": {}, "sources": {}, "stale": []}
     for s in symbols:
@@ -82,6 +67,14 @@ def fetch(ctx: RunContext, _: str) -> dict:
             out["stale"].append(s)
     out["portfolio"] = pf
     return out
+
+
+def fill(ctx: RunContext, _: str) -> dict:
+    """Approved paper orders fill at the open of their session (runtime plan 7.2 rule 3)."""
+    bars = ctx.out("fetch")["bars"]
+    opens = {(s, r[0]): r[1] for s, rows in bars.items() for r in rows}
+    return {"filled": [{k: o[k] for k in ("id", "symbol", "kind", "qty", "fill_on", "fill_price")}
+                       for o in Queue(ctx.db).fill(opens)]}
 
 
 def calc(ctx: RunContext, _: str) -> dict:
@@ -155,7 +148,10 @@ def agents(ctx: RunContext, _: str) -> dict:
             fs.add(f"{p['symbol']}.close", price, snap["sources"].get(p["symbol"], ""), ctx.as_of)
         world = {"position": p, "regime": r["regime"], "metrics": r["metrics"], "event": p.get("event", "")}
         res = runner.decide("A7", "DC-21", fs, world, run_id=ctx.run_id, step="agents", subject=p["symbol"])
-        out[p["symbol"]] = {"option": res.option, "status": res.status, "decision_id": res.decision_id}
+        out[p["symbol"]] = {"agent": "A7", "card": "DC-21", "option": res.option, "status": res.status,
+                            "decision_id": res.decision_id, "confidence": res.output.get("confidence"),
+                            "reasoning": res.output.get("reasoning", ""), "deviations": res.output.get("deviations", []),
+                            "critic": res.critic, "for_ilay": res.for_ilay}
     return {"enabled": True, "decisions": out}
 
 
@@ -176,30 +172,59 @@ def journal(ctx: RunContext, _: str) -> dict:
     return {"decision_ids": ids}
 
 
+AGENT_KIND = {"reduce": "reduce", "exit": "exit", "add": "add"}     # DC-21 options that move money
+
+
 def queue(ctx: RunContext, _: str) -> dict:
-    ctx.db.ddl(QUEUE_SCHEMA)
-    added = 0
-    for a in ctx.out("rules")["actions"]:
-        status = "standing_order" if a["preapproved"] else "info" if a["kind"] == "flag" else "pending"
-        key = f"{ctx.as_of.isoformat()}|{a['symbol'] or '-'}|{a['rule_id']}|{a['kind']}"
-        added += ctx.db.insert_new("approval_queue", dict(
-            run_id=ctx.run_id, as_of=ctx.as_of.isoformat(), item_key=key, kind=a["kind"], rule_id=a["rule_id"],
-            symbol=a["symbol"], status=status, payload=dumps(a), created_at=ctx.as_of.isoformat()), ["item_key"])
+    """Code actions and agent decisions into the approval queue (one item per day, symbol, rule and kind)."""
+    q = Queue(ctx.db)
+    prices = ctx.out("calc")["prices"]
+    added = []
+    for a, did in zip(ctx.out("rules")["actions"], ctx.out("journal")["decision_ids"]):
+        iid = q.add(ctx.run_id, ctx.as_of, a, prices.get(a["symbol"]), did)
+        if iid:
+            added.append(iid)
+    for sym, d in (ctx.out("agents").get("decisions") or {}).items():
+        if not d["for_ilay"]:
+            continue
+        kind = AGENT_KIND.get(d["option"], "flag")
+        a = dict(kind=kind, rule_id=d["card"], symbol=sym, qty=None, price=None, preapproved=False,
+                 detail=f"{d['card']}: {d['option']}", agent=d)
+        iid = q.add(ctx.run_id, ctx.as_of, a, prices.get(sym), d["decision_id"])
+        if iid:
+            added.append(iid)
     return {"added": added}
 
 
 def notify(ctx: RunContext, _: str) -> dict:
+    """The one-line daily summary (runtime plan 6), then one message per new item with buttons (7.2)."""
     r = ctx.out("rules")
-    pending = sum(1 for a in r["actions"] if not a["preapproved"] and a["kind"] != "flag")
+    q = Queue(ctx.db)
+    items = q.for_day(ctx.as_of)
+    pending = [i for i in items if i["status"] in ("pending", "postponed", "changed")]
     stale = ctx.out("fetch")["stale"]
-    text = (f"daily {ctx.as_of.isoformat()} · regime {r['regime']} · {pending} for approval · "
-            f"{len(r['actions']) - pending} standing/flags · " + ("data fresh" if not stale else f"stale: {', '.join(stale)}"))
+    filled = ctx.out("fill")["filled"] if ctx.out("fill") else []
+    cost = ctx.db.one("SELECT COALESCE(SUM(cost_usd), 0) AS c FROM agent_calls WHERE run_id = ?", (ctx.run_id,))
+    text = (f"יומית {ctx.as_of.isoformat()} · ריצה תקינה · משטר {r['regime']} · {len(pending)} פריטים לאישור · "
+            f"{len(items) - len(pending)} פקודות עומדות/דגלים · "
+            + ("נתונים עדכניים" if not stale else f"נתונים ישנים: {', '.join(stale)}")
+            + (f" · {len(filled)} עסקאות נייר בוצעו" if filled else "")
+            + f" · {float(cost['c'] or 0):.2f}$")
+    sent = 0
+    bot = ctx.services.get("telegram")
+    if bot is not None:
+        from qt.telegram import send_item
+        bot.send(text)
+        for it in items:
+            if it["status"] != "info" and not it.get("tg_message_id"):
+                send_item(bot, q, it)
+                sent += 1
     sender = ctx.services.get("notifier")
     if sender is not None:
         sender(text)
-    return {"text": text}
+    return {"text": text, "items_sent": sent}
 
 
-DAILY = (Step("fetch", fetch), Step("calc", calc), Step("rules", rules), Step("agents", agents), Step("journal", journal),
+DAILY = (Step("fetch", fetch), Step("fill", fill), Step("calc", calc), Step("rules", rules), Step("agents", agents), Step("journal", journal),
          Step("queue", queue), Step("notify", notify))
 PIPELINES = {"daily": DAILY}
