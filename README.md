@@ -25,9 +25,11 @@
 | `qt/macro.py` | Stage 1: HY spread stress (MA250, distance, yearly change), 10Y−3M curve, commodities, real rate. Stage 2: 0–10 scoring per indicator, activity scale with zones and grey bands, ISM states, inflation vs 2–3%, labor, separate Fed scale, compass now, stance. Stage 3: bear line, breadth flags, quadrant ⇒ assets | S01–S03, decisions 14, 15, D-S02-9 |
 | `qt/data/macro_feed.py` | FRED series with ALFRED vintages; manual monthly file for ISM and NFIB | architecture 9 |
 | `qt/sectors.py` | Sector scorecard: RS vs SPY over 5 periods ⇒ rank, expected-growth rank, macro points 0/3/6/9 from the cycle table tilted by the stance, total ⇒ 3 long / 3 short; confirmations as flags (cycle pairs, three horizons, expectation change); industries vs sector, ISM streaks | S04–S05, D-S04-2/3/6 |
+| `qt/deepdive.py` | Deep dive numbers: core YoY trend, operating leverage, profit source, acceleration, gap vs sector, health (rules out a long only), FCF from operations, dilution, net debt / EBITDA trend, liquidity, guidance-derived growth, premium needing a written justification, target price from the 3-year multiple (sector fallback, peer regression as info), surprises; the gate to the watchlist (questions 1–3, catalyst ⇒ cold, valuation is never a reason) | S07, D-S07-3/4/6/7/8 |
+| `qt/watchlist.py` | Watchlist: main / guidance / event lists, computed fields, day-60 review flag, spread ratio, heat with a written reason and frozen triggers, no direction flip, composition warnings, tradability, catalyst classes A/B/C/D, guidance vs previous midpoint, the early and full idea-to-trade gate | S08, D-S08-1..8 |
 | `qt/screening.py` | EG1/EG2 with the ±99 code, EPS 0 ⇒ −0.1, cleaned group averages + median, rounded-up SG1 gate, universe gates with rule ids, profiles L1–L8 + tags, ranking, short profiles, guidance ≥ 8%, loss-to-profit, R34/J6 conflict flag | S06, decisions 11–13 |
 
-Not yet: deep dive and watchlist (S07–S08), daily position management, the agents and Critic, approval queue, scheduler.
+Not yet: daily position management, the agents and Critic, approval queue, scheduler.
 
 ## Run
 

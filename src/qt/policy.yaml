@@ -178,3 +178,35 @@ sector_scorecard:                  # S04-S05; part ג recommendations where the 
   industry_min_stocks: 15          # D-S05-2
   similar_band_pp: 3.0             # same band as S06 (D-S06-9)
   ism_trend_months: 3              # D-S05-5
+
+deepdive:                          # S07; part ג recommendations where the course is silent
+  target_history_years: 3          # D-S07-4 (a): 3-year average P/E (profitable) or P/S (not profitable)
+  acceleration_pp: 5.0             # S07-R11 "clearly above" the 5y average (example 20% vs 28-30%); 5 points not from course
+  gap_stable_pp: 0.5               # S07-R12: gap change within ±0.5 points = stable (not from course)
+  net_debt_rising_share: 0.66      # S07-R24 "notable rise over years": >= 2/3 of yearly steps up and last > first (not from course)
+  surprise_usually_beats: 0.75     # S07-R31 "usually beats": share of beats (not from course)
+  extreme_growth_pct: 200.0        # S07-R25: 200-300% => verify, never reject
+  gate_questions: [sector_macro_supported, stands_out_vs_sector, growth_engines_identified]   # D-S07-8 (a)
+  questions:                       # 074 ten questions (S07-R3); the rest lower confidence only
+    - sector_macro_supported
+    - stands_out_vs_sector
+    - growth_engines_identified
+    - competitive_advantage
+    - business_model_flaws
+    - macro_and_input_exposure
+    - tail_and_head_winds
+    - market_agrees
+    - risks_from_10k
+    - catalyst_expected
+  valuation_only_reasons: [cheap_vs_sector, low_multiple, cheap, expensive]   # D-S07-7 (a): never a reason
+
+watchlist:                         # S08; part ג recommendations where the course is silent
+  review_days: 60                  # S08-R29, D-S08-1 (a): review flag, never automatic removal
+  main_size: [8, 12]               # D-S08-5 (a)
+  hot_max: 4                       # S07-R35 / D-S08-5: 3-4 hot
+  soft_cap_total: 30               # D-S08-5 update: all lists together, warning only
+  top_down_min_share: 0.5          # S08-R7, D-S08-8 (a): weekly metric, warning only
+  narrow_range_pct: 25.0           # S08-R12: ~20% in two years and CL 70-85 (21%) are examples; 25 not from course
+  analyst_target_material_pct: 50.0   # S08-R17 / AT-S08-12: +50% = material
+  analyst_target_stale_pct: 12.0      # +12% and below = "didn't renew"; between = judgment with a reason
+  explanation_fields: [what_it_does, affected_by, scenario, why_watch, waiting_for, diversification_role]   # S08-R3
