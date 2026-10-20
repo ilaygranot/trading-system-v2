@@ -1,3 +1,4 @@
+import os
 import json
 from pathlib import Path
 
@@ -16,3 +17,19 @@ def load_bars(name: str) -> list[Bar]:
 @pytest.fixture
 def bars():
     return load_bars
+
+
+PG_URL = os.environ.get("QT_TEST_DATABASE_URL")
+
+
+@pytest.fixture(params=["sqlite"] + (["postgres"] if PG_URL else []))
+def db(request):
+    """A fresh database on each backend. Postgres runs when QT_TEST_DATABASE_URL is set (CI service)."""
+    from qt.db import DB
+    if request.param == "sqlite":
+        yield DB(":memory:")
+        return
+    d = DB(PG_URL)
+    d.conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+    yield d
+    d.conn.close()

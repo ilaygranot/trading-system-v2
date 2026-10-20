@@ -1,0 +1,7 @@
+# The daily run's view of the account (paper or real). Illustrative numbers.
+cash: 108500                     # after buying MSFT (12,000) and shorting BA (+20,500) from 100,000
+peak_equity: 100000
+portfolio_stop_triggered: false
+positions:
+  - {symbol: BA, direction: short, sector: XLI, qty: 100, entry: 205.0, entry_stop: 220.0, stop: 220.0}
+  - {symbol: MSFT, direction: long, sector: XLK, qty: 40, entry: 300.0, entry_stop: 280.0, stop: 280.0}
