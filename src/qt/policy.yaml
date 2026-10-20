@@ -210,3 +210,11 @@ watchlist:                         # S08; part ג recommendations where the cour
   analyst_target_material_pct: 50.0   # S08-R17 / AT-S08-12: +50% = material
   analyst_target_stale_pct: 12.0      # +12% and below = "didn't renew"; between = judgment with a reason
   explanation_fields: [what_it_does, affected_by, scenario, why_watch, waiting_for, diversification_role]   # S08-R3
+
+manage:                            # S12 daily review of open positions; part ג recommendations where the course is silent
+  tactical_exposure_target: 0.50   # S12-R26, D-S12-6 (a): cut until medium-long exposure < 50% of equity
+  uniform_cut_share: 0.20          # S12-R26 quick alternative: 20% of every position (smallest of 20/30/40)
+  high_beta: 2.0                   # S12-R26 (2) "very high beta" (example 2.1); 2.0 not from course
+  shock_net_flag: 1.0              # S12-R7: net 1.1 is the example, not a threshold; flag from 1.0 (not from course)
+  stress_drops_pct: [10, 20, 30]   # S12-R23
+  beta_flag: 1.0                   # S12-R23: portfolio beta above 1 => flag
