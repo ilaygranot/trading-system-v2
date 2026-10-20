@@ -60,6 +60,11 @@ class TradeProposal:
     idea_listed_before_move: bool = True
     stops_last_30d: int = 0
     journaled: bool = True
+    heat: Literal["cold", "hot", "boiling", "frozen"] | None = None   # watchlist heat (S08-R25)
+    news_adverse: bool = False                                          # last news-flow class is against us
+    price_behaviour_qm: tuple[Color, ...] = ()                          # quarterly + monthly vs direction (S09-R11)
+    unhealthy_finances: bool = False                                    # deep dive S07-R7
+    catalyst_expected: bool | None = None                               # deep dive question 10 (S07-R13)
     reasons: dict[str, str] = field(default_factory=dict)  # e.g. {"DC-19": "ADR is high (7.5%)"}
 
 
@@ -118,6 +123,7 @@ def check_process(p: TradeProposal, c: Context) -> list[Finding]:
         out.append(violation("S13-R1", "not every process stage was run and documented"))
     if p.reverses_frozen_idea:
         out.append(violation("S12-R17", "reversing a frozen idea needs the full process again"))
+        out.append(violation("S08-R27", "a frozen idea is never flipped; the reverse idea runs the whole process"))
     if not p.journaled:
         out.append(violation("S13-R29", "entry/add must be recorded in the decision journal first"))
     return out
@@ -162,6 +168,23 @@ def check_sector_alignment(p: TradeProposal, c: Context) -> list[Finding]:
         out.append(flag("S04-R19", f"short in a strong sector ({p.sector}): only in a specific scenario"))
     if p.direction == "long" and "expectations_weakening" in c.sector_flags.get(p.sector, []):
         out.append(violation("S04-R34", f"{p.sector} growth expectations weakened vs last month: stay away or explain"))
+    return out
+
+
+def check_watchlist_gate(p: TradeProposal, c: Context) -> list[Finding]:
+    """S08-R28 (two steps, fix 7): hot idea, news not adverse, not against the trend. Stop, target, R:R and
+    horizon are checked by S10-R2 / S11-R8 / horizon below. Deep dive: S07-R7 (long), S07-R13."""
+    out = []
+    if p.heat is not None and p.heat != "hot":
+        out.append(violation("S08-R28", f"idea is {p.heat}, not hot: no trade yet"))
+    if p.news_adverse:
+        out.append(violation("S08-R28", "news flow is against the idea"))
+    if any(x == "red" for x in p.price_behaviour_qm):
+        out.append(violation("S08-R28", "quarterly/monthly price behaviour is red: against the trend"))
+    if p.direction == "long" and p.unhealthy_finances:
+        out.append(violation("S07-R7", "gross profit falling while debt/interest rise: long ruled out (D-S07-3)"))
+    if p.catalyst_expected is False:
+        out.append(violation("S07-R13", "no expected catalyst: watchlist (cold) only, no trade"))
     return out
 
 
@@ -347,7 +370,7 @@ def check_conduct(p: TradeProposal, c: Context) -> list[Finding]:
 
 
 ENTRY_CHECKS = (check_readiness, check_portfolio_state, check_process, check_scope, check_macro_alignment,
-                check_sector_alignment, check_definition, check_traffic_light,
+                check_sector_alignment, check_watchlist_gate, check_definition, check_traffic_light,
                 check_floors, check_stop, check_reward_risk, check_horizon, check_sizing, check_exposure,
                 check_options, check_sectors, check_conduct)
 
