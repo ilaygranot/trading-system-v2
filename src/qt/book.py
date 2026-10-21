@@ -46,6 +46,8 @@ def apply_fill(pf: dict, kind: str, symbol: str, qty: float | None, price: float
     q = min(qty, pos["qty"]) if kind != "exit" else pos["qty"]
     pf["cash"] = pf.get("cash", 0.0) + sg * q * price
     pnl = sg * (price - pos["entry"]) * q
+    pf.setdefault("realized", []).append(dict(symbol=symbol, qty=q, price=price, pnl=round(pnl, 2),
+                                              rule=payload.get("rule_id"), on=payload.get("as_of")))
     if q >= pos["qty"]:
         pf["positions"].remove(pos)
         pf.setdefault("closed", []).append(dict(symbol=symbol, qty=q, entry=pos["entry"], exit=price,
