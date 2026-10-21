@@ -126,6 +126,25 @@ class Telegram:
         self._api("setWebhook", url=url, secret_token=secret, allowed_updates=["message", "callback_query"])
 
 
+def sign_report(upload_id: int, secret: str) -> str:
+    return hmac.new(secret.encode(), f"report:{upload_id}".encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def verify_report(upload_id: int, sig: str, secret: str) -> bool:
+    return bool(secret) and hmac.compare_digest(sign_report(upload_id, secret), sig or "")
+
+
+def report_link(upload_id: int) -> str | None:
+    """The signed link to a research report saved by the weekly run (served by qt.web)."""
+    base = os.environ.get("QT_PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL")
+    secret = os.environ.get("DASHBOARD_PASSWORD")
+    if not base or not secret:
+        return None
+    if not base.startswith("http"):
+        base = "https://" + base
+    return f"{base.rstrip('/')}/report/{upload_id}?sig={sign_report(upload_id, secret)}"
+
+
 def public_link(item_id: int) -> str | None:
     base = os.environ.get("QT_PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL")
     secret = os.environ.get("DASHBOARD_PASSWORD")

@@ -110,6 +110,9 @@ class App:
             m = re.fullmatch(r"/item/(\d+)", path)
             if m and method == "GET":
                 return self.item(env, start, int(m.group(1)))
+            m = re.fullmatch(r"/report/(\d+)", path)
+            if m and method == "GET":
+                return self.report(env, start, int(m.group(1)))
             if not self._authed(env):
                 return self._deny(start)
             if path == "/" and method == "GET":
@@ -182,6 +185,17 @@ class App:
             body += "<h2>Agent ובודק</h2><pre>" + _e(json.dumps(ag, ensure_ascii=False, indent=1)) + "</pre>"
         body += "<h2>הפריט</h2><pre>" + _e(json.dumps(it, ensure_ascii=False, indent=1, default=str)) + "</pre>"
         return self._page(start, f"פריט #{item_id}", body)
+
+    def report(self, env: dict, start: Start, upload_id: int) -> list[bytes]:
+        """A research report the weekly run saved: by its signed link from Telegram, or after login."""
+        from qt.telegram import verify_report
+        sig = (parse_qs(env.get("QUERY_STRING", "")).get("sig") or [""])[0]
+        if not (verify_report(upload_id, sig, self.password) or self._authed(env)):
+            return self._deny(start)
+        row = self.db.one("SELECT content FROM uploads WHERE id = ? AND kind = 'report'", (upload_id,))
+        if row is None:
+            return self._send(start, "404 Not Found", "not found", "text/plain")
+        return self._send(start, "200 OK", row["content"])
 
     def decide(self, env: dict, start: Start, item_id: int, choice: str) -> list[bytes]:
         note = (parse_qs(self._body(env).decode()).get("note") or [""])[0]

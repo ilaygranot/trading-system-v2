@@ -46,8 +46,10 @@ Research by the agents: `qt research --agents` (instead of `--judgments`) asks A
 candidates), A4 (DC-10..13, with the tell-a-friend lines on DC-13) and A6 (DC-17, 19, 20) with the Critic, and
 writes the same judgments a person would (`qt/research/judge.py`); a run has its own budget (`weekly_research_usd`).
 
-Not yet: the course test set for the agents (Opus vs Sonnet), A2 / A5 / A8 / L, the research in the scheduled weekly
-run, and the export of the journal to Drive.
+The scheduled weekly run ends with that research (`qt/weekly.py`, step `research`): the report is saved and linked in
+Telegram (`/report/<id>`, signed), and its ideas are merged into the watchlist the daily pass checks.
+
+Not yet: the course test set for the agents (Opus vs Sonnet), A2 / A5 / A8 / L, and the export of the journal to Drive.
 
 ## Run
 
