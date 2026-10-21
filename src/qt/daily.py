@@ -21,6 +21,7 @@ from qt.journal import Decision, Journal
 from qt.manage import Held, daily_review
 from qt.playbook import load_playbook
 from qt.runs import RunContext, Step
+from qt import book as B
 from qt import watch as W
 
 INDEX, VIX = "^GSPC", "^VIX"
@@ -72,11 +73,25 @@ def fetch(ctx: RunContext, _: str) -> dict:
 
 
 def fill(ctx: RunContext, _: str) -> dict:
-    """Approved paper orders fill at the open of their session (runtime plan 7.2 rule 3)."""
-    bars = ctx.out("fetch")["bars"]
-    opens = {(s, r[0]): r[1] for s, rows in bars.items() for r in rows}
-    return {"filled": [{k: o[k] for k in ("id", "symbol", "kind", "qty", "fill_on", "fill_price")}
-                       for o in Queue(ctx.db).fill(opens)]}
+    """Approved paper orders fill at the open of their session (runtime plan 7.2 rule 3), and each fill is
+    applied to the portfolio (qt.book) before the day's review."""
+    snap = ctx.out("fetch")
+    opens = {(s, r[0]): r[1] for s, rows in snap["bars"].items() for r in rows}
+    q = Queue(ctx.db)
+    pf, log, filled = snap["portfolio"], [], []
+    for o in q.fill(opens):
+        item = q.get(o["item_id"]) or {}
+        payload = dict(item.get("payload") or {}, as_of=ctx.as_of.isoformat())
+        pf, what = B.apply_fill(pf, o["kind"], o["symbol"], o["qty"], o["fill_price"], payload)
+        log.append(what)
+        filled.append({k: o[k] for k in ("id", "symbol", "kind", "qty", "fill_on", "fill_price")})
+    return {"filled": filled, "portfolio": pf, "log": log}
+
+
+def _pf(ctx: RunContext) -> dict:
+    """Today's portfolio: the loaded one with this morning's fills applied."""
+    f = ctx.out("fill")
+    return f["portfolio"] if f and f.get("portfolio") is not None else ctx.out("fetch")["portfolio"]
 
 
 def calc(ctx: RunContext, _: str) -> dict:
@@ -107,7 +122,7 @@ HELD_FIELDS = {f.name for f in fields(Held)}
 def rules(ctx: RunContext, _: str) -> dict:
     from qt.calc.volatility import VixReading
     snap, c = ctx.out("fetch"), ctx.out("calc")
-    pf = snap["portfolio"]
+    pf = _pf(ctx)
     held = []
     for p in pf.get("positions", []):
         d = {k: v for k, v in p.items() if k in HELD_FIELDS}
@@ -136,7 +151,7 @@ def watch(ctx: RunContext, _: str) -> dict:
     """The watchlist pass (S08, S13-R23): one check per entry, and the opportunities as entry proposals."""
     snap, r = ctx.out("fetch"), ctx.out("rules")
     entries = W.load(ctx.services.get("watchlist"))
-    held = {p["symbol"] for p in snap["portfolio"].get("positions", [])} | {o["symbol"] for o in Queue(ctx.db).open_orders()}
+    held = {p["symbol"] for p in _pf(ctx).get("positions", [])} | {o["symbol"] for o in Queue(ctx.db).open_orders()}
     checks, actions = [], []
     for e in entries:
         rows = snap["bars"].get(e.symbol)
@@ -164,7 +179,7 @@ def agents(ctx: RunContext, _: str) -> dict:
     from qt.facts import FactSheet
     snap, r = ctx.out("fetch"), ctx.out("rules")
     out = {}
-    for p in snap["portfolio"].get("positions", []):
+    for p in _pf(ctx).get("positions", []):
         if not p.get("adverse_catalyst"):
             continue
         fs = FactSheet()
@@ -225,6 +240,22 @@ def queue(ctx: RunContext, _: str) -> dict:
     return {"added": added}
 
 
+def book(ctx: RunContext, _: str) -> dict:
+    """Apply the day's standing stop moves (60/40) to the portfolio, mark the peak, and save it as the newest
+    portfolio upload, which the next run loads."""
+    pf, log = _pf(ctx), list((ctx.out("fill") or {}).get("log") or [])
+    for a in ctx.out("rules")["actions"]:
+        if a["kind"] == "tighten_stop" and a.get("preapproved"):
+            pf, what = B.apply_stop(pf, a["symbol"], a["price"])
+            if what:
+                log.append(what)
+    B.mark_equity(pf, ctx.out("calc")["prices"])
+    import yaml
+    Queue(ctx.db).upload("portfolio", f"book-{ctx.as_of.isoformat()}.yaml",
+                         yaml.safe_dump(pf, allow_unicode=True, sort_keys=False))
+    return {"portfolio": pf, "log": log}
+
+
 def notify(ctx: RunContext, _: str) -> dict:
     """The one-line daily summary (runtime plan 6), then one message per new item with buttons (7.2)."""
     r = ctx.out("rules")
@@ -274,7 +305,7 @@ def day_summary(ctx: RunContext) -> str:
         lines.append(f"שוק: S&P 500 {idx[-1][4]:,.0f} ({_f((idx[-1][4] / idx[-2][4] - 1) * 100, 1, True)}%)"
                      + (f" · VIX {snap['bars'][VIX][-1][4]:.1f}" if snap["bars"].get(VIX) else "")
                      + f" · משטר {r['regime']}")
-    pos = snap["portfolio"].get("positions", [])
+    pos = _pf(ctx).get("positions", [])
     if pos:
         lines.append("פוזיציות:")
         for p in pos:
@@ -301,6 +332,9 @@ def day_summary(ctx: RunContext) -> str:
                          + (f" · {'; '.join(x['notes'])}" if x["notes"] else ""))
     elif ctx.services.get("watchlist") is None:
         lines.append("רשימת מעקב: לא נטענה (שלח watchlist.yaml לבוט)")
+    bk = (ctx.out("book") or {}).get("log") or []
+    if bk:
+        lines.append("עדכוני תיק: " + " · ".join(bk))
     opp = [a["symbol"] for a in w.get("actions") or []]
     lines.append("לאישורך היום: " + (", ".join(opp) + " (כניסה)" if opp else "אין כניסות חדשות"))
     return "\n".join(lines)
@@ -308,5 +342,5 @@ def day_summary(ctx: RunContext) -> str:
 
 DAILY = (Step("fetch", fetch), Step("fill", fill), Step("calc", calc), Step("rules", rules), Step("watch", watch),
          Step("agents", agents), Step("journal", journal),
-         Step("queue", queue), Step("notify", notify))
+         Step("queue", queue), Step("book", book), Step("notify", notify))
 PIPELINES = {"daily": DAILY}

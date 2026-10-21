@@ -41,6 +41,8 @@ class Held:
     adverse_catalyst: bool = False               # S12-R27: event against us on this position (agent)
     stock_ret: float | None = None               # recent return, for the beta disconnect (S12-R28)
     profit_taken: bool = False                   # options 60/40 already done
+    target: float | None = None                  # the target approved with the trade (S10-R3)
+    partial_taken: bool = False                  # S12-R13 half already sold at the target
 
     @property
     def value(self) -> float:
@@ -88,7 +90,8 @@ def stop_hit(h: Held) -> bool:
 
 
 def position_actions(h: Held) -> list[Action]:
-    """Per position: stop exit (S12-R2), 60/40 (S12-R11), adverse catalyst (S12-R27)."""
+    """Per position: stop exit (S12-R2), 60/40 (S12-R11), half at the target (S12-R13), adverse catalyst (S12-R27).
+    The half at the target is a proposal for Ilay: only the stop and 60/40 are approved with the trade (decision 3)."""
     out = []
     if stop_hit(h):
         return [Action("exit", "S12-R2", f"close {h.price:.2f} through the stop {h.stop:.2f}", h.symbol, h.qty,
@@ -105,6 +108,11 @@ def position_actions(h: Held) -> list[Action]:
         if frac is not None:
             out.append(Action("sell", "S12-R11", f"+150%: sell {frac * 100:.0f}% of the contracts (60% of the profit)",
                               h.symbol, round(abs(h.qty) * frac, 2), h.price, preapproved=True))
+    if h.instrument == "stock" and h.target is not None and not h.partial_taken and abs(h.qty) >= 2:
+        reached = h.price >= h.target if h.direction == "long" else h.price <= h.target
+        if reached:                              # S12-R13: not closed at a fixed target; half, the rest trails
+            out.append(Action("sell", "S12-R13", f"target {h.target:.2f} reached ({h.price:.2f}): sell half, the "
+                              "rest runs with the trailing stop", h.symbol, float(int(abs(h.qty) // 2)), h.price))
     if h.adverse_catalyst:
         out.append(Action("reduce", "S12-R27", "event against the position: at minimum reduce risk; never add "
                           "because it 'fell enough'", h.symbol))
