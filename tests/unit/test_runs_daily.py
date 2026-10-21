@@ -42,7 +42,7 @@ def test_daily_run_end_to_end(db):
     rid = r.start("daily", AS_OF)
     st = r.status()[0]
     assert st["id"] == rid and st["status"] == "done"
-    assert [s["step"] for s in st["steps"]] == ["fetch", "fill", "calc", "rules", "watch", "agents", "journal", "queue",
+    assert [s["step"] for s in st["steps"]] == ["fetch", "fill", "calc", "rules", "watch", "news", "agents", "journal", "queue",
                                             "book", "notify"]
     items = db.all("SELECT rule_id, status FROM approval_queue", json_cols=())
     rules = {i["rule_id"]: i["status"] for i in items}
@@ -129,3 +129,45 @@ def test_watchlist_held_expired_and_watch_bucket_make_no_entry(db):
         Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": wl}).start("daily", AS_OF)
         assert not db.all("SELECT id FROM approval_queue WHERE rule_id='S10-R4'")
         db.execute("DELETE FROM approval_queue")
+
+
+class NewsPrices(Prices):
+    """Prices plus two headlines on BA: one against the position (class A, not priced in), one old."""
+    def news(self, symbol, n=8):
+        if symbol != "BA":
+            return [], "fake"
+        return [dict(title="FAA halts 737 deliveries", publisher="Reuters", link="https://x/1", published="2023-05-31"),
+                dict(title="Old story", publisher="AP", link="https://x/0", published="2023-05-01")], "yahoo:test"
+
+
+class FakeAgents:
+    """DC-14 says class A against the idea; A7 answers hold. Records the cards asked."""
+    def __init__(self):
+        self.calls = []
+
+    def decide(self, agent, card, fs, world, **kw):
+        from types import SimpleNamespace as NS
+        self.calls.append((card, kw.get("subject"), dict(world)))
+        out = {"direction": "against_idea", "priced_in": False, "reasoning": "x"} if card == "DC-14" else {}
+        return NS(option="A" if card == "DC-14" else "hold", output=out, status="decided", decision_id=1, critic=None,
+                  for_ilay="", cost_usd=0.0)
+
+
+def test_news_classifies_once_and_an_adverse_headline_reaches_a7(db):
+    sent, ag = [], FakeAgents()
+    r = _runner(db, prices=NewsPrices(), notifier=sent.append, agents=ag)
+    r.start("daily", AS_OF)
+    assert [c[:2] for c in ag.calls] == [("DC-14", "BA"), ("DC-21", "BA")]     # the old headline is skipped
+    assert "FAA halts" in ag.calls[1][2]["event"]
+    assert "FAA halts 737 deliveries" in sent[-1] and "A7" in sent[-1]
+    row = db.one("SELECT klass, direction FROM news_seen WHERE link = 'https://x/1'")
+    assert (row["klass"], row["direction"]) == ("A", "against_idea")
+    ag.calls.clear()
+    r.start("daily", AS_OF + timedelta(days=1))
+    assert ("DC-14", "BA") not in [c[:2] for c in ag.calls]                    # seen: not classified again
+
+
+def test_news_without_agents_lists_raw_headlines(db):
+    sent = []
+    _runner(db, prices=NewsPrices(), notifier=sent.append).start("daily", AS_OF)
+    assert "יומן חדשות" in sent[-1] and "• BA FAA halts" in sent[-1]

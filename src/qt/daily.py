@@ -1,7 +1,7 @@
 """The daily run without agents (runtime plan 10, step 3): data, code numbers and rules only.
 
-fetch -> fill -> calc -> rules -> agents -> journal -> queue -> notify. The agents step runs A7 on positions with an
-event against them when an agent runner is configured; A5 and A6 join it as their inputs arrive. The portfolio
+fetch -> fill -> calc -> rules -> watch -> news -> agents -> journal -> queue -> book -> notify. The agents step runs
+A7 on positions with an event against them (from the portfolio or from today's news, qt.news) when an agent runner is configured; A5 and A6 join it as their inputs arrive. The portfolio
 comes from a YAML file (cash, peak equity, open positions); nothing here sends an order: the queue holds
 proposals and the standing orders approved with each trade, and approvals become paper orders (qt.approvals).
 """
@@ -179,14 +179,16 @@ def agents(ctx: RunContext, _: str) -> dict:
     from qt.facts import FactSheet
     snap, r = ctx.out("fetch"), ctx.out("rules")
     out = {}
+    news_events = (ctx.out("news") or {}).get("adverse") or {}
     for p in _pf(ctx).get("positions", []):
-        if not p.get("adverse_catalyst"):
+        if not (p.get("adverse_catalyst") or p["symbol"] in news_events):
             continue
         fs = FactSheet()
         price = ctx.out("calc")["prices"].get(p["symbol"])
         if price is not None:
             fs.add(f"{p['symbol']}.close", price, snap["sources"].get(p["symbol"], ""), ctx.as_of)
-        world = {"position": p, "regime": r["regime"], "metrics": r["metrics"], "event": p.get("event", "")}
+        world = {"position": p, "regime": r["regime"], "metrics": r["metrics"],
+                 "event": p.get("event") or news_events.get(p["symbol"], "")}
         res = runner.decide("A7", "DC-21", fs, world, run_id=ctx.run_id, step="agents", subject=p["symbol"])
         out[p["symbol"]] = {"agent": "A7", "card": "DC-21", "option": res.option, "status": res.status,
                             "decision_id": res.decision_id, "confidence": res.output.get("confidence"),
@@ -332,6 +334,7 @@ def day_summary(ctx: RunContext) -> str:
                          + (f" · {'; '.join(x['notes'])}" if x["notes"] else ""))
     elif ctx.services.get("watchlist") is None:
         lines.append("רשימת מעקב: לא נטענה (שלח watchlist.yaml לבוט)")
+    lines += diary_lines(ctx.out("news") or {})
     bk = (ctx.out("book") or {}).get("log") or []
     if bk:
         lines.append("עדכוני תיק: " + " · ".join(bk))
@@ -340,7 +343,9 @@ def day_summary(ctx: RunContext) -> str:
     return "\n".join(lines)
 
 
+from qt.news import diary_lines, news  # noqa: E402  (qt.news imports _pf from here)
+
 DAILY = (Step("fetch", fetch), Step("fill", fill), Step("calc", calc), Step("rules", rules), Step("watch", watch),
-         Step("agents", agents), Step("journal", journal),
+         Step("news", news), Step("agents", agents), Step("journal", journal),
          Step("queue", queue), Step("book", book), Step("notify", notify))
 PIPELINES = {"daily": DAILY}

@@ -70,6 +70,14 @@ class Yahoo:
                 return float(v), f"yahoo:price.{k}"
         return None, "yahoo:price"
 
+    def news(self, symbol: str, n: int = 8) -> tuple[list[dict[str, Any]], str]:
+        """The latest headlines for a symbol (title, publisher, link, publish date), fresh within the hour."""
+        body = get_json(f"{self.BASE}/v1/finance/search?q={symbol}&newsCount={n}&quotesCount=0", self.store,
+                        max_age_s=3600, session=self.session)
+        return [dict(title=x.get("title") or "", publisher=x.get("publisher") or "", link=x.get("link") or "",
+                     published=datetime.fromtimestamp(x.get("providerPublishTime", 0), timezone.utc).date().isoformat())
+                for x in body.get("news", [])], "yahoo:v1/finance/search"
+
     def estimates(self, symbol: str) -> tuple[dict[str, Any], str]:
         """F1/F2 EPS and revenue estimates, 90-day EPS trend, revisions, short interest, next earnings."""
         s, src = self.summary(symbol)
