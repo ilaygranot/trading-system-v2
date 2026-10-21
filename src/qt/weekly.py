@@ -1,6 +1,6 @@
 """The end-of-week review (S13-R21, S13-R25), code only: what a person reads on Saturday before the new ideas.
 
-wfetch -> arena -> revisit -> week, then the weekly notify joins it to the operations report (qt.pipelines).
+wfetch -> arena -> revisit -> week -> research, then the weekly notify joins it to the operations report (qt.pipelines).
 arena:   the weekly sector arena (S04-R29): RS of the 11 SPDR sectors against SPY over a week, a month, 3 and 6
          months and a year (S04-R11), their average and rank (S04-R12), and the move against last week's rank.
 revisit: every watchlist entry checked again (S13-R25 "old ideas", S08-R29, S08-R30): invalidated, expired, more
@@ -9,6 +9,9 @@ revisit: every watchlist entry checked again (S13-R25 "old ideas", S08-R29, S08-
 week:    the week in the book: entries filled, sells with their P&L, open positions with the week's move and the
          distance to the stop, the ones that hurt; earnings and time stops in the next 14 days; the idea quota
          (S13-R26: at least 2 new ideas a week).
+research: the new ideas of the week (S13-R25, S13-R26): the full research run (qt.research.run) judged by the agents
+         (qt.research.judge), its report saved for a signed link, and its ideas merged into the watchlist that the
+         daily pass checks from the next close. Entries reach the approval queue only through that daily pass.
 News of the week, the economic calendar and sentiment (NAAIM / COT) have no source yet; the summary says so.
 """
 from __future__ import annotations
@@ -16,7 +19,11 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
+import os
+from pathlib import Path
+
 from qt import watch as W
+from qt.approvals import Queue
 from qt.daily import _bars, _bars_json
 from qt.runs import RunContext
 from qt.sectors import rank, rs_avg, rs_perf
@@ -183,12 +190,71 @@ def week(ctx: RunContext, _: str) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- new ideas
+
+def merge_watchlist(old: dict | None, new: dict) -> dict:
+    """The research's entries replace the same symbol's old entry (keeping the first `added`, so day 60 counts from
+    the first time on the list, S08-R29); old entries the research did not touch stay, even when it rejected them:
+    those are shown to Ilay and never removed here."""
+    olds = {e["symbol"]: e for e in (old or {}).get("entries", [])}
+    out = dict(olds)
+    for e in new["entries"]:
+        prev = olds.get(e["symbol"])
+        out[e["symbol"]] = {**e, "added": min(prev["added"], e["added"])} if prev else e
+    return {**new, "entries": list(out.values())}
+
+
+def _run_research(as_of: date, judge, manual_text: str, fred) -> dict:
+    from qt.research import run as R
+    work = Path(os.environ.get("QT_WORK_DIR", "/tmp/qt-research")) / as_of.isoformat()
+    work.mkdir(parents=True, exist_ok=True)
+    return R.run(as_of, work, None, None, work / "yahoo", fred, judge=judge, manual_text=manual_text)
+
+
+def research(ctx: RunContext, _: str) -> dict:
+    """The weekly research by the agents. Without the agents, FRED or the monthly manual file it is skipped and the
+    summary says what is missing; the rest of the weekly review stands."""
+    runner, fred = ctx.services.get("agents"), ctx.services.get("fred")
+    q = Queue(ctx.db)
+    manual = q.latest_upload("manual_macro")
+    missing = [n for n, v in (("ANTHROPIC_API_KEY", runner), ("FRED_API_KEY", fred), ("קובץ המקרו החודשי", manual))
+               if v is None]
+    if missing:
+        return {"skipped": missing}
+    import json
+    import yaml
+    from qt.agents.runner import config
+    from qt.research import report
+    from qt.research.judge import Judge
+    prev, runner.limit_usd = runner.limit_usd, config()["budget"]["weekly_research_usd"]
+    try:
+        d = (ctx.services.get("research_run") or _run_research)(ctx.as_of, Judge(runner, run_id=ctx.run_id),
+                                                                 manual["content"], fred)
+    finally:
+        runner.limit_usd = prev
+    d = json.loads(json.dumps(d, default=str))
+    html = report.render(d)
+    rid = q.upload("report", f"report-{ctx.as_of.isoformat()}.html", "<!doctype html><meta charset=utf-8>" + html)
+    old = ctx.services.get("watchlist")
+    wl = merge_watchlist(old, W.from_dossier(d))
+    q.upload("watchlist", f"watchlist-{ctx.as_of.isoformat()}.yaml", yaml.safe_dump(wl, allow_unicode=True, sort_keys=False))
+    on_list = {e["symbol"] for e in (old or {}).get("entries", [])}
+    J = d.get("judgments") or {}
+    ideas = [dict(symbol=s, bucket=i["bucket"], direction=i["direction"], rr=(i.get("plan") or {}).get("rr"),
+                  line=((i.get("judgment") or {}).get("tldr") or {}).get("line") or (i.get("judgment") or {}).get("why", ""))
+             for s, i in d["ideas"].items()]
+    return {"report_id": rid, "ideas": ideas, "watchlist_n": len(wl["entries"]),
+            "rejected_on_list": [x["symbol"] for x in ideas if x["bucket"] == "reject" and x["symbol"] in on_list],
+            "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {})}
+
+
 # ---------------------------------------------------------------- the message
 
 def _f(v: float | None, d: int = 1, sign: bool = True) -> str:
     return "—" if v is None else (f"{v:+.{d}f}" if sign else f"{v:.{d}f}")
 
 
+BUCKET_HE = {"enter": "מוכנה לכניסה", "conditional": "מותנית בטריגר"}
 KIND_HE = {"enter": "כניסה", "add": "הגדלה", "exit": "יציאה", "reduce": "הקטנה", "sell": "מכירה",
            "earnings": "דוח", "time_stop": "עצירת זמן"}
 
@@ -229,5 +295,24 @@ def summary(ctx: RunContext) -> str:
     if wk.get("ahead"):
         lines.append("שבועיים קדימה: " + " · ".join(f"{a['date'][5:]} {KIND_HE[a['kind']]} {a['symbol']}"
                                                       for a in wk["ahead"]))
+    rs = ctx.out("research") or {}
+    if rs.get("skipped"):
+        lines.append("מחקר שבועי לא רץ: חסר " + ", ".join(rs["skipped"]))
+    elif rs.get("ideas") is not None:
+        from qt.telegram import report_link
+        link = report_link(rs["report_id"])
+        lines.append(f"מחקר שבועי: {len(rs['ideas'])} רעיונות נבדקו · עלות הסוכנים {rs['cost_usd']:.2f}$"
+                     + (f" · הדוח: {link}" if link else ""))
+        for x in rs["ideas"]:
+            if x["bucket"] in ("enter", "conditional"):
+                lines.append(f"• {x['symbol']} {BUCKET_HE[x['bucket']]} · יחס {_f(x['rr'], sign=False)} · {x['line']}")
+        watch = [x["symbol"] for x in rs["ideas"] if x["bucket"] == "watch"]
+        if watch:
+            lines.append("למעקב: " + ", ".join(watch))
+        if rs["rejected_on_list"]:
+            lines.append("נפסלו במחקר אבל עדיין ברשימה (להחלטתך): " + ", ".join(rs["rejected_on_list"]))
+        if rs["errors"]:
+            lines.append("לא הושלמו: " + ", ".join(f"{k} ({v})" for k, v in rs["errors"].items()))
+        lines.append(f"רשימת המעקב עודכנה ל-{rs['watchlist_n']} רעיונות: הבדיקה היומית מתחילה מהסגירה הבאה")
     lines.append("עוד לא בסיכום (אין מקור): חדשות השבוע מול עמדת המקרו, יומן כלכלי, סנטימנט NAAIM/COT")
     return "\n".join(lines)

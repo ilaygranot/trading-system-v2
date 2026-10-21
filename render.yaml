@@ -81,7 +81,7 @@ services:
     name: qt-weekly                       # Saturday 10:00 New York
     runtime: python
     region: virginia
-    plan: starter
+    plan: standard                        # 2 GB: the research run holds the whole universe (~100 MB pickled) in memory
     schedule: "0 14,15 * * 6"
     buildCommand: pip install '.[postgres,agents]'
     startCommand: qt run weekly --scheduled

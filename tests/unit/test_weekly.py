@@ -148,11 +148,88 @@ def test_weekly_run_end_to_end_and_rank_moves_from_last_week(db):
     r.start("weekly", AS_OF - timedelta(days=7))
     rid = r.start("weekly", AS_OF)
     st = [x for x in r.status() if x["id"] == rid][0]
-    assert [s["step"] for s in st["steps"]] == ["expire", "report", "wfetch", "arena", "revisit", "week", "notify"]
-    text = bot.sent[-1]
-    assert text.startswith("סיכום שבוע עד 2026-10-23")
+    assert [s["step"] for s in st["steps"]] == ["expire", "report", "wfetch", "arena", "revisit", "week", "research",
+                                                    "notify"]
+    assert bot.sent[-2].startswith("סיכום שבוע עד 2026-10-23") and bot.sent[-1].startswith("תפעול")
+    text = bot.sent[-2] + bot.sent[-1]
     for s in ("זירת סקטורים", "XLK 11", "XLU 1", "פוזיציות:", "• XLE", "רשימת מעקב: 1 (1 לונג, 0 שורט)",
-              "פחות מ-2 רעיונות חדשים", "שבועיים קדימה: 10-29 דוח ABC", "אין מקור", "תפעול", "לא נבדקו"):
+              "פחות מ-2 רעיונות חדשים", "שבועיים קדימה: 10-29 דוח ABC", "אין מקור", "תפעול", "לא נבדקו",
+              "מחקר שבועי לא רץ: חסר ANTHROPIC_API_KEY, FRED_API_KEY, קובץ המקרו החודשי"):
         assert s in text, s
     arena = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='arena'", (rid,), ["output"])["output"]
     assert all(x["rank_change"] is not None for x in arena["rows"])   # last week's run is found
+
+
+# ------------------------------------------------------------------ the weekly research by the agents
+
+def test_merge_watchlist_keeps_old_entries_and_the_first_added_date():
+    old = {"entries": [vars(_entry(symbol="OLD", added="2026-09-01")), vars(_entry(symbol="SAME", added="2026-09-15"))]}
+    new = {"as_of": "2026-10-23", "entries": [vars(_entry(symbol="SAME", added="2026-10-23", trigger_level=210.0)),
+                                              vars(_entry(symbol="NEW", added="2026-10-23"))]}
+    by = {e["symbol"]: e for e in WK.merge_watchlist(old, new)["entries"]}
+    assert set(by) == {"OLD", "SAME", "NEW"} and by["SAME"]["trigger_level"] == 210.0
+    assert by["SAME"]["added"] == "2026-09-15" and by["NEW"]["added"] == "2026-10-23"
+    assert {e["symbol"] for e in WK.merge_watchlist(None, new)["entries"]} == {"SAME", "NEW"}
+
+
+def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeypatch):
+    import copy
+    import json as _json
+    from pathlib import Path
+
+    import yaml
+
+    from qt.agents import AgentRunner
+    from qt.approvals import Queue
+    from qt.telegram import sign_report
+    from qt.web import App
+    from test_judge import CardClient
+
+    fix = _json.loads((Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8"))
+    monkeypatch.setenv("QT_PUBLIC_URL", "qt.example")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
+    runner = AgentRunner(db, CardClient())
+    seen = {}
+
+    def fake_research(as_of, judge, manual_text, fred):
+        seen.update(as_of=as_of, manual=manual_text, limit=judge.runner.limit_usd, run_id=judge.run_id)
+        d = copy.deepcopy(fix)
+        d["judgments"]["agent_log"] = [{"card": "DC-10", "cost": 0.25}, {"card": "DC-13", "cost": 0.5}]
+        d["judgments"]["errors"] = {"XYZ": "BudgetExceeded: agent budget $25 reached"}
+        return d
+
+    first = next(iter(fix["ideas"]))
+    old_wl = {"entries": [vars(_entry(symbol="KEEP", added="2026-09-01")), vars(_entry(symbol=first, added="2026-09-10"))]}
+    Queue(db).upload("manual_macro", "ism.yaml", "ism_pmi: {'2026-09': 49}\n")
+    bot = Bot()
+    svc = {**_svc(bot, old_wl), "agents": runner, "fred": object(), "research_run": fake_research}
+    rid = Runner(db, PIPELINES, svc).start("weekly", AS_OF)
+    assert seen["as_of"] == AS_OF and "ism_pmi" in seen["manual"] and seen["limit"] == 25 and seen["run_id"] == rid
+    assert runner.limit_usd is None                                    # the daily cap is back after the run
+    out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='research'", (rid,), ["output"])["output"]
+    assert out["cost_usd"] == 0.75 and "XYZ" in out["errors"]
+    wl = yaml.safe_load(Queue(db).latest_upload("watchlist")["content"])
+    by = {e["symbol"]: e for e in wl["entries"]}
+    assert "KEEP" in by and len(by) == out["watchlist_n"]
+    rep = Queue(db).latest_upload("report")
+    assert rep["id"] == out["report_id"] and rep["content"].startswith("<!doctype html>")
+    text = bot.sent[-2]
+    link = f"https://qt.example/report/{rep['id']}?sig={sign_report(rep['id'], 'pw')}"
+    assert f"מחקר שבועי: {len(fix['ideas'])} רעיונות נבדקו · עלות הסוכנים 0.75$ · הדוח: {link}" in text
+    assert "רשימת המעקב עודכנה" in text and "לא הושלמו: XYZ" in text
+    for sym, i in fix["ideas"].items():
+        if i["bucket"] in ("enter", "conditional"):
+            assert f"• {sym} " in text
+    # the report behind the signed link
+    web = App(bot=bot, password="pw", webhook_secret="hook", resume=lambda r: None)
+    web._db = db
+
+    def call(path, query=""):
+        got = {}
+        body = web({"PATH_INFO": path, "REQUEST_METHOD": "GET", "QUERY_STRING": query},
+                   lambda st, h: got.update(st=st))
+        return got["st"], b"".join(body).decode()
+    assert call(f"/report/{rep['id']}", "sig=bad")[0].startswith("401")
+    st, html = call(f"/report/{rep['id']}", f"sig={sign_report(rep['id'], 'pw')}")
+    assert st.startswith("200") and 'id="ideas"' in html
+    assert call("/report/99999", f"sig={sign_report(99999, 'pw')}")[0].startswith("404")
