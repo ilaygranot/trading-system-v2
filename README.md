@@ -41,8 +41,12 @@ Run it: `qt run daily --as-of 2026-10-19 --portfolio examples/portfolio.yaml`, `
 Cloud: `qt run daily|premarket|weekly|monthly --scheduled` (cron), `gunicorn qt.web:application` (web), `qt set-webhook`
 (once after the first deploy). See `docs/render-setup.md`.
 
-Not yet: the course test set for the agents (Opus vs Sonnet), A1-A6 / A8 / L wired into the runs (only A7 on
-open positions is), the weekly screening run (S06) and the export of the journal to Drive.
+Research by the agents: `qt research --agents` (instead of `--judgments`) asks A1 (DC-01..04), A3 (DC-09 above 8
+candidates), A4 (DC-10..13, with the tell-a-friend lines on DC-13) and A6 (DC-17, 19, 20) with the Critic, and
+writes the same judgments a person would (`qt/research/judge.py`); a run has its own budget (`weekly_research_usd`).
+
+Not yet: the course test set for the agents (Opus vs Sonnet), A2 / A5 / A8 / L, the research in the scheduled weekly
+run, and the export of the journal to Drive.
 
 ## Run
 

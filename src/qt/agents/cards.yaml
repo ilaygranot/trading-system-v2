@@ -22,7 +22,10 @@ DC-11: {agent: A4, options: [justified, unjustified, unclear], undecided: unclea
 DC-12: {agent: A4, options: [breakers], undecided: missing_breakers, approval: journal,
         extra: {thesis_breakers: {type: array, items: {type: object, properties: {kind: {enum: [kpi, risk_10k, estimates_surprises, liquidity_dilution, contract]},
                 text: {type: string}, check: {type: string}}, required: [kind, text, check], additionalProperties: false}}}}
-DC-13: {agent: A4, options: ["no", cold, hot], undecided: cold, approval: required}
+DC-13: {agent: A4, options: ["no", cold, hot], undecided: cold, approval: required,
+        extra: {tldr: {type: object, description: "Tell-a-friend summary in Hebrew, one short sentence each (Ilay's request, not from course). No numbers for gain or loss: the code adds them from the plan.",
+                properties: {line: {type: string}, macro: {type: string}, sector: {type: string}, company: {type: string}, why_now: {type: string}, wrong: {type: string}},
+                required: [line, macro, sector, company, why_now, wrong], additionalProperties: false}}}
 DC-14: {agent: A5, options: [macro_lead, macro_noise, A, B, C, D], undecided: lower_class, approval: flag,
         extra: {priced_in: {type: boolean}, direction: {enum: [for_idea, against_idea]}}}
 DC-15: {agent: A5, options: [cold, hot, boiling, frozen], undecided: current_state, approval: required}

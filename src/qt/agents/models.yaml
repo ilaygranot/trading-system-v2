@@ -25,4 +25,5 @@ max_tokens: 16000
 budget:
   monthly_usd: 150            # also set as the Anthropic console limit (runtime plan 8.4)
   daily_usd: 10               # over it, only A7 and the Critic keep running, and Ilay gets a message
+  weekly_research_usd: 25     # the Saturday research run (A1, A3, A4, A6 + Critic), instead of the daily cap (not from course)
   always_run: [A7, C]
