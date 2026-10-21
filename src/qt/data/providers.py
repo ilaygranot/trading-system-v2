@@ -168,6 +168,15 @@ class FRED:
         obs = [(date.fromisoformat(o["date"]), float(o["value"])) for o in body["observations"] if o["value"] != "."]
         return obs, f"fred:{series_id}" + (f"@{known_on}" if known_on else "")
 
+    def release_dates(self, release_id: int, start: date, end: date) -> tuple[list[date], str]:
+        """The scheduled publication dates of a release (CPI, jobs, GDP ...) between start and end."""
+        url = (f"{self.BASE}/release/dates?release_id={release_id}&realtime_start={start}&realtime_end=9999-12-31"
+               f"&include_release_dates_with_no_data=true&sort_order=asc&limit=100&file_type=json"
+               f"&api_key={_key('FRED_API_KEY')}")
+        body = get_json(url, self.store, max_age_s=24 * 3600)
+        days = [date.fromisoformat(x["date"]) for x in body.get("release_dates", [])]
+        return [d for d in days if start <= d <= end], f"fred:release/{release_id}"
+
 
 class EDGAR:
     BASE = "https://data.sec.gov"

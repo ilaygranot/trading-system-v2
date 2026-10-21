@@ -100,20 +100,21 @@ def idea_facts(d: dict, macro: dict, as_of: date) -> FactSheet:
 class Judge:
     """Calls the cards for one research run and assembles the judgments dict."""
 
-    def __init__(self, runner, run_id: str | None = None, max_deep: int = MAX_DEEP):
-        self.runner, self.run_id, self.max_deep = runner, run_id, max_deep
+    def __init__(self, runner, run_id: str | None = None, max_deep: int = MAX_DEEP, step: str = "research"):
+        self.runner, self.run_id, self.max_deep, self.step = runner, run_id, max_deep, step
         self.log: list[dict] = []
 
     def _decide(self, agent: str, card: str, fs: FactSheet, world: dict, subject: str) -> dict:
-        r = self.runner.decide(agent, card, fs, world, run_id=self.run_id, step="research", subject=subject)
+        r = self.runner.decide(agent, card, fs, world, run_id=self.run_id, step=self.step, subject=subject)
         self.log.append(dict(card=card, subject=subject, option=r.option, status=r.status, cost=round(r.cost_usd, 4)))
         out = dict(r.output)
         out["status"] = r.status
         return out
 
     # ---------------------------------------------------------------- A1
-    def macro(self, macro: dict, as_of: date) -> dict:
-        fs = macro_facts(macro, as_of)
+    def macro(self, macro: dict | None, as_of: date, fs: FactSheet | None = None) -> dict:
+        """fs: a fact sheet built elsewhere (the monthly run's stance) instead of the research run's macro."""
+        fs = fs or macro_facts(macro, as_of)
         out, world = {}, {"write_in": LANGUAGE}
         for card in ("DC-01", "DC-02", "DC-03", "DC-04"):
             o = self._decide("A1", card, fs, world, "macro")
