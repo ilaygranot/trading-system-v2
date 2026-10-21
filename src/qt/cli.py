@@ -145,6 +145,25 @@ def _research(args: argparse.Namespace) -> int:
     return 0
 
 
+def _verify(args: argparse.Namespace) -> int:
+    """Verification on a dossier that already exists: writes it back with a verification section and re-renders."""
+    from qt.data.store import Store
+    from qt.research import report, verify
+    path = Path(args.dossier)
+    d = json.loads(path.read_text(encoding="utf-8"))
+    src = verify.default_sources(Store(args.cache) if args.cache else None)
+    if args.no_fetch:
+        src["fetch"] = None
+    d["verification"] = verify.run(d, **src)
+    out = Path(args.out or path.parent)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "dossier.json").write_text(json.dumps(d, default=str, ensure_ascii=False), encoding="utf-8")
+    (out / "report.html").write_text(report.render(d), encoding="utf-8")
+    t = d["verification"]["summary"]["total"]
+    print(f"verified: {t['ok']} ok, {t['single']} single source, {t['bad']} bad -> {out / 'report.html'}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="qt")
     sub = ap.add_subparsers(required=True)
@@ -174,6 +193,12 @@ def main(argv: list[str] | None = None) -> int:
     rs.add_argument("--out", required=True, help="where dossier.json and report.html go")
     rs.add_argument("--work", help="stage cache (default .qt-research/<as-of>)")
     rs.set_defaults(fn=_research)
+    vf = sub.add_parser("verify", help="data verification on an existing dossier (SEC, second close, sources)")
+    vf.add_argument("--dossier", required=True)
+    vf.add_argument("--out", help="where dossier.json and report.html go (default: next to the dossier)")
+    vf.add_argument("--cache", help="HTTP cache (SQLite path)")
+    vf.add_argument("--no-fetch", action="store_true", help="do not open source pages to check quotes")
+    vf.set_defaults(fn=_verify)
     w = sub.add_parser("web", help="the dashboard and Telegram webhook (local; gunicorn qt.web:application in the cloud)")
     w.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
     w.set_defaults(fn=_web)

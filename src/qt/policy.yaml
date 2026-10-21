@@ -219,6 +219,23 @@ manage:                            # S12 daily review of open positions; part ג
   stress_drops_pct: [10, 20, 30]   # S12-R23
   beta_flag: 1.0                   # S12-R23: portfolio beta above 1 => flag
 
+verification:                      # peer-review plan stage 1: data checks in code; not from course (operations)
+  price_tol_pct: 0.5               # close vs a second source
+  statement_tol_pct: 2.0           # revenue / EPS vs the filing (SEC)
+  market_cap_tol_pct: 10.0         # price x shares on the last filing vs the vendor's market cap (buybacks move it)
+  adr_ratios: [2, 3, 4, 5, 10]     # a per-share gap at one of these ratios is an ADR basis, not an error
+  pe_range: [0, 200]               # forward P/E outside it is suspect
+  sales_f1_max_ratio: 2.0          # next-year sales over last year's
+  eps_basis_range: [0.8, 1.25]     # reported EPS / analyst F0
+  bars_max_age_days: 4             # calendar days between the last daily bar and as_of
+  daily_max_age_days: 5            # daily macro series (HY, curve)
+  monthly_max_lag: 1               # months between as_of and the latest monthly value
+  monthly_lag_overrides: {michigan: 2, cpi_yoy: 1}
+  primary_domains: [sec.gov, federalreserve.gov, bls.gov, bea.gov, stlouisfed.org, ismworld.org, nfib.com,
+                    prnewswire.com, businesswire.com, globenewswire.com, treasury.gov, eia.gov, sca.isr.umich.edu]
+  aggregator_domains: [ycharts.com, tipranks.com, kalkinemedia.com, tradingeconomics.com, investinglive.com,
+                       securities.io, wikipedia.org, marketbeat.com, seekingalpha.com, zacks.com, finance.yahoo.com]
+
 runtime:                           # runtime plan 4-7; not from course (operations)
   timezone: America/New_York
   daily_at: "18:30"                # after the close

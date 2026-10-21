@@ -274,6 +274,38 @@ def rr_bar(entry: float, stop: float, target: float | None, direction: str) -> s
 
 # ---------------------------------------------------------------- sections
 
+VSTAT_HE = {"ok": "אומת", "single": "מקור אחד", "bad": "בעייתי"}
+VBADGE = {"ok": "✓", "single": "◐", "bad": "✗"}
+VPILL = {"ok": "green", "single": "orange", "bad": "red"}
+
+
+def vbadge(status: str, text: str | None = None) -> str:
+    return f'<span class="pill pill-{VPILL[status]}" title="{E(VSTAT_HE[status])}">{VBADGE[status]} {E(text or VSTAT_HE[status])}</span>'
+
+
+def _vval(x: Any) -> str:
+    if isinstance(x, (int, float)) and not isinstance(x, bool):
+        return money(x) if abs(x) >= 1e6 else num(x, 2)
+    s = str(x) if x is not None else "—"
+    return src_link(s, s[:48] + ("…" if len(s) > 48 else "")) if s.startswith("http") else E(s)
+
+
+def vtable(rows: list[dict], subject: bool = False) -> str:
+    out = ['<div class="tbl"><table class="compact"><thead><tr>' + ("<th>נושא</th>" if subject else "")
+           + '<th>סטטוס</th><th>מה</th><th>ערך</th><th>מקור</th><th>מקור שני</th><th>פירוט</th></tr></thead><tbody>']
+    for r in rows:
+        second = _vval(r["second"]) if r.get("second") is not None else "—"
+        if r.get("second_source"):
+            second += f' <small>{E(r["second_source"])}</small>'
+        out.append("<tr>" + (f'<td><b>{E(r["subject"])}</b></td>' if subject else "")
+                   + f'<td>{vbadge(r["status"])}</td><td>{E(r["label"])}</td><td class="n">{_vval(r["value"])}</td>'
+                   f'<td><small>{E(r["source"])}</small></td>'
+                   f'<td class="n">{second}</td>'
+                   f'<td class="why">{E(r["note"])}</td></tr>')
+    out.append("</tbody></table></div>")
+    return "".join(out)
+
+
 def _summary(d: dict) -> str:
     ideas = d["ideas"]
     order = {"enter": 0, "conditional": 1, "watch": 2, "reject": 3}
@@ -323,6 +355,34 @@ def _summary(d: dict) -> str:
     out.append(f'<p class="note">גודל פוזיציה מחושב על תיק רעיוני של {d["meta"]["equity"]:,.0f}$. כניסה ראשונה 6% '
                f'(S11-R5), עצירה = k × ADR60 מהכניסה (S11-R11), ויחס סיכוי-סיכון מינימלי 3 (S10-R3). '
                f'שום פקודה לא נשלחת. כל עסקה דורשת את אישורך.</p></section>')
+    return "".join(out)
+
+
+def _verification(d: dict) -> str:
+    v = d.get("verification")
+    if not v:
+        return ""
+    t, rows = v["summary"]["total"], v["checks"]
+    bad = [r for r in rows if r["status"] == "bad"]
+    srcs = [r for r in rows if r["field"] == "source"]
+    out = ['<section id="verify"><h2>אימות נתונים</h2>']
+    n_ok, n_single, n_bad = t["ok"], t["single"], t["bad"]
+    out.append(f'<p>כל מספר שמשתתף בהחלטה נבדק בקוד מול מקור שני, טווח סביר ותאריך. {vbadge("ok", f"{n_ok} אומתו")} '
+               f'{vbadge("single", f"{n_single} עם מקור אחד")} {vbadge("bad", f"{n_bad} בעייתיים")}</p>')
+    avail = [("SEC (דוחות)", v.get("sec")), ("מקור שני למחיר", v.get("second_price")), ("פתיחת עמודי מקור", v.get("fetched_pages"))]
+    out.append('<p class="small">מקורות שזמינים בריצה: ' + " · ".join(f'{E(n)} {"✓" if ok else "✗"}' for n, ok in avail) + "</p>")
+    if bad:
+        out.append(f"<h3>לטיפול ({len(bad)})</h3>" + vtable(bad, subject=True))
+    no_quote = sum("אין ציטוט" in r["note"] for r in srcs)
+    if srcs:
+        out.append(f'<p class="note">מקורות לשיקול הדעת: {len(srcs)} קישורים, ל-{no_quote} מהם אין ציטוט מהעמוד. '
+                   'מקור בלי ציטוט נחשב "מקור אחד" (◐): ייתכן שהעובדה נלקחה מתקציר חיפוש בלי לפתוח את העמוד.</p>')
+    other = [r for r in rows if r["subject"] in ("macro",) and r["field"] != "source"]
+    if other:
+        out.append("<details><summary>עדכניות המקרו</summary>" + vtable(other) + "</details>")
+    if srcs:
+        out.append("<details><summary>כל המקורות</summary>" + vtable(srcs, subject=True) + "</details>")
+    out.append("</section>")
     return "".join(out)
 
 
@@ -542,8 +602,11 @@ def _screen(d: dict) -> str:
     return "".join(out)
 
 
-def _idea(i: dict) -> str:
+def _idea(i: dict, checks: list[dict] | None = None) -> str:
     j, p, f, v, c, tl = i["judgment"], i["plan"], i["fundamentals"], i["valuation"], i["catalysts"], i["timing"]
+    checks = checks or []
+    worst = "bad" if any(r["status"] == "bad" for r in checks) else "single" if any(r["status"] == "single" for r in checks) else "ok"
+    vchip = vbadge(worst, "נתונים " + VSTAT_HE[worst]) if checks else ""
     full = i["bucket"] in ("enter", "conditional") or j.get("thesis")
     story_chip = f'<span class="chip">{E(STORY_HE.get(j["story_type"], j["story_type"]))}</span>' if j.get("story_type") else ""
     out = [f'<article class="idea idea-{E(i["bucket"])}" id="idea-{E(i["sym"])}">']
@@ -551,7 +614,7 @@ def _idea(i: dict) -> str:
                f'<p>{E(i["profile"].get("industry") or "")} · {E(i["profile"].get("country") or "")} · שווי {money(i["row"]["market_cap"])}$ · '
                f'{E(DIR_HE[i["direction"]])} · {E(i["etf"])} · פרופיל {E(i["row"]["profile"])}</p></div>'
                f'<div class="i-badges">{bucket_pill(i["bucket"])}{pill(tl["combined"], "רמזור " + COLOR_HE.get(tl["combined"], ""))}'
-               f'{story_chip}</div></header>')
+               f'{story_chip}{vchip}</div></header>')
     if j.get("tldr"):
         out.append(_tldr(i))
     if j.get("why") and not j.get("thesis"):
@@ -686,6 +749,10 @@ def _idea(i: dict) -> str:
         out.append("</tbody></table></div>")
     if j.get("sources"):
         out.append('<p class="small"><b>מקורות:</b> ' + " · ".join(src_link(s["url"], s["title"]) for s in j["sources"]) + "</p>")
+    if checks:
+        nb = sum(r["status"] == "bad" for r in checks)
+        out.append(f'<details{" open" if nb else ""}><summary>אימות נתונים: {sum(r["status"] == "ok" for r in checks)} ✓ · '
+                   f'{sum(r["status"] == "single" for r in checks)} ◐ · {nb} ✗</summary>{vtable(checks)}</details>')
     if full and i["profile"].get("summary"):
         out.append(f'<details><summary>על החברה (Yahoo)</summary><p class="small" dir="ltr">{E(i["profile"]["summary"])}</p></details>')
     out.append("</article>")
@@ -765,7 +832,7 @@ def _ideas(d: dict) -> str:
         if i["bucket"] != cur:
             cur = i["bucket"]
             out.append(f'<h3 class="group">{E(BUCKET_HE[cur])}</h3>')
-        out.append(_idea(i))
+        out.append(_idea(i, [r for r in (d.get("verification") or {}).get("checks", []) if r["subject"] == i["sym"]]))
     out.append("</section>")
     return "".join(out)
 
@@ -775,7 +842,7 @@ def _method(d: dict) -> str:
     return f'''<section id="method"><h2>שיטה, הנחות ומגבלות</h2>
 <ul>
 <li><b>מי כתב מה.</b> כל מספר בדוח מחושב בקוד (qt.*) לפי הפלייבוק, גרסה {E(m["playbook_version"])}. השדות שמסומנים "שיקול דעת" (אזור, מצפן, סיפור, תזה, קטליזטורים, צבע רמות, טריגר, k ומבנה) נכתבו על ידי {E(m["judged_by"])}.</li>
-<li><b>נתונים.</b> מחירים, תחזיות אנליסטים, דוחות, אופציות וחדשות מ-Yahoo Finance. מקרו מ-FRED עם גרסאות ALFRED נכון ל-{E(m["as_of"])}, כך שאין מבט לעתיד. ISM ו-NFIB נאספו ידנית, עם קישור לכל ערך. SEC חסום בסביבה, ולכן הדוחות מ-Yahoo.</li>
+<li><b>נתונים.</b> מחירים, תחזיות אנליסטים, דוחות, אופציות וחדשות מ-Yahoo Finance. מקרו מ-FRED עם גרסאות ALFRED נכון ל-{E(m["as_of"])}, כך שאין מבט לעתיד. ISM ו-NFIB נאספו ידנית, עם קישור לכל ערך. הדוחות מ-Yahoo{", ומוצלבים מול SEC (פרק האימות)" if (d.get("verification") or {}).get("sec") else "; SEC לא היה זמין, ולכן אין הצלבה מול הדוח עצמו"}.</li>
 <li><b>היסטוריה.</b> {m["history_years"]} שנות מחיר. "שיא" ו"שפל" מתייחסים לחלון הזה, ולא בהכרח לשיא של כל הזמנים.</li>
 <li><b>תיק.</b> תיק רעיוני של {m["equity"]:,.0f}$ בלי פוזיציות פתוחות. בתיק האמיתי מנוע הכללים בודק גם חשיפה, סקטורים ותקרות אופציות.</li>
 <li><b>לא מהקורס (מסומן בדוח):</b> השמטה של מכפיל היסטורי חריג (מעל פעמיים החציון, או מעל 80 ל-P/E ו-40 ל-P/S) ושימוש בממוצע של השאר; בדיקת התאמה בין EPS בדוחות לתחזית (ADR, מטבע, GAAP); נפילה לחישוב שנתי כשאין 8 רבעונים ל-TTM; ייחוס NFIB על 21 חודשים.</li>
@@ -946,6 +1013,8 @@ def render(d: dict[str, Any]) -> str:
     as_of = date.fromisoformat(m["as_of"])
     nav = [("summary", "שורה תחתונה"), ("funnel", "משפך"), ("macro", "מקרו"), ("sectors", "סקטורים"),
            ("screen", "סינון ורמזור"), ("ideas", "רעיונות"), ("method", "שיטה")]
+    if d.get("verification"):
+        nav.insert(1, ("verify", "אימות"))
     return f"""<title>מחקר שוק {as_of:%d.%m.%Y}</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -956,5 +1025,5 @@ def render(d: dict[str, Any]) -> str:
 <p>ריצה מלאה של שלבים 0–11 על נתונים חיים · פלייבוק {E(m["playbook_version"])} · סגירה של {E(m["as_of"])}</p></div>
 <p class="note">שיקול דעת: {E(m["judged_by"])}</p></div>
 <nav class="rail">{"".join(f'<a href="#{k}">{E(v)}</a>' for k, v in nav)}</nav>
-{_summary(d)}{_funnel(d)}{_macro(d)}{_sectors(d)}{_screen(d)}{_ideas(d)}{_method(d)}
+{_summary(d)}{_verification(d)}{_funnel(d)}{_macro(d)}{_sectors(d)}{_screen(d)}{_ideas(d)}{_method(d)}
 </div>"""
