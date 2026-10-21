@@ -84,3 +84,42 @@ def test_report_renders_every_section():
         assert f'id="idea-{sym}"' in h
     assert h.count("<svg") > 10
     assert "Claude" in h                                               # who wrote the judgment is stated
+
+
+def test_exit_plan_from_trigger_with_earnings_before_expiry():
+    p = {"entry": 100.0, "stop": 90.0, "target": 160.0, "horizon_months": 4}
+    j = {"trigger": {"level": 105.0}}
+    x = run.exit_plan(p, "long", "conditional", date(2026, 10, 20), "2026-11-03", j)
+    assert (x["entry"], x["stop"], x["r"]) == (105.0, 95.0, 10.0)        # same stop width, from the trigger
+    assert (x["trail_from"], x["trail_stop"]) == (135.0, 123.0)         # 3R; keeps 60% of 30
+    assert x["time_stop_date"] == "2026-11-17" and x["earnings_before_expiry"]
+    now = run.exit_plan(p, "long", "enter", date(2026, 10, 20), None, j)
+    assert now["entry"] == 100.0 and now["time_stop_date"] is None
+
+
+def test_corr_on_month_keys():
+    a = {f"2025-{m:02d}": m * 0.01 for m in range(1, 13)}
+    assert round(run._corr(a, {k: -v for k, v in a.items()}, 12), 6) == -1.0
+    assert run._corr(a, {"2025-01": 0.1}, 12) is None
+
+
+def test_event_markers_land_on_the_right_point():
+    dates = [f"2026-{m:02d}" for m in range(1, 10)]
+    svg = report.line_chart(dates, [("x", list(range(9)), "main")], markers=[("2026-03-02", "1"), ("2024-01", "2")])
+    assert svg.count('class="ev"') == 1 and ">1</text>" in svg
+
+
+def test_report_shows_events_fed_exit_and_fit():
+    d = json.loads(FIX.read_text(encoding="utf-8"))
+    d["judgments"]["A1"]["events"] = [{"date": "2026-03-02", "title": "אירוע", "text": "t", "charts": ["ffr"],
+                                       "sources": [{"title": "s", "url": "https://example.com"}]}]
+    d["judgments"]["A1"]["fed"] = {"headline": "הפד העלה"}
+    sym = next(iter(d["ideas"]))
+    d["ideas"][sym]["judgment"]["tldr"] = {"line": "שורה לחבר", "macro": "מאקרו"}
+    d["ideas"][sym]["bucket"] = "enter"
+    d["ideas"][sym]["exit"] = run.exit_plan(d["ideas"][sym]["plan"], "long", "enter", date(2026, 10, 20), "2026-10-29", {})
+    d["portfolio"] = {"syms": [sym], "refs": ["SPY"], "pairs": [], "strong": 0.5, "sectors": {"XLE": 1},
+                      "vs_refs": {sym: {"SPY": {"c12": 0.6, "c36": None}}}, "total_size_pct": 6, "total_risk_pct": 0.5}
+    h = report.render(d)
+    for s in ('class="events"', "הפד העלה", 'class="tldr"', "שורה לחבר", 'class="fed-box"', 'class="exit"', 'class="fit"', 'class="ev"'):
+        assert s in h

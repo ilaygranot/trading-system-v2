@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from qt import macro as M
-from qt.data.macro_feed import fetch_fred, monthly_last, parse_manual, yoy_pct
+from qt.data.macro_feed import fetch_fred, missing_months, monthly_last, parse_manual, yoy_pct
 from qt.policy import load_policy
 
 COMMODITIES = {"wti": "DCOILWTICO", "copper": "PCOPPUSDM", "natgas": "DHHNGSP"}
@@ -36,6 +36,9 @@ def run(fred, manual_text: str, spx: list, as_of: date, breadth_pct: float | Non
         src.setdefault(name, s)
     out: dict[str, Any] = {"as_of": as_of.isoformat(), "sources": src, "manual_sources": manual_raw.get("sources", {}),
                            "flags": []}
+    # months the agency never published (filled on the line between neighbours so 12 back stays a year)
+    out["filled_months"] = {k: v for k, v in ((n, missing_months(o)) for n, o in raw_obs.items()
+                                              if n in ("cpi", "ffr", "unemployment", "michigan", "permits")) if v}
 
     # ---------------- stage 1: global macro
     hy = daily["hy_oas"]

@@ -34,12 +34,39 @@ FRED_SERIES = {
 MANUAL_SERIES = ("ism_pmi", "ism_nmi", "small_business")
 
 
+def _next_month(m: str) -> str:
+    y, mo = int(m[:4]), int(m[5:7])
+    return f"{y + mo // 12:04d}-{mo % 12 + 1:02d}"
+
+
 def monthly_last(obs: Iterable[tuple[date, float]]) -> list[tuple[str, float]]:
-    """Daily/weekly observations -> one value per month (the last of the month)."""
+    """Daily/weekly observations -> one value per month (the last of the month), with no missing months.
+
+    Every consumer indexes by position (12 back = a year ago), so a month the agency never published (BLS
+    skipped October 2025 in the shutdown) would turn a 12-month change into a 13-month one. A missing month
+    is filled on the straight line between its neighbours (not from course)."""
     out: OrderedDict[str, float] = OrderedDict()
     for d, v in obs:
         out[f"{d.year:04d}-{d.month:02d}"] = v
-    return list(out.items())
+    items = list(out.items())
+    filled: list[tuple[str, float]] = items[:1]
+    for m, v in items[1:]:
+        gap = []
+        nm = _next_month(filled[-1][0])
+        while nm < m:
+            gap.append(nm)
+            nm = _next_month(nm)
+        prev = filled[-1][1]
+        for k, g in enumerate(gap, 1):
+            filled.append((g, prev + (v - prev) * k / (len(gap) + 1)))
+        filled.append((m, v))
+    return filled
+
+
+def missing_months(obs: Iterable[tuple[date, float]]) -> list[str]:
+    """The months monthly_last filled in, to show next to the series."""
+    have = {f"{d.year:04d}-{d.month:02d}" for d, _ in obs}
+    return [m for m, _ in monthly_last(obs) if m not in have]
 
 
 def yoy_pct(monthly: list[float]) -> list[float]:

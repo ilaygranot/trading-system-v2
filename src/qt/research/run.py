@@ -21,6 +21,7 @@ from typing import Any
 
 import yaml
 
+from qt.calc import indicators as I
 from qt.calc import trade as T
 from qt.calc.volatility import adr
 from qt.policy import load_policy
@@ -180,6 +181,65 @@ def classify(d: dict) -> tuple[str, str]:
     return "watch", f"יחס סיכוי-סיכון {rr:.1f}, מתחת ל-{load_policy().reward_risk.min_ratio:.0f}"
 
 
+TIME_STOP_WEEKS = 4                                               # not from course: the default expiry of a trigger
+FACTOR_REFS = ("SPY", "USO", "GLD")                               # market, oil, gold (not from course: the proxies)
+
+
+def exit_plan(p: dict, direction: str, bucket: str, as_of: date, next_earnings: str | None, j: dict) -> dict[str, Any]:
+    """What happens after entry and before it, from code: the 60/40 trail level (S12-R11 at 3R, D-S12-4), the
+    target as a partial-take zone (S12-R13), the trigger's expiry (not from course) and whether earnings land
+    before it. A conditional trade is figured from its trigger level with the same stop width; the fill recomputes it."""
+    sg = 1 if direction == "long" else -1
+    r = abs(p["entry"] - p["stop"])
+    trig = (j.get("trigger") or {}).get("level")
+    e = float(trig) if bucket == "conditional" and trig else p["entry"]
+    t = p.get("target")
+    out: dict[str, Any] = dict(r=r, entry=e, stop=e - sg * r, trail_from=e + sg * 3 * r, trail_stop=e + sg * 0.6 * 3 * r, target=t,
+                               target_before_trail=bool(t and sg * (t - (e + sg * 3 * r)) < 0))
+    weeks = int(j.get("time_stop_weeks") or TIME_STOP_WEEKS)
+    expiry = as_of + timedelta(weeks=weeks) if bucket == "conditional" else None
+    out.update(time_stop_weeks=weeks if expiry else None, time_stop_date=expiry.isoformat() if expiry else None)
+    if next_earnings:
+        ne = date.fromisoformat(next_earnings)
+        horizon_end = as_of + timedelta(days=round((p.get("horizon_months") or 3) * 30.4))
+        out.update(next_earnings=next_earnings, days_to_earnings=(ne - as_of).days,
+                   earnings_before_expiry=bool(expiry and ne <= expiry), earnings_in_horizon=ne <= horizon_end)
+    return out
+
+
+def _monthly_returns(y: Yahoo, sym: str, as_of: date) -> dict[str, float]:
+    m = I.resample(y.bars(sym, as_of - timedelta(days=365 * 3 + 62), as_of), "month")
+    return {m[i].day.strftime("%Y-%m"): m[i].close / m[i - 1].close - 1 for i in range(1, len(m))}
+
+
+def _corr(a: dict[str, float], b: dict[str, float], months: int) -> float | None:
+    keys = sorted(set(a) & set(b))[-months:]
+    if len(keys) < min(months, 12) - 1:
+        return None
+    xs, ys = [a[k] for k in keys], [b[k] for k in keys]
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+    sxy = sum((x - mx) * (y_ - my) for x, y_ in zip(xs, ys))
+    sxx, syy = sum((x - mx) ** 2 for x in xs), sum((y_ - my) ** 2 for y_ in ys)
+    return sxy / (sxx * syy) ** 0.5 if sxx and syy else None
+
+
+def portfolio_fit(y: Yahoo, ideas: dict, as_of: date) -> dict[str, Any]:
+    """S11-R17: correlation of monthly returns, 12 months and 3 years, between the trades on the list and
+    against market, oil and gold; S11-R2 sector count; the combined size and risk if every trade fills."""
+    syms = [s for s, i in ideas.items() if i["bucket"] in ("enter", "conditional")]
+    if not syms:
+        return {}
+    refs = list(dict.fromkeys([ideas[s]["etf"] for s in syms] + list(FACTOR_REFS)))
+    rets = {s: _monthly_returns(y, s, as_of) for s in syms + refs}
+    pairs = [dict(a=a, b=b, c12=_corr(rets[a], rets[b], 12), c36=_corr(rets[a], rets[b], 36))
+             for k, a in enumerate(syms) for b in syms[k + 1:]]
+    vs_refs = {s: {r: dict(c12=_corr(rets[s], rets[r], 12), c36=_corr(rets[s], rets[r], 36)) for r in refs} for s in syms}
+    sz = [ideas[s]["plan"]["sizing"] for s in syms]
+    return dict(syms=syms, refs=refs, pairs=pairs, vs_refs=vs_refs, strong=0.5,
+                sectors=dict(Counter(ideas[s]["etf"] for s in syms)),
+                total_size_pct=sum(x["allowed_pct"] for x in sz), total_risk_pct=sum(x["risk_pct_of_equity"] for x in sz))
+
+
 def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path, cache: Path, fred) -> dict[str, Any]:
     y = Yahoo(cache)
     u = _cached(work / "universe.pkl", lambda: U.fetch(y), binary=True)
@@ -203,6 +263,9 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path, cache:
         etf = j["etf"]
         ideas[sym] = deep_dive(y, u, screens, sym, etf, j["direction"], j, bias, buckets, as_of)
         ideas[sym]["bucket"], ideas[sym]["bucket_reason"] = classify(ideas[sym])
+        ideas[sym]["exit"] = exit_plan(ideas[sym]["plan"], j["direction"], ideas[sym]["bucket"], as_of,
+                                       ideas[sym]["catalysts"].get("next_earnings"), j)
+    fit = portfolio_fit(y, ideas, as_of)
 
     surv = sum(len(s["long"]) + len(s["short"]) for s in screens.values())
     in_sectors = sum(s["n"] for s in screens.values())
@@ -221,5 +284,5 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path, cache:
         meta=dict(as_of=as_of.isoformat(), generated_at=datetime.now(timezone.utc).isoformat(timespec="minutes"),
                   equity=idea.EQUITY, playbook_version=load_policy().playbook_version, history_years=HISTORY_DAYS // 365,
                   judged_by=J.get("judged_by", "missing"), breadth_pct=breadth),
-        macro=macro, sectors=sectors, screens=screens, timing=timing, ideas=ideas, funnel=funnel,
+        macro=macro, sectors=sectors, screens=screens, timing=timing, ideas=ideas, funnel=funnel, portfolio=fit,
         judgments={k: v for k, v in J.items() if k != "ideas"})
