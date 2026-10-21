@@ -139,6 +139,15 @@ def rules(ctx: RunContext, _: str) -> dict:
                           VixReading(**c["vix"]) if c.get("vix") else None,
                           market_ret=c.get("market_ret_20d"))
     acts = [asdict(a) for a in review.actions]
+    caps = pf.get("caps") or {}
+    if caps and equity > 0:                                           # D-S11-7: Ilay's caps, a flag only
+        lng = sum(h.value for h in held if h.instrument == "stock" and h.direction == "long") / equity
+        sht = sum(h.value for h in held if h.instrument == "stock" and h.direction == "short") / equity
+        for k, v in (("long", lng), ("short", sht), ("net", lng - sht)):
+            cap = caps.get(f"{k}_max")
+            if cap is not None and v > cap:
+                acts.append(dict(kind="flag", rule_id="D-S11-7", symbol=None, qty=None, price=None, preapproved=False,
+                                 detail=f"{k} exposure {v:.2f} > cap {cap:g}"))
     if snap["stale"]:
         acts.append(dict(kind="block_new_risk", rule_id="DATA-STALE", symbol=None, qty=None, price=None,
                          preapproved=False, detail="stale data: " + ", ".join(snap["stale"]) +

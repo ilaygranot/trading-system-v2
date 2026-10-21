@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from qt.approvals import Queue
 from qt.daily import DAILY, load_portfolio  # noqa: F401  (load_portfolio re-exported for the CLI)
 from qt.runs import RunContext, Step
+from qt import monthly as MO
 from qt import weekly as W
 
 
@@ -192,6 +193,9 @@ def monthly_queue(ctx: RunContext, _: str) -> dict:
               + (f" · דגלים: {', '.join(st['flags'])}" if st["flags"] else "")
               + (f" · חסרים: {', '.join(st['skipped_indicators'])}" if st["skipped_indicators"] else "")
               + f" · כרטיסים ל-A1: {', '.join(st['cards'])}")
+    a1 = ctx.out("a1") or {}
+    if a1.get("DC-01"):
+        detail += " · A1: " + ", ".join(f"{k} {a1[k]['choice']}" for k in ("DC-01", "DC-02", "DC-03", "DC-04") if k in a1)
     iid = Queue(ctx.db).add(ctx.run_id, ctx.as_of, dict(kind="flag", rule_id="S02-STANCE", symbol=None, qty=None,
                                                          price=None, preapproved=False, detail=detail))
     return {"item": iid, "detail": detail}
@@ -199,13 +203,17 @@ def monthly_queue(ctx: RunContext, _: str) -> dict:
 
 def monthly_notify(ctx: RunContext, _: str) -> dict:
     text = f"חודשית {ctx.as_of.isoformat()} · מקרו: {ctx.out('queue')['detail']}"
+    prep = MO.summary(ctx)
     _send(ctx, text)
-    return {"text": text}
+    _send(ctx, prep)
+    return {"text": text, "prep": prep}
 
 
 PREMARKET = (Step("expire", expire), Step("quotes", quotes), Step("recheck", recheck), Step("notify", premarket_notify))
 WEEKLY = (Step("expire", expire), Step("report", report), Step("wfetch", W.wfetch), Step("arena", W.arena),
           Step("revisit", W.revisit), Step("week", W.week), Step("research", W.research), Step("notify", weekly_notify))
-MONTHLY = (Step("manual", manual), Step("fred", fred), Step("stance", stance), Step("queue", monthly_queue),
-           Step("notify", monthly_notify))
+MONTHLY = (Step("manual", manual), Step("fred", fred), Step("stance", stance), Step("a1", MO.a1),
+           Step("mfetch", MO.mfetch), Step("candles", MO.candles), Step("sectors", MO.sectors), Step("ism", MO.ism),
+           Step("calendar", MO.calendar), Step("season", MO.season), Step("exposure", MO.exposure),
+           Step("queue", monthly_queue), Step("notify", monthly_notify))
 PIPELINES = {"daily": DAILY, "premarket": PREMARKET, "weekly": WEEKLY, "monthly": MONTHLY}

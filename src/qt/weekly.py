@@ -243,7 +243,9 @@ def research(ctx: RunContext, _: str) -> dict:
     ideas = [dict(symbol=s, bucket=i["bucket"], direction=i["direction"], rr=(i.get("plan") or {}).get("rr"),
                   line=((i.get("judgment") or {}).get("tldr") or {}).get("line") or (i.get("judgment") or {}).get("why", ""))
              for s, i in d["ideas"].items()]
-    return {"report_id": rid, "ideas": ideas, "watchlist_n": len(wl["entries"]),
+    sc = (d.get("sectors") or {}).get("scorecard") or {}
+    growth = {e: dict(v["growth"], total=v.get("total"), bucket=v.get("bucket")) for e, v in sc.items() if v.get("growth")}
+    return {"report_id": rid, "ideas": ideas, "watchlist_n": len(wl["entries"]), "sector_growth": growth,
             "rejected_on_list": [x["symbol"] for x in ideas if x["bucket"] == "reject" and x["symbol"] in on_list],
             "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {})}
 
