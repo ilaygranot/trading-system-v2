@@ -2,8 +2,9 @@
 
 premarket: expire -> quotes -> recheck -> notify. Items still open or approved are checked against the latest
            price; a move past the threshold, or a hard block now in force, sends the item back as "changed".
-weekly:    expire -> report -> notify. Runs that failed or resumed, agent cost per agent, queue discipline
-           (approved / rejected / not reviewed / changed), agent decisions that were undecided or returned.
+weekly:    expire -> report -> wfetch -> arena -> revisit -> week -> notify. Runs that failed or resumed, agent cost
+           per agent, queue discipline (approved / rejected / not reviewed / changed), agent decisions that were
+           undecided or returned; then the end-of-week review (qt.weekly, S13-R21).
 monthly:   manual -> fred -> stance -> queue -> notify. Waits for the manual ISM / NFIB file: without it the run
            fails with a reminder, and resumes when the file arrives (the bot's upload calls resume).
 """
@@ -15,6 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from qt.approvals import Queue
 from qt.daily import DAILY, load_portfolio  # noqa: F401  (load_portfolio re-exported for the CLI)
 from qt.runs import RunContext, Step
+from qt import weekly as W
 
 
 def _now(ctx: RunContext) -> datetime:
@@ -120,6 +122,8 @@ def weekly_notify(ctx: RunContext, _: str) -> dict:
     if r["agents"]:
         lines.append("החלטות Agents: " + " · ".join(f"{k} {v}" for k, v in sorted(r["agents"].items())))
     text = "\n".join(lines)
+    if ctx.out("week") is not None:
+        text = W.summary(ctx) + "\n\nתפעול\n" + text
     _send(ctx, text)
     return {"text": text}
 
@@ -196,7 +200,8 @@ def monthly_notify(ctx: RunContext, _: str) -> dict:
 
 
 PREMARKET = (Step("expire", expire), Step("quotes", quotes), Step("recheck", recheck), Step("notify", premarket_notify))
-WEEKLY = (Step("expire", expire), Step("report", report), Step("notify", weekly_notify))
+WEEKLY = (Step("expire", expire), Step("report", report), Step("wfetch", W.wfetch), Step("arena", W.arena),
+          Step("revisit", W.revisit), Step("week", W.week), Step("notify", weekly_notify))
 MONTHLY = (Step("manual", manual), Step("fred", fred), Step("stance", stance), Step("queue", monthly_queue),
            Step("notify", monthly_notify))
 PIPELINES = {"daily": DAILY, "premarket": PREMARKET, "weekly": WEEKLY, "monthly": MONTHLY}
