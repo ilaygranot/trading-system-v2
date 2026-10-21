@@ -4,7 +4,8 @@ Roles (architecture 9.2, updated 20.10):
 - Yahoo Finance (unofficial query1/query2): primary for prices, F1/F2 estimates and revisions, short float, earnings dates.
 - FMP (free plan): profile, sample-symbol fundamentals; cross-check.
 - FRED/ALFRED: macro, always with realtime_start/realtime_end so history shows what was known then.
-- SEC EDGAR: filings and XBRL company facts (needs a User-Agent with contact).
+- SEC EDGAR: filings and XBRL company facts (needs a User-Agent with contact); the source of truth for reported numbers.
+- Alpha Vantage (free key, 25 calls a day): a second daily close when FMP is out of reach.
 - Zacks: Ilay uploads a monthly screen export (see zacks.py).
 """
 from __future__ import annotations
@@ -125,6 +126,24 @@ class FMP:
         return parse_fmp_prices(rows), "fmp:stable/historical-price-eod"
 
 
+class AlphaVantage:
+    BASE = "https://www.alphavantage.co/query"
+
+    def __init__(self, store: Store | None = None):
+        self.store = store
+
+    def daily_closes(self, symbol: str) -> tuple[dict[str, float], str]:
+        """Last ~100 daily closes by ISO date. The free plan answers over-limit calls with a note, not an error."""
+        key = _key("ALPHAVANTAGE_API_KEY")
+        # no cache: an over-limit answer is HTTP 200 and must not stick for the rest of the day
+        body = get_json(f"{self.BASE}?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={key}")
+        rows = body.get("Time Series (Daily)")
+        if not rows:
+            msg = str(body.get("Information") or body.get("Note") or body).replace(key, "***")
+            raise ProviderError(f"alphavantage {symbol}: {'daily limit reached' if 'rate limit' in msg else msg[:120]}")
+        return {d: float(v["4. close"]) for d, v in rows.items()}, "alphavantage:TIME_SERIES_DAILY"
+
+
 class FRED:
     BASE = "https://api.stlouisfed.org/fred"
 
@@ -148,6 +167,11 @@ class EDGAR:
     def __init__(self, store: Store | None = None, contact: str | None = None):
         self.store = store
         self.headers = {"User-Agent": f"QuantumTrader research {contact or os.environ.get('SEC_CONTACT', 'contact@example.com')}"}
+
+    def cik(self, ticker: str) -> int | None:
+        body = get_json("https://www.sec.gov/files/company_tickers.json", self.store, max_age_s=7 * 24 * 3600,
+                        headers=self.headers)
+        return next((int(v["cik_str"]) for v in body.values() if v["ticker"] == ticker.upper()), None)
 
     def company_facts(self, cik: int) -> tuple[dict, str]:
         return get_json(f"{self.BASE}/api/xbrl/companyfacts/CIK{cik:010d}.json", self.store,

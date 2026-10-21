@@ -1,7 +1,8 @@
 """One full research run, stages 0-10, into a dossier the report renders (qt research).
 
 universe -> macro (S01-S03) -> sectors (S04-S05) -> screen (S06) -> traffic light on every survivor (S09)
--> deep dive for the shortlisted ideas (S07-S08) -> trade plan, options and the rules engine (S10-S11).
+-> deep dive for the shortlisted ideas (S07-S08) -> trade plan, options and the rules engine (S10-S11)
+-> data verification (qt.research.verify: SEC, a second close, sanity, freshness, sources).
 
 Code computes every number. The judgment fields (stance commentary, sector notes, picks, thesis, catalyst
 classes, levels color, trigger, k, structure) come from a judgments file: the agents' cards in production,
@@ -25,7 +26,7 @@ from qt.calc import indicators as I
 from qt.calc import trade as T
 from qt.calc.volatility import adr
 from qt.policy import load_policy
-from qt.research import idea, macro_stage, sector_screen, universe as U
+from qt.research import idea, macro_stage, sector_screen, universe as U, verify
 from qt.research.yahoo import Yahoo, raw
 from qt.sectors import cycle_phase
 from qt.timing import candidate_levels, snapshot
@@ -280,9 +281,13 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path, cache:
              n=sum(i["bucket"] in ("enter", "conditional") for i in ideas.values()),
              split=dict(Counter(i["bucket"] for i in ideas.values()))),
     ]
-    return dict(
+    d = dict(
         meta=dict(as_of=as_of.isoformat(), generated_at=datetime.now(timezone.utc).isoformat(timespec="minutes"),
                   equity=idea.EQUITY, playbook_version=load_policy().playbook_version, history_years=HISTORY_DAYS // 365,
                   judged_by=J.get("judged_by", "missing"), breadth_pct=breadth),
         macro=macro, sectors=sectors, screens=screens, timing=timing, ideas=ideas, funnel=funnel, portfolio=fit,
         judgments={k: v for k, v in J.items() if k != "ideas"})
+    from qt.data.store import Store
+    d["verification"] = _cached(work / "verify.json",
+                                lambda: verify.run(d, **verify.default_sources(Store(str(work / "verify.sqlite")))))
+    return d
