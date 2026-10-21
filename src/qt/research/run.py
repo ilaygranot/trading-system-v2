@@ -241,12 +241,16 @@ def portfolio_fit(y: Yahoo, ideas: dict, as_of: date) -> dict[str, Any]:
                 total_size_pct=sum(x["allowed_pct"] for x in sz), total_risk_pct=sum(x["risk_pct_of_equity"] for x in sz))
 
 
-def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path, cache: Path, fred) -> dict[str, Any]:
+def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None, cache: Path, fred,
+        judge=None, manual_text: str | None = None) -> dict[str, Any]:
+    """judgments_path: a hand-written judgments file. judge: the agents instead (qt.research.judge.Judge); their
+    answers are saved under work/ like every other stage, so a resumed run does not ask again."""
     y = Yahoo(cache)
     u = _cached(work / "universe.pkl", lambda: U.fetch(y), binary=True)
     breadth = U.breadth_pct(u["quotes"])
     spx = y.bars("^GSPC", as_of - timedelta(days=3650), as_of)
-    macro = _cached(work / "macro.json", lambda: macro_stage.run(fred, manual_path.read_text(), spx, as_of, breadth))
+    macro = _cached(work / "macro.json", lambda: macro_stage.run(
+        fred, manual_text if manual_text is not None else manual_path.read_text(), spx, as_of, breadth))
     st = macro["stage2"]["stance"]
     sc = {x["name"]: x for x in macro["stage2"]["scores"]}
     phase, phase_flags = cycle_phase(sc["ism_pmi"]["cycle_quadrant"], (sc.get("permits") or {}).get("cycle_quadrant"))
@@ -255,10 +259,15 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path, cache:
     screens = _cached(work / "screens.json", lambda: sector_screen.screens(rows, sectors["long"], sectors["short"]))
     timing = _cached(work / "timing.json", lambda: stage_timing(y, screens, as_of))
 
-    J = yaml.safe_load(judgments_path.read_text()) if judgments_path.exists() else {}
     bias = st.get("bias") or "neutral"
     buckets = {e: ("long" if e in sectors["long"] else "short" if e in sectors["short"] else "neutral")
                for e in sectors["scorecard"]}
+    if judge is not None:
+        stages = dict(as_of=as_of, macro=macro, sectors=sectors, screens=screens, timing=timing)
+        J = _cached(work / "judgments.json", lambda: judge(stages, lambda sym, etf, dr, j: deep_dive(
+            y, u, screens, sym, etf, dr, j, bias, buckets, as_of)))
+    else:
+        J = yaml.safe_load(judgments_path.read_text()) if judgments_path and judgments_path.exists() else {}
     ideas = {}
     for sym, j in (J.get("ideas") or {}).items():
         etf = j["etf"]

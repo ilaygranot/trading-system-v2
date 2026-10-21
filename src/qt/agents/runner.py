@@ -87,8 +87,9 @@ CRITIC_SCHEMA = {
 
 
 class AgentRunner:
-    def __init__(self, db: DB, client: Any = None, journal: Journal | None = None):
+    def __init__(self, db: DB, client: Any = None, journal: Journal | None = None, limit_usd: float | None = None):
         self.db = db
+        self.limit_usd = limit_usd                                  # a run's own cap (the weekly research), else daily
         self.db.ddl(RUNS_SCHEMA)
         self.journal = journal or Journal(db)
         self._client = client
@@ -118,8 +119,9 @@ class AgentRunner:
 
     def _check_budget(self, agent: str) -> None:
         b = config()["budget"]
-        if agent not in b["always_run"] and self.spent_today() >= b["daily_usd"]:
-            raise BudgetExceeded(f"daily agent budget ${b['daily_usd']} reached: only {', '.join(b['always_run'])} run")
+        limit = self.limit_usd if self.limit_usd is not None else b["daily_usd"]
+        if agent not in b["always_run"] and self.spent_today() >= limit:
+            raise BudgetExceeded(f"agent budget ${limit} reached: only {', '.join(b['always_run'])} run")
 
     # ------------------------------------------------------------ one API call
     def _call(self, agent: str, req: dict, ctx: dict) -> tuple[dict | None, Any]:
