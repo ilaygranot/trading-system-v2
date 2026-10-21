@@ -305,7 +305,7 @@ def _summary(d: dict) -> str:
     <div><label>גודל ראשון</label><b>{num(p["sizing"]["allowed_pct"], 0, True)}</b><small>{p["sizing"]["quantity"]:,} יח'</small></div>
   </div>
   {rr_bar(p["entry"], p["stop"], p.get("target"), i["direction"])}
-  <p class="tc-why">{E(trig.get("text", ""))}</p>
+  <p class="tc-why">{E((j.get("tldr") or {}).get("line") or trig.get("text", ""))}</p>
 </a>''')
     out.append('<h3>כל הרעיונות שנבדקו לעומק</h3><div class="tbl"><table><thead><tr><th>מניה</th><th>סטטוס</th>'
                '<th>רמזור</th><th>מחיר</th><th>עצירה</th><th>יעד</th><th>מקור יעד</th><th>R:R</th><th>אופק</th>'
@@ -552,6 +552,8 @@ def _idea(i: dict) -> str:
                f'{E(DIR_HE[i["direction"]])} · {E(i["etf"])} · פרופיל {E(i["row"]["profile"])}</p></div>'
                f'<div class="i-badges">{bucket_pill(i["bucket"])}{pill(tl["combined"], "רמזור " + COLOR_HE.get(tl["combined"], ""))}'
                f'{story_chip}</div></header>')
+    if j.get("tldr"):
+        out.append(_tldr(i))
     if j.get("why") and not j.get("thesis"):
         out.append(f'<div class="verdict-box"><b>{"למה לא עכשיו" if i["bucket"] != "reject" else "למה נדחה"}:</b> {E(j["why"])}</div>')
     if j.get("story"):
@@ -688,6 +690,23 @@ def _idea(i: dict) -> str:
         out.append(f'<details><summary>על החברה (Yahoo)</summary><p class="small" dir="ltr">{E(i["profile"]["summary"])}</p></details>')
     out.append("</article>")
     return "".join(out)
+
+
+TLDR_PARTS = (("macro", "המאקרו"), ("sector", "הסקטור"), ("company", "החברה"), ("why_now", "למה עכשיו"),
+              ("wrong", "מה יכול להשתבש"))
+
+
+def _tldr(i: dict) -> str:
+    """The trade in a few sentences, as you'd tell a friend. The money line comes from the plan, not from the text."""
+    t, p, x = i["judgment"]["tldr"], i["plan"], i.get("exit") or {}
+    e = x.get("entry", p["entry"])
+    gain = (p["target"] / e - 1) * 100 if p.get("target") else None
+    loss = abs(p["stop_pct"])
+    rows = "".join(f"<dt>{lab}</dt><dd>{E(t[k])}</dd>" for k, lab in TLDR_PARTS if t.get(k))
+    money = (f'<dt>כסף</dt><dd>אם אני צודק: עלייה של {num(abs(gain or 0), 0, True)} עד {px(p["target"])}. אם טעיתי: '
+             f'ירידה של {num(loss, 1, True)} ויוצאים. יחס {num(p.get("rr"), 1)} ל-1, וסיכון של {num(p["sizing"]["risk_pct_of_equity"], 1, True)} מהתיק.</dd>')
+    return (f'<div class="tldr"><div class="j-tag">לספר לחבר</div><p class="tldr-line">{E(t.get("line", ""))}</p>'
+            f'<dl>{rows}{money}</dl></div>')
 
 
 def _exit(i: dict) -> str:
@@ -899,6 +918,11 @@ svg .ev-num{fill:var(--panel);font-size:10px;font-weight:700;font-family:var(--b
 .fed-box h3{margin-top:.6rem} .fed-box .big{font-family:var(--display);font-size:1.15rem;margin:.3rem 0}
 .exit{border:1px solid var(--line);border-radius:4px;padding:2px 12px;margin:10px 0;font-size:.9rem}
 .exit ul{padding-inline-start:18px;margin:.3rem 0} .exit li{margin:.25rem 0}
+.tldr{border:2px solid var(--accent);border-radius:6px;padding:8px 16px 10px;margin:12px 0;background:var(--panel)}
+.tldr .tldr-line{font-family:var(--display);font-size:1.2rem;margin:.2rem 0 .6rem}
+.tldr dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;margin:0}
+.tldr dt{font-weight:700;color:var(--accent)} .tldr dd{margin:0}
+@media (max-width:560px){.tldr dl{grid-template-columns:1fr} .tldr dd{margin-bottom:6px}}
 .fit{margin-bottom:1.5rem} .fit table{width:auto} .fit td.n,.fit th{text-align:center;padding-inline:14px} td.strong{font-weight:700;color:var(--o)}
 .timeline{list-style:none;padding:0;margin:.3rem 0} .timeline li{padding:3px 0}
 .timeline time,.news time{font-family:var(--mono);font-size:.8rem;color:var(--muted);margin-inline-end:6px}

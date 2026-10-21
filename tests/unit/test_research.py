@@ -115,10 +115,11 @@ def test_report_shows_events_fed_exit_and_fit():
                                        "sources": [{"title": "s", "url": "https://example.com"}]}]
     d["judgments"]["A1"]["fed"] = {"headline": "הפד העלה"}
     sym = next(iter(d["ideas"]))
+    d["ideas"][sym]["judgment"]["tldr"] = {"line": "שורה לחבר", "macro": "מאקרו"}
     d["ideas"][sym]["bucket"] = "enter"
     d["ideas"][sym]["exit"] = run.exit_plan(d["ideas"][sym]["plan"], "long", "enter", date(2026, 10, 20), "2026-10-29", {})
     d["portfolio"] = {"syms": [sym], "refs": ["SPY"], "pairs": [], "strong": 0.5, "sectors": {"XLE": 1},
                       "vs_refs": {sym: {"SPY": {"c12": 0.6, "c36": None}}}, "total_size_pct": 6, "total_risk_pct": 0.5}
     h = report.render(d)
-    for s in ('class="events"', "הפד העלה", 'class="fed-box"', 'class="exit"', 'class="fit"', 'class="ev"'):
+    for s in ('class="events"', "הפד העלה", 'class="tldr"', "שורה לחבר", 'class="fed-box"', 'class="exit"', 'class="fit"', 'class="ev"'):
         assert s in h
