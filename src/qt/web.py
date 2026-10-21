@@ -141,7 +141,7 @@ class App:
         return self._send(start, "200 OK", "ok", "text/plain")
 
     def upload(self, name: str, content: str) -> str:
-        """A portfolio file replaces the portfolio; anything else is the monthly manual macro file, and a monthly
+        """A portfolio file replaces the portfolio, a watchlist file the watchlist; anything else is the monthly manual macro file, and a monthly
         run waiting for it resumes."""
         import yaml
         try:
@@ -152,6 +152,9 @@ class App:
         if name.lower().startswith("portfolio"):
             q.upload("portfolio", name, content)
             return "התיק עודכן: הריצה הבאה תשתמש בו"
+        if name.lower().startswith("watchlist"):
+            q.upload("watchlist", name, content)
+            return "רשימת המעקב עודכנה: הריצה היומית הבאה תבדוק אותה"
         q.upload("manual_macro", name, content)
         from qt.app import waiting_monthly
         rid = waiting_monthly(self.db)

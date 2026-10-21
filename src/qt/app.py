@@ -27,6 +27,15 @@ def portfolio(db: DB, path: str | None = None) -> dict | None:
     return yaml.safe_load(up["content"]) if up else None
 
 
+def watchlist(db: DB, path: str | None = None) -> dict | None:
+    """The watchlist from the last research run: QT_WATCHLIST for local runs, else the last upload to the bot."""
+    path = path or os.environ.get("QT_WATCHLIST")
+    if path and Path(path).exists():
+        return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    up = Queue(db).latest_upload("watchlist")
+    return yaml.safe_load(up["content"]) if up else None
+
+
 def services(db: DB, portfolio_path: str | None = None) -> dict[str, Any]:
     from qt.data.providers import FMP, FRED, Yahoo
     from qt.data.store import Store
@@ -37,6 +46,9 @@ def services(db: DB, portfolio_path: str | None = None) -> dict[str, Any]:
     pf = portfolio(db, portfolio_path)
     if pf is not None:
         s["portfolio"] = pf
+    wl = watchlist(db)
+    if wl is not None:
+        s["watchlist"] = wl
     if os.environ.get("FRED_API_KEY"):
         s["fred"] = FRED(store)
     if os.environ.get("ANTHROPIC_API_KEY"):

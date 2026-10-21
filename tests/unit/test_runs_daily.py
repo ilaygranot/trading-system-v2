@@ -42,7 +42,8 @@ def test_daily_run_end_to_end(db):
     rid = r.start("daily", AS_OF)
     st = r.status()[0]
     assert st["id"] == rid and st["status"] == "done"
-    assert [s["step"] for s in st["steps"]] == ["fetch", "fill", "calc", "rules", "agents", "journal", "queue", "notify"]
+    assert [s["step"] for s in st["steps"]] == ["fetch", "fill", "calc", "rules", "watch", "agents", "journal", "queue",
+                                            "notify"]
     items = db.all("SELECT rule_id, status FROM approval_queue", json_cols=())
     rules = {i["rule_id"]: i["status"] for i in items}
     assert rules["S12-R11"] == "standing_order"            # BA ~200 vs entry 150 / stop 140: 60/40 trail
@@ -96,3 +97,35 @@ def test_provider_fallback_and_stale_data(db):
     rid = r2.start("daily", AS_OF + timedelta(days=0))
     assert db.one("SELECT output FROM run_steps WHERE run_id=? AND step='fetch'", (rid,),
                   ["output"])["output"]["stale"] == []
+
+
+def _wl(**kw):
+    e = {"symbol": "BA", "direction": "long", "etf": "XLI", "bucket": "conditional", "added": "2023-05-01",
+         "trigger_kind": "close_above", "trigger_level": 190.0, "k": 4.0, "target": 300.0,
+         "target_source": "own_multiple_target", "invalidate_level": 150.0, "time_stop": "2023-06-30",
+         "next_earnings": "2023-06-03", "first_size_pct": 6.0, "price_at_add": 185.0, "tldr": "שורה לחבר"}
+    e.update(kw)
+    return {"as_of": "2023-05-01", "entries": [e]}
+
+
+def test_watchlist_trigger_becomes_an_entry_proposal(db):
+    sent = []
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    r = Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": _wl(), "notifier": sent.append})
+    rid = r.start("daily", AS_OF)
+    w = r.status()[0]
+    assert "watch" in [s["step"] for s in w["steps"]]
+    item = db.one("SELECT kind, rule_id, status, payload FROM approval_queue WHERE symbol='BA'", json_cols=("payload",))
+    assert (item["kind"], item["rule_id"], item["status"]) == ("enter", "S10-R4", "pending")
+    assert item["payload"]["qty"] > 0 and "שורה לחבר" in item["payload"]["detail"]
+    assert "סיכום יום" in sent[0] and "BA" in sent[0] and "דוח בעוד 3 ימים" in sent[0]
+    assert rid
+
+
+def test_watchlist_held_expired_and_watch_bucket_make_no_entry(db):
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    for wl in (_wl(time_stop="2023-05-10", trigger_level=500.0),            # not triggered, past its time stop
+               _wl(bucket="watch", trigger_kind="now", trigger_level=None)):  # watch: a recheck, never an entry
+        Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": wl}).start("daily", AS_OF)
+        assert not db.all("SELECT id FROM approval_queue WHERE rule_id='S10-R4'")
+        db.execute("DELETE FROM approval_queue")
