@@ -153,7 +153,7 @@ def test_weekly_run_end_to_end_and_rank_moves_from_last_week(db):
     assert bot.sent[-2].startswith("סיכום שבוע עד 2026-10-23") and bot.sent[-1].startswith("תפעול")
     text = bot.sent[-2] + bot.sent[-1]
     for s in ("זירת סקטורים", "XLK 11", "XLU 1", "פוזיציות:", "• XLE", "רשימת מעקב: 1 (1 לונג, 0 שורט)",
-              "פחות מ-2 רעיונות חדשים", "שבועיים קדימה: 10-29 דוח ABC", "אין מקור", "תפעול", "לא נבדקו",
+              "פחות מ-2 רעיונות חדשים", "שבועיים קדימה: 10-29 דוח ABC", "בהכנה החודשית", "תפעול", "לא נבדקו",
               "מחקר שבועי לא רץ: חסר ANTHROPIC_API_KEY, FRED_API_KEY, קובץ המקרו החודשי"):
         assert s in text, s
     arena = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='arena'", (rid,), ["output"])["output"]

@@ -214,6 +214,7 @@ WEEKLY = (Step("expire", expire), Step("report", report), Step("wfetch", W.wfetc
           Step("revisit", W.revisit), Step("week", W.week), Step("research", W.research), Step("notify", weekly_notify))
 MONTHLY = (Step("manual", manual), Step("fred", fred), Step("stance", stance), Step("a1", MO.a1),
            Step("mfetch", MO.mfetch), Step("candles", MO.candles), Step("sectors", MO.sectors), Step("ism", MO.ism),
-           Step("calendar", MO.calendar), Step("season", MO.season), Step("exposure", MO.exposure),
+           Step("calendar", MO.calendar), Step("season", MO.season), Step("sentiment", MO.sentiment),
+           Step("exposure", MO.exposure),
            Step("queue", monthly_queue), Step("notify", monthly_notify))
 PIPELINES = {"daily": DAILY, "premarket": PREMARKET, "weekly": WEEKLY, "monthly": MONTHLY}

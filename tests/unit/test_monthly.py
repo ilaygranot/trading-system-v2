@@ -149,3 +149,58 @@ def test_monthly_run_end_to_end(db):
               "אין תקרות", "NAAIM"):
         assert s in prep, s
     assert len(prep) < 4096 and len(bot.sent[-2]) < 4096
+
+
+# ------------------------------------------------------------------ sentiment
+
+from qt import sentiment as SE  # noqa: E402
+
+HEADER = ("Market_and_Exchange_Names,As_of_Date_In_Form_YYMMDD,Report_Date_as_YYYY-MM-DD,CFTC_Contract_Market_Code,"
+          "Open_Interest_All,Dealer_Positions_Long_All,Asset_Mgr_Positions_Long_All,Asset_Mgr_Positions_Short_All,"
+          "NonRept_Positions_Long_All,NonRept_Positions_Short_All")
+
+
+def tff_text(n=60, am_end=0.55, start=date(2025, 10, 7)):
+    """n weekly S&P 500 rows with the asset managers' share rising from 0.3 to am_end, plus a market to ignore."""
+    lines = [HEADER]
+    for i in range(n):
+        d = start + timedelta(days=7 * i)
+        am = 0.3 + (am_end - 0.3) * i / (n - 1)
+        lines.append(f'"E-MINI S&P 500 - CHICAGO MERCANTILE EXCHANGE",{d:%y%m%d},{d},13874A,1000000,1,'
+                     f"{am * 1e6:.0f},100000,{0.1 * 1e6:.0f},50000")
+        lines.append(f'"NASDAQ MINI - CHICAGO MERCANTILE EXCHANGE",{d:%y%m%d},{d},209742,5,1,4,1,1,1')
+    return "\n".join(lines) + "\n"
+
+
+def test_cot_reading_flags_the_extreme_and_the_direction():
+    rows = SE.parse_tff(tff_text())
+    assert len(rows) == 60 and rows[0]["market"].startswith("E-MINI S&P 500")
+    r = SE.cot_reading(rows)
+    assert r["am_extreme"] == "high" and r["am_direction"] == "up" and r["spread_direction"] == "up"
+    assert r["spread_vs_long_ma"] == "above" and r["am_pct_oi"] > 0.5
+    assert SE.parse_tff("") == [] and SE.cot_reading(rows[:3]) is None
+
+
+def test_naaim_reading_uses_the_history_for_the_extreme():
+    weeks = {(date(2025, 1, 1) + timedelta(days=7 * i)).isoformat(): 60 + (i % 10) for i in range(60)}
+    weeks["2026-02-18"] = weeks["2026-02-25"] = weeks["2026-03-04"] = weeks["2026-03-11"] = 100
+    r = SE.naaim_reading(weeks, date(2026, 3, 12))
+    assert r["extreme"] == "high" and r["band"] and r["vs_mean"] == "above" and r["smoothed"] == 100.0
+    short = SE.naaim_reading(dict(list(weeks.items())[:8]), date(2026, 3, 12))
+    assert short["band"] is None and short["extreme"] is None
+    assert SE.naaim_reading(None, date(2026, 3, 12)) is None
+
+
+def test_monthly_sentiment_step_with_cot_and_naaim(db):
+    class Cftc:
+        def tff_year(self, y):
+            if y == AS_OF.year - 1:
+                raise ConnectionError("down")
+            return tff_text(n=40, start=date(2026, 1, 6)), "fake"
+    bot = Bot()
+    naaim = "naaim: {" + ", ".join(f"'2026-09-{d:02d}': {70 + d}" for d in (2, 9, 16, 23, 30)) + "}\n"
+    Queue(db).upload("manual_macro", "m.yaml", _manual() + naaim)
+    Runner(db, PIPELINES, {"telegram": bot, "fred": Fred(), "prices": Prices(), "cftc": Cftc(),
+                           "portfolio": {"cash": 100_000, "positions": []}}).start("monthly", AS_OF)
+    prep = bot.sent[-1]
+    assert "COT (" in prep and "NAAIM (2026-09-30)" in prep and "סנטימנט חסר" not in prep

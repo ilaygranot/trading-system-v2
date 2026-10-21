@@ -204,3 +204,18 @@ class EDGAR:
                 rows = {(u["end"], u["val"], u["filed"]) for u in units if u.get("form") == "10-K" and u.get("fp") == "FY"}
                 return sorted(rows), f"{src}/{tag}"
         return [], src
+
+
+class CFTC:
+    """The Traders in Financial Futures report, futures and options combined: the yearly comma-delimited file."""
+    URL = "https://www.cftc.gov/files/dea/history/com_fin_txt_{year}.zip"
+
+    def tff_year(self, year: int) -> tuple[str, str]:
+        import io
+        import zipfile
+        r = requests.get(self.URL.format(year=year), headers={"User-Agent": BROWSER_UA}, timeout=60)
+        if r.status_code != 200:
+            raise ProviderError(f"cftc {year}: HTTP {r.status_code}")
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            name = next(n for n in z.namelist() if n.lower().endswith(".txt"))
+            return z.read(name).decode("latin-1"), f"cftc:com_fin_txt_{year}"

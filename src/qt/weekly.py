@@ -12,7 +12,7 @@ week:    the week in the book: entries filled, sells with their P&L, open positi
 research: the new ideas of the week (S13-R25, S13-R26): the full research run (qt.research.run) judged by the agents
          (qt.research.judge), its report saved for a signed link, and its ideas merged into the watchlist that the
          daily pass checks from the next close. Entries reach the approval queue only through that daily pass.
-News of the week, the economic calendar and sentiment (NAAIM / COT) have no source yet; the summary says so.
+News of the week against the macro stance is not in yet; the calendar and sentiment are in the monthly preparation.
 """
 from __future__ import annotations
 
@@ -316,5 +316,5 @@ def summary(ctx: RunContext) -> str:
         if rs["errors"]:
             lines.append("לא הושלמו: " + ", ".join(f"{k} ({v})" for k, v in rs["errors"].items()))
         lines.append(f"רשימת המעקב עודכנה ל-{rs['watchlist_n']} רעיונות: הבדיקה היומית מתחילה מהסגירה הבאה")
-    lines.append("עוד לא בסיכום (אין מקור): חדשות השבוע מול עמדת המקרו, יומן כלכלי, סנטימנט NAAIM/COT")
+    lines.append("עוד לא בסיכום: חדשות השבוע מול עמדת המקרו. היומן הכלכלי והסנטימנט בהכנה החודשית")
     return "\n".join(lines)

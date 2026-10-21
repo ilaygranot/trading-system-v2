@@ -10,7 +10,7 @@ calendar:  the events of the coming month: FOMC, CPI, jobs, GDP, PCE, PPI, retai
            schedule), the ISM reports, earnings and time stops of positions and watchlist (S13-R25).
 season:    the month's seasonality for SPY and each sector (S13-R25).
 exposure:  long, short and net exposure against Ilay's caps (D-S11-7: the caps are his to set in the portfolio file).
-Sentiment (NAAIM / COT) has no source yet.
+sentiment: COT from the CFTC and NAAIM from the manual file (qt.sentiment).
 """
 from __future__ import annotations
 
@@ -302,6 +302,31 @@ def exposure_now(pf: dict, last: dict[str, float]) -> dict[str, Any]:
     return out
 
 
+def sentiment(ctx: RunContext, _: str) -> dict:
+    import yaml
+    from qt import sentiment as SE
+    from qt.approvals import Queue
+    missing, rows = [], []
+    cftc = ctx.services.get("cftc")
+    if cftc is None:
+        missing.append("COT")
+    else:
+        for y in (ctx.as_of.year - 1, ctx.as_of.year):
+            try:
+                text, _src = cftc.tff_year(y)
+                rows += SE.parse_tff(text)
+            except Exception as e:                                   # noqa: BLE001 - the rest of the preparation stands
+                ctx.event(f"COT {y}: {type(e).__name__}: {e}", "warn", "sentiment")
+        rows = [r for r in rows if r["date"] <= ctx.as_of.isoformat()]
+        if not rows:
+            missing.append("COT")
+    up = Queue(ctx.db).latest_upload("manual_macro")
+    naaim = SE.naaim_reading((yaml.safe_load(up["content"]) or {}).get("naaim") if up else None, ctx.as_of)
+    if naaim is None:
+        missing.append("NAAIM (בקובץ הידני: naaim)")
+    return {"cot": SE.cot_reading(rows) if rows else None, "naaim": naaim, "missing": missing}
+
+
 def exposure(ctx: RunContext, _: str) -> dict:
     return exposure_now(_pf(ctx), ctx.out("mfetch")["last"])
 
@@ -380,5 +405,7 @@ def summary(ctx: RunContext) -> str:
             lines.append("⚠️ אין תקרות לונג/שורט/נטו בקובץ התיק (caps: long_max, short_max, net_max). הן שלך לקבוע (D-S11-7)")
         for k in ex["over"]:
             lines.append(f"⚠️ {EXP_HE[k]} מעל התקרה")
-    lines.append("סנטימנט (NAAIM / COT): אין עדיין מקור")
+    from qt import sentiment as SE
+    se = ctx.out("sentiment") or {}
+    lines += SE.lines(se.get("cot"), se.get("naaim"), se.get("missing", ["COT", "NAAIM"]))
     return "\n".join(lines)

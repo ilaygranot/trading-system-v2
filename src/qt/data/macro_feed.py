@@ -84,7 +84,7 @@ def parse_manual(text: str, as_of: date) -> dict[str, list[float]]:
     cutoff = f"{as_of.year:04d}-{as_of.month:02d}"
     out = {}
     for name, rows in raw.items():
-        if not isinstance(rows, dict) or not all(isinstance(v, (int, float)) for v in rows.values()):
+        if name == "naaim" or not isinstance(rows, dict) or not all(isinstance(v, (int, float)) for v in rows.values()):
             continue                     # the ISM tables (industries, short supply) are read by qt.monthly
         items = sorted((str(k), float(v)) for k, v in rows.items())
         out[name] = [v for k, v in items if k < cutoff]

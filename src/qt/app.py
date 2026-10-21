@@ -43,12 +43,12 @@ def watchlist(db: DB, path: str | None = None) -> dict | None:
 
 
 def services(db: DB, portfolio_path: str | None = None) -> dict[str, Any]:
-    from qt.data.providers import FMP, FRED, Yahoo
+    from qt.data.providers import CFTC, FMP, FRED, Yahoo
     from qt.data.store import Store
     from qt.telegram import Telegram
     store = Store(db)
     yahoo = Yahoo(store)
-    s: dict[str, Any] = {"prices": yahoo, "prices_fallback": FMP(store), "quote": yahoo.quote}
+    s: dict[str, Any] = {"prices": yahoo, "prices_fallback": FMP(store), "quote": yahoo.quote, "cftc": CFTC()}
     pf = portfolio(db, portfolio_path)
     if pf is not None:
         s["portfolio"] = pf
