@@ -21,6 +21,7 @@ from qt.journal import Decision, Journal
 from qt.manage import Held, daily_review
 from qt.playbook import load_playbook
 from qt.runs import RunContext, Step
+from qt import watch as W
 
 INDEX, VIX = "^GSPC", "^VIX"
 HISTORY_DAYS = 400                     # enough for ATR60 and the VIX low window
@@ -45,7 +46,8 @@ def fetch(ctx: RunContext, _: str) -> dict:
     if pf is None:
         raise RuntimeError("no portfolio: send portfolio.yaml to the bot (or set QT_PORTFOLIO)")
     symbols = sorted({p["symbol"] for p in pf.get("positions", []) if p.get("instrument", "stock") == "stock"}
-                     | {o["symbol"] for o in Queue(ctx.db).open_orders()} | {INDEX, VIX})
+                     | {o["symbol"] for o in Queue(ctx.db).open_orders()} | {INDEX, VIX}
+                     | {e.symbol for e in W.load(ctx.services.get("watchlist"))})
     start = ctx.as_of - timedelta(days=HISTORY_DAYS)
     out: dict[str, Any] = {"bars": {}, "sources": {}, "stale": []}
     for s in symbols:
@@ -130,6 +132,29 @@ def rules(ctx: RunContext, _: str) -> dict:
             "regime": review.regime, "metrics": review.metrics, "actions": acts}
 
 
+def watch(ctx: RunContext, _: str) -> dict:
+    """The watchlist pass (S08, S13-R23): one check per entry, and the opportunities as entry proposals."""
+    snap, r = ctx.out("fetch"), ctx.out("rules")
+    entries = W.load(ctx.services.get("watchlist"))
+    held = {p["symbol"] for p in snap["portfolio"].get("positions", [])} | {o["symbol"] for o in Queue(ctx.db).open_orders()}
+    checks, actions = [], []
+    for e in entries:
+        rows = snap["bars"].get(e.symbol)
+        if not rows or e.symbol in snap["stale"]:
+            checks.append({"symbol": e.symbol, "status": "stale", "notes": ["אין נתונים עדכניים"]})
+            continue
+        c = W.check(e, _bars(rows), ctx.as_of)
+        d = asdict(c)
+        d["held"] = e.symbol in held
+        checks.append(d)
+        if c.status in ("opportunity", "ready") and not d["held"] and not snap["stale"]:
+            seen = ctx.db.one("SELECT id FROM approval_queue WHERE symbol=? AND rule_id='S10-R4' AND as_of>=? "
+                              "AND status IN ('approved','rejected')", (e.symbol, e.added))
+            if not seen:
+                actions.append(W.entry_action(e, c, r["equity"]))
+    return {"checks": checks, "actions": actions, "n": len(entries)}
+
+
 def agents(ctx: RunContext, _: str) -> dict:
     """A7 on each open position with an event against it (DC-21). Without an agent runner (no API key yet),
     the step records that agents are off and the code's proposals stand alone."""
@@ -155,12 +180,16 @@ def agents(ctx: RunContext, _: str) -> dict:
     return {"enabled": True, "decisions": out}
 
 
+def _actions(ctx: RunContext) -> list[dict]:
+    return ctx.out("rules")["actions"] + ((ctx.out("watch") or {}).get("actions") or [])
+
+
 def journal(ctx: RunContext, _: str) -> dict:
     """One journal entry per action, tagged with the run (re-running the step adds nothing twice)."""
     j = Journal(ctx.db)
     pb = load_playbook().version
     ids = []
-    for a in ctx.out("rules")["actions"]:
+    for a in _actions(ctx):
         done = ctx.db.one("SELECT id FROM decisions WHERE run_id=? AND card_id=? AND subject=? AND action=?",
                           (ctx.run_id, a["rule_id"], a["symbol"] or "portfolio", a["kind"]))
         if done:
@@ -180,7 +209,7 @@ def queue(ctx: RunContext, _: str) -> dict:
     q = Queue(ctx.db)
     prices = ctx.out("calc")["prices"]
     added = []
-    for a, did in zip(ctx.out("rules")["actions"], ctx.out("journal")["decision_ids"]):
+    for a, did in zip(_actions(ctx), ctx.out("journal")["decision_ids"]):
         iid = q.add(ctx.run_id, ctx.as_of, a, prices.get(a["symbol"]), did)
         if iid:
             added.append(iid)
@@ -210,6 +239,7 @@ def notify(ctx: RunContext, _: str) -> dict:
             + ("נתונים עדכניים" if not stale else f"נתונים ישנים: {', '.join(stale)}")
             + (f" · {len(filled)} עסקאות נייר בוצעו" if filled else "")
             + f" · {float(cost['c'] or 0):.2f}$")
+    text += "\n\n" + day_summary(ctx)
     sent = 0
     bot = ctx.services.get("telegram")
     if bot is not None:
@@ -225,6 +255,58 @@ def notify(ctx: RunContext, _: str) -> dict:
     return {"text": text, "items_sent": sent}
 
 
-DAILY = (Step("fetch", fetch), Step("fill", fill), Step("calc", calc), Step("rules", rules), Step("agents", agents), Step("journal", journal),
+STATUS_HE = {"opportunity": "🟢 הזדמנות: הטריגר הופעל", "ready": "🟢 מוכנה לכניסה", "waiting": "⏳ ממתינה", "recheck": "🔎 היחס חזר מעל 3: לבדוק רמזור",
+             "expired": "⌛ הטריגר פג: חוזרת למעקב", "invalidated": "✗ הטריגר בוטל (סגירה מעבר לרמת הביטול)",
+             "stale": "⚠️ אין נתונים"}
+
+
+def _f(v: float | None, d: int = 2, sign: bool = False) -> str:
+    return "—" if v is None else (f"{v:+.{d}f}" if sign else f"{v:.{d}f}")
+
+
+def day_summary(ctx: RunContext) -> str:
+    """The end-of-day summary (S13-R22): market, positions, watchlist, what waits for Ilay."""
+    snap, c, r = ctx.out("fetch"), ctx.out("calc"), ctx.out("rules")
+    w = ctx.out("watch") or {}
+    lines = ["סיכום יום"]
+    idx = snap["bars"].get(INDEX)
+    if idx and len(idx) > 1:
+        lines.append(f"שוק: S&P 500 {idx[-1][4]:,.0f} ({_f((idx[-1][4] / idx[-2][4] - 1) * 100, 1, True)}%)"
+                     + (f" · VIX {snap['bars'][VIX][-1][4]:.1f}" if snap["bars"].get(VIX) else "")
+                     + f" · משטר {r['regime']}")
+    pos = snap["portfolio"].get("positions", [])
+    if pos:
+        lines.append("פוזיציות:")
+        for p in pos:
+            px = c["prices"].get(p["symbol"])
+            if px is None or p.get("instrument", "stock") != "stock":
+                continue
+            sg = 1 if p["direction"] == "long" else -1
+            pl = sg * (px / p["entry"] - 1) * 100
+            to_stop = sg * (px / p["stop"] - 1) * 100 if p.get("stop") else None
+            lines.append(f"• {p['symbol']} {px:.2f} · {_f(pl, 1, True)}% מהכניסה · {_f(to_stop, 1)}% מעל העצירה")
+    else:
+        lines.append("פוזיציות: אין")
+    if w.get("checks"):
+        lines.append("רשימת מעקב:")
+        for x in w["checks"]:
+            if x["status"] == "stale":
+                lines.append(f"• {x['symbol']}: {STATUS_HE['stale']}")
+                continue
+            head = STATUS_HE.get(x["status"], x["status"]) if not x.get("held") else "בתיק"
+            dist = (f" · {_f(x['dist_to_trigger_pct'], 1)}% לטריגר {x['trigger_level']:.2f}"
+                    if x.get("dist_to_trigger_pct") is not None and not x["triggered"] else "")
+            lines.append(f"• {x['symbol']} {x['close']:.2f} ({_f(x['change_1d_pct'], 1, True)}%) · {head}{dist}"
+                         f" · יחס {_f(x['rr'], 1)} · עד היעד {_f(x['potential_pct'], 0)}%"
+                         + (f" · {'; '.join(x['notes'])}" if x["notes"] else ""))
+    elif ctx.services.get("watchlist") is None:
+        lines.append("רשימת מעקב: לא נטענה (שלח watchlist.yaml לבוט)")
+    opp = [a["symbol"] for a in w.get("actions") or []]
+    lines.append("לאישורך היום: " + (", ".join(opp) + " (כניסה)" if opp else "אין כניסות חדשות"))
+    return "\n".join(lines)
+
+
+DAILY = (Step("fetch", fetch), Step("fill", fill), Step("calc", calc), Step("rules", rules), Step("watch", watch),
+         Step("agents", agents), Step("journal", journal),
          Step("queue", queue), Step("notify", notify))
 PIPELINES = {"daily": DAILY}

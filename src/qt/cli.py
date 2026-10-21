@@ -139,9 +139,13 @@ def _research(args: argparse.Namespace) -> int:
                 FRED(Store(str(work / "fred.sqlite"))))
     (out / "dossier.json").write_text(json.dumps(d, default=str, ensure_ascii=False), encoding="utf-8")
     (out / "report.html").write_text(report.render(d), encoding="utf-8")
+    import yaml
+    from qt.watch import from_dossier
+    (out / "watchlist.yaml").write_text(yaml.safe_dump(from_dossier(json.loads(json.dumps(d, default=str))),
+                                                       allow_unicode=True, sort_keys=False), encoding="utf-8")
     for f in d["funnel"]:
         print(f"{f['n']:>6}  {f['label']}")
-    print(f"report: {out / 'report.html'}")
+    print(f"report: {out / 'report.html'} · watchlist: {out / 'watchlist.yaml'} (send it to the bot)")
     return 0
 
 
