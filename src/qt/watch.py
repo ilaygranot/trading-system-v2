@@ -157,7 +157,7 @@ def entry_action(e: WatchEntry, c: WatchCheck, equity: float) -> dict[str, Any]:
     detail = (f"{trig}. עצירה {c.stop:.2f}, יעד {c.target:.2f}, יחס {c.rr:.1f}. "
               f"{e.tldr}" + (f" ⚠️ {'; '.join(c.notes)}" if c.notes else ""))
     return dict(kind="enter", rule_id="S10-R4", symbol=e.symbol, qty=qty, price=c.close, preapproved=False,
-                detail=detail, direction=e.direction, stop=round(c.stop, 2), target=c.target,
+                detail=detail, direction=e.direction, sector=e.etf, stop=round(c.stop, 2), target=c.target,
                 size_pct=e.first_size_pct)
 
 

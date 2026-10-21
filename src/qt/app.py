@@ -20,10 +20,16 @@ from qt.runs import AlreadyRunning, Runner
 
 
 def portfolio(db: DB, path: str | None = None) -> dict | None:
-    path = path or os.environ.get("QT_PORTFOLIO")
+    """An explicit path wins; then the book the last daily run saved (qt.book); then QT_PORTFOLIO; then the last
+    portfolio sent to the bot. Sending a new portfolio file to the bot replaces the book."""
     if path and Path(path).exists():
         return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     up = Queue(db).latest_upload("portfolio")
+    if up and up["name"].startswith("book-"):
+        return yaml.safe_load(up["content"])
+    env = os.environ.get("QT_PORTFOLIO")
+    if env and Path(env).exists():
+        return yaml.safe_load(Path(env).read_text(encoding="utf-8"))
     return yaml.safe_load(up["content"]) if up else None
 
 
