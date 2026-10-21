@@ -1,5 +1,5 @@
 """Command line: `qt check trade.yaml`, `qt macro stance.yaml`, `qt rules`, `qt replay`,
-`qt run daily|premarket|weekly|monthly|resume|status [--scheduled]`, `qt web`, `qt set-webhook`."""
+`qt run daily|premarket|weekly|monthly|resume|status [--scheduled]`, `qt research`, `qt web`, `qt set-webhook`."""
 from __future__ import annotations
 
 import argparse
@@ -126,6 +126,25 @@ def _webhook(args: argparse.Namespace) -> int:
     return 0
 
 
+def _research(args: argparse.Namespace) -> int:
+    from datetime import date
+    from qt.data.providers import FRED
+    from qt.data.store import Store
+    from qt.research import report, run
+    as_of = date.fromisoformat(args.as_of)
+    out, work = Path(args.out), Path(args.work or f".qt-research/{as_of}")
+    work.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
+    d = run.run(as_of, work, Path(args.manual), Path(args.judgments), work / "yahoo",
+                FRED(Store(str(work / "fred.sqlite"))))
+    (out / "dossier.json").write_text(json.dumps(d, default=str, ensure_ascii=False), encoding="utf-8")
+    (out / "report.html").write_text(report.render(d), encoding="utf-8")
+    for f in d["funnel"]:
+        print(f"{f['n']:>6}  {f['label']}")
+    print(f"report: {out / 'report.html'}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="qt")
     sub = ap.add_subparsers(required=True)
@@ -148,6 +167,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--db", help="database URL or SQLite path (default QT_DATABASE_URL)")
     r.add_argument("--limit", type=int, default=10)
     r.set_defaults(fn=_run)
+    rs = sub.add_parser("research", help="one full research run (stages 0-11) into a dossier and an HTML report")
+    rs.add_argument("--as-of", required=True)
+    rs.add_argument("--manual", required=True, help="the ISM / NFIB values (YAML, with sources)")
+    rs.add_argument("--judgments", required=True, help="the judgment fields (YAML: A1, A2, ideas)")
+    rs.add_argument("--out", required=True, help="where dossier.json and report.html go")
+    rs.add_argument("--work", help="stage cache (default .qt-research/<as-of>)")
+    rs.set_defaults(fn=_research)
     w = sub.add_parser("web", help="the dashboard and Telegram webhook (local; gunicorn qt.web:application in the cloud)")
     w.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
     w.set_defaults(fn=_web)
