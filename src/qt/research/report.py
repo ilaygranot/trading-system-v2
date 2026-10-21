@@ -132,8 +132,9 @@ def _nice_ticks(lo: float, hi: float, n: int = 4) -> list[float]:
 
 def line_chart(dates: Sequence[str], series: list[tuple[str, Sequence[float | None], str]], *, w: int = 640, h: int = 220,
                hlines: Sequence[tuple[float, str, str]] = (), zero: bool = False, fmt=lambda v: f"{v:,.1f}",
-               label: str = "", log: bool = False) -> str:
-    """series: (name, values, css class). hlines: (value, label, css class)."""
+               label: str = "", log: bool = False, markers: Sequence[tuple[str, str]] = ()) -> str:
+    """series: (name, values, css class). hlines: (value, label, css class). markers: (date, label) events,
+    drawn as a vertical line at the first point on or after the date."""
     vals = [v for _, s, _ in series for v in s if v is not None] + [v for v, _, _ in hlines]
     if not vals or not dates:
         return ""
@@ -166,6 +167,13 @@ def line_chart(dates: Sequence[str], series: list[tuple[str, Sequence[float | No
         lx, anchor = ((L + 4, "start"), (w - R - 4, "end"), ((L + w - R) / 2, "middle"))[k % 3]
         parts.append(f'<line class="hl {cls}" x1="{L}" x2="{w - R}" y1="{y(v):.1f}" y2="{y(v):.1f}"/>'
                      f'<text class="hl-label {cls}" x="{lx:.1f}" y="{y(v) - 4:.1f}" text-anchor="{anchor}">{E(lab)}</text>')
+    for md, lab in markers:
+        i = next((k for k, dd in enumerate(dates) if dd[:len(md)] >= md[:len(dd)]), None)
+        if i is None or (i == 0 and dates[0][:len(md)] > md[:len(dates[0])]):
+            continue                                          # the event is outside the chart's window
+        parts.append(f'<line class="ev" x1="{x(i):.1f}" x2="{x(i):.1f}" y1="{T}" y2="{h - B}"/>'
+                     f'<circle class="ev-dot" cx="{x(i):.1f}" cy="{T + 7}" r="7"/>'
+                     f'<text class="ev-num" x="{x(i):.1f}" y="{T + 10.5}" text-anchor="middle">{E(lab)}</text>')
     for name, s, cls in series:
         pts, seg = [], []
         for i, v in enumerate(s):
@@ -328,6 +336,33 @@ def _funnel(d: dict) -> str:
             f'<ol class="funnel-list">{"".join(rows)}</ol></div></section>')
 
 
+FED_STATE_HE = {
+    "acting": "הפד פועל בכיוון של השנה האחרונה",
+    "acting_reversing": "השנה כולה בכיוון אחד, אבל ברבעון האחרון הפד זז בכיוון ההפוך: סימן לתפנית",
+    "flat": "אין תנועה",
+}
+
+
+def _fed(f: dict, j: dict) -> str:
+    """The Fed scale (S02) in words: what the 10 points measure, and the judgment's reading of the stance."""
+    comp_he = {"ffr_down": "הריבית נמוכה משנה שעברה", "m2_above_trend": "כמות הכסף (M2) מעל המגמה",
+               "balance_sheet_up": "מאזן הפד גדל"}
+    comps = " · ".join(f'{"✓" if v else "✗"} {comp_he.get(k, k)}' for k, v in (f.get("components") or {}).items())
+    out = ['<div class="fed-box"><h3>עמדת הפד</h3>']
+    if j.get("headline"):
+        out.append(f'<p class="big">{E(j["headline"])}</p>')
+    out.append(f'<p><b>סולם הפד בקוד: {f.get("points")}/{f.get("max")}, {E(T(f.get("period")))}.</b> הסולם מודד את '
+               f'השנה האחרונה: {E(comps)}. {E(FED_STATE_HE.get(f.get("state"), T(f.get("state"))))}.</p>')
+    for x in j.get("text", []):
+        out.append(f"<p>{E(x)}</p>")
+    if j.get("next"):
+        out.append(f'<p class="small"><b>מה הלאה:</b> {E(j["next"])}</p>')
+    if j.get("sources"):
+        out.append('<p class="small">מקורות: ' + " · ".join(src_link(x["url"], x["title"]) for x in j["sources"]) + "</p>")
+    out.append("</div>")
+    return "".join(out)
+
+
 def _macro(d: dict) -> str:
     m = d["macro"]
     s1, s2, s3 = m["stage1"], m["stage2"], m["stage3"]
@@ -353,6 +388,18 @@ def _macro(d: dict) -> str:
     for lab, val, sub in tiles:
         out.append(f'<div class="tile"><label>{E(lab)}</label><b>{E(str(val))}</b><small>{E(str(sub))}</small></div>')
     out.append("</div>")
+    events = J.get("events") or []
+    if J.get("story"):
+        out.append('<div class="judgment"><div class="j-tag">מה קורה, במילים פשוטות · A1</div>'
+                   + "".join(f"<p>{E(x)}</p>" for x in J["story"]) + "</div>")
+    out.append(_fed(st["fed"], J.get("fed") or {}))
+    if events:
+        out.append('<h3>מה קרה: האירועים שהזיזו את הגרפים</h3><ol class="events">')
+        for k, ev in enumerate(events, 1):
+            srcs = " · ".join(src_link(x["url"], x["title"]) for x in ev.get("sources", []))
+            out.append(f'<li><span class="ev-badge">{k}</span><div><time>{E(ev["date"])}</time> <b>{E(ev["title"])}</b>. '
+                       f'{E(ev["text"])}{f" <small>מקורות: {srcs}</small>" if srcs else ""}</div></li>')
+        out.append("</ol>")
     # judgment
     out.append('<div class="judgment"><div class="j-tag">שיקול דעת · A1</div>')
     for card, title in (("DC-01", "אזור"), ("DC-02", "מצפן"), ("DC-03", "השוק מול התחזית"), ("DC-04", "רמת סיכון")):
@@ -391,13 +438,19 @@ def _macro(d: dict) -> str:
         ("S&P 500 (שנתיים)", "spx", [(s3["market"]["peak"], "שיא", "ref"), (s3["market"]["bear_level"], "דובי −20%", "stop")],
          lambda v: f"{v:,.0f}"),
     ]
-    out.append('<h3>הסדרות</h3><div class="charts">')
+    out.append('<h3>הסדרות</h3>' + ('<p class="note">המספרים בעיגול על הגרפים הם האירועים מהרשימה למעלה.</p>' if events else "")
+               + '<div class="charts">')
+    filled = m.get("filled_months") or {}
+    fill_key = {"cpi_yoy": "cpi", "ffr": "ffr", "unemployment": "unemployment", "michigan": "michigan", "permits": "permits"}
     for title, key, hl, fmt in grid:
         c = ch.get(key)
         if not c:
             continue
-        out.append(f'<figure><figcaption>{E(title)}</figcaption>'
-                   f'{line_chart(c["dates"], [(title, c["values"], "main")], hlines=hl, zero=key == "curve", fmt=fmt, label=title, w=380, h=190)}'
+        mk = [(ev.get("chart_date", ev["date"]), str(k)) for k, ev in enumerate(events, 1) if key in ev.get("charts", [])]
+        gap = filled.get(fill_key.get(key, ""))
+        cap = (f'<small class="note"> · חודש חסר במקור ({", ".join(gap)}), מושלם בקו ישר (לא מהקורס)</small>' if gap else "")
+        out.append(f'<figure><figcaption>{E(title)}{cap}</figcaption>'
+                   f'{line_chart(c["dates"], [(title, c["values"], "main")], hlines=hl, zero=key == "curve", fmt=fmt, label=title, w=380, h=190, markers=mk)}'
                    f'</figure>')
     out.append("</div>")
     # sources
@@ -526,6 +579,8 @@ def _idea(i: dict) -> str:
         out.append(f'<div class="trigger"><b>טריגר (DC-17): {E(t.get("choice", ""))}</b> {E(t.get("text", ""))}</div>')
     if j.get("structure"):
         out.append(f'<p class="small"><b>מבנה (DC-18): {E(STRUCT_HE.get(j["structure"]["choice"], j["structure"]["choice"]))}</b>. {E(j["structure"]["why"])}</p>')
+    if i.get("exit") and full:
+        out.append(_exit(i))
     vs = p["verdict"]
     out.append(f'<div class="rules rules-{E(vs["status"])}"><b>מנוע הכללים: {E(vs["status"])}</b><ul>'
                + "".join(f'<li><code>{E(x["rule_id"])}</code> {E(x["severity"])}: {E(x["message"])}</li>' for x in vs["findings"])
@@ -635,10 +690,57 @@ def _idea(i: dict) -> str:
     return "".join(out)
 
 
+def _exit(i: dict) -> str:
+    """After entry and before it: 60/40 trail, partial take, earnings before the trigger, the trigger's expiry."""
+    x, j, p = i["exit"], i["judgment"], i["plan"]
+    base = (f' <small>(מחושב מכניסה בטריגר {px(x["entry"])} באותו רוחב עצירה)</small>'
+            if abs(x["entry"] - p["entry"]) > 1e-9 else "")
+    rows = [f'<li><b>עצירה התחלתית</b> {px(x["stop"])}{base}. זזה רק לכיוון הרווח (S12-R2).</li>',
+            f'<li><b>60/40 (S12-R11):</b> כשהרווח הפתוח מגיע ל-3R, כלומר המחיר ב-{px(x["trail_from"])}, העצירה על כל הכמות '
+            f'עולה ל-{px(x["trail_stop"])} ושומרת 60% מהרווח, ומשם נגררת. מאושר מראש עם העסקה. '
+            f'<small>(R = {px(x["r"])}; הסף 3R הוא D-S12-4, לא מהקורס)</small></li>']
+    if j.get("exit_note"):
+        rows.append(f'<li><b>ביעד ({px(x.get("target"))}):</b> {E(j["exit_note"])}</li>')
+    if x.get("next_earnings"):
+        when = (f'הדוח ב-{x["next_earnings"]}, בעוד {x["days_to_earnings"]} ימים'
+                + (", לפני שתוקף הטריגר פג" if x.get("earnings_before_expiry") else ""))
+        rows.append(f'<li><b>דוח:</b> {E(when)}. {E(j.get("earnings_plan", ""))}</li>')
+    if x.get("time_stop_date"):
+        rows.append(f'<li><b>עצירת זמן לטריגר:</b> אם הטריגר לא הופעל עד {E(x["time_stop_date"])} ({x["time_stop_weeks"]} שבועות), '
+                    f'הוא מבוטל והמניה חוזרת למעקב. {E(j.get("time_stop_note", ""))} <small>(לא מהקורס; S12-R17 מוציא רעיון קפוא מהרשימה)</small></li>')
+    return '<div class="exit"><h4>תוכנית יציאה וניהול</h4><ul>' + "".join(rows) + "</ul></div>"
+
+
+def _portfolio(d: dict) -> str:
+    pf = d.get("portfolio") or {}
+    if not pf:
+        return ""
+    J = d["judgments"].get("portfolio", {})
+    syms, refs = pf["syms"], pf["refs"]
+    cell = lambda c: (f'<td class="n{" strong" if c is not None and abs(c) >= pf["strong"] else ""}">'
+                      f'{num(c, 2, sign=True) if c is not None else "—"}</td>')
+    out = ['<div class="fit"><h3>התאמה לתיק (S11)</h3>']
+    if J.get("text"):
+        out.append('<div class="judgment"><div class="j-tag">שיקול דעת · התאמה לתיק</div>' + "".join(f"<p>{E(t)}</p>" for t in J["text"]) + "</div>")
+    out.append(f'<p class="small">אם כל העסקאות מתמלאות: <b>{num(pf["total_size_pct"], 0, True)}</b> מהתיק, סיכון כולל '
+               f'<b>{num(pf["total_risk_pct"], 2, True)}</b> עד העצירות. סקטורים: '
+               + ", ".join(f"{E(k)} ×{v}" for k, v in pf["sectors"].items()) + " (S11-R2: בתיק מלא לפחות 4).</p>")
+    out.append('<h4>מתאם תשואות חודשיות בין העסקאות (S11-R17: מעל 0.5 = חזק)</h4><div class="tbl"><table class="compact">'
+               '<thead><tr><th>זוג</th><th>12 חודשים</th><th>3 שנים</th></tr></thead><tbody>'
+               + "".join(f'<tr><td>{E(x["a"])} / {E(x["b"])}</td>{cell(x["c12"])}{cell(x["c36"])}</tr>' for x in pf["pairs"])
+               + "</tbody></table></div>")
+    ref_he = {"SPY": "שוק", "USO": "נפט", "GLD": "זהב"}
+    out.append('<h4>מתאם 12 חודשים מול השוק, הסקטור והסחורה</h4><div class="tbl"><table class="compact"><thead><tr><th></th>'
+               + "".join(f'<th>{E(r)}{f" ({ref_he[r]})" if r in ref_he else ""}</th>' for r in refs) + '</tr></thead><tbody>'
+               + "".join(f'<tr><td>{E(s)}</td>' + "".join(cell(pf["vs_refs"][s][r]["c12"]) for r in refs) + "</tr>" for s in syms)
+               + '</tbody></table></div><p class="note">USO ו-GLD כמייצגי נפט וזהב: לא מהקורס.</p></div>')
+    return "".join(out)
+
+
 def _ideas(d: dict) -> str:
     order = {"enter": 0, "conditional": 1, "watch": 2, "reject": 3}
     ideas = sorted(d["ideas"].values(), key=lambda i: (order.get(i["bucket"], 9), -(i["plan"].get("rr") or 0)))
-    out = ['<section id="ideas"><h2>רעיונות: שלבים 7–11</h2>']
+    out = ['<section id="ideas"><h2>רעיונות: שלבים 7–11</h2>', _portfolio(d)]
     cur = None
     for i in ideas:
         if i["bucket"] != cur:
@@ -786,6 +888,18 @@ svg .fbar{fill:var(--accent);opacity:.85} svg .fbar.f4,svg .fbar.f5{fill:var(--g
 .kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 20px;font-size:.88rem}
 .kv div{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dotted var(--line);padding:3px 0;min-width:0}
 .kv label{color:var(--muted);flex-shrink:0} .kv span{text-align:left;min-width:0}
+svg .ev{stroke:var(--b);stroke-width:1;stroke-dasharray:3 3} svg .ev-dot{fill:var(--b)}
+svg .ev-num{fill:var(--panel);font-size:10px;font-weight:700;font-family:var(--body)}
+.events{list-style:none;padding:0;margin:.4rem 0 1rem}
+.events li{display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--line)}
+.events time{font-family:var(--mono);font-size:.8rem;color:var(--muted)} .events small{color:var(--muted)}
+.ev-badge{flex:0 0 22px;height:22px;border-radius:50%;background:var(--b);color:var(--panel);font-weight:700;
+  font-size:.8rem;display:flex;align-items:center;justify-content:center;margin-top:2px}
+.fed-box{border:1px solid var(--line);background:var(--panel);padding:4px 16px 10px;border-radius:4px;margin:16px 0}
+.fed-box h3{margin-top:.6rem} .fed-box .big{font-family:var(--display);font-size:1.15rem;margin:.3rem 0}
+.exit{border:1px solid var(--line);border-radius:4px;padding:2px 12px;margin:10px 0;font-size:.9rem}
+.exit ul{padding-inline-start:18px;margin:.3rem 0} .exit li{margin:.25rem 0}
+.fit{margin-bottom:1.5rem} .fit table{width:auto} .fit td.n,.fit th{text-align:center;padding-inline:14px} td.strong{font-weight:700;color:var(--o)}
 .timeline{list-style:none;padding:0;margin:.3rem 0} .timeline li{padding:3px 0}
 .timeline time,.news time{font-family:var(--mono);font-size:.8rem;color:var(--muted);margin-inline-end:6px}
 .news{padding-inline-start:1rem;font-size:.88rem} .news small{color:var(--muted)}
