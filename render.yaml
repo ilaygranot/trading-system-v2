@@ -63,6 +63,10 @@ services:
       url: docker.io/gnzsnz/ib-gateway:10.50.1f
     region: virginia
     plan: standard                        # 2 GB: Java heap 1 GB + Xvfb; starter (512 MB) is not enough
+    disk:                                 # a service with a disk is never run twice: Render stops the old instance
+      name: ibgateway-disk                # before starting the new one, so a deploy can't start two sessions of the
+      mountPath: /home/ibgateway/disk     # same IBKR user that log each other out (22.10). 1 GB, about $0.25/month.
+      sizeGB: 1
     envVars:
       - key: TWS_USERID
         sync: false                       # a dedicated API user, not the one Ilay logs in with (one session per user)

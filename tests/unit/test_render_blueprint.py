@@ -44,6 +44,8 @@ def test_ib_gateway_is_private_pinned_paper_and_read_only():
     assert env["TRADING_MODE"]["value"] == "paper" and env["READ_ONLY_API"]["value"] == "yes"
     assert env["TWS_USERID"].get("sync") is False and env["TWS_PASSWORD"].get("sync") is False
     assert env["EXISTING_SESSION_DETECTED_ACTION"]["value"] == "primaryoverride"     # a deploy overlaps old and new
+    # a disk turns off zero-downtime deploys, so old and new never hold the IBKR session at once
+    assert gw["disk"]["sizeGB"] >= 1 and not gw["disk"]["mountPath"].startswith("/home/ibgateway/Jts")
 
 
 def test_every_service_that_runs_agents_installs_the_pinned_claude_cli():
