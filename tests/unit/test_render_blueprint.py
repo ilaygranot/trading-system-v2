@@ -5,8 +5,9 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-SECRETS = {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FRED_API_KEY", "FMP_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
-           "DASHBOARD_PASSWORD"}
+SECRETS = {"CLAUDE_CODE_OAUTH_TOKEN", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "DASHBOARD_PASSWORD"}
+# not set on qt-web yet: copying a variable qt-web lacks fails the whole Blueprint sync (22.10)
+OPTIONAL = {"ANTHROPIC_API_KEY", "FRED_API_KEY", "FMP_API_KEY"}
 
 
 def _services():
@@ -20,13 +21,14 @@ def _env(service):
 def test_blueprint_parses_and_every_cron_gets_the_secrets_from_qt_web():
     services = _services()
     web = _env(services["qt-web"])
-    assert all(web[k].get("sync") is False for k in SECRETS)
+    assert all(web[k].get("sync") is False for k in SECRETS | OPTIONAL)
     crons = [s for s in services.values() if s["type"] == "cron"]
     assert {c["name"] for c in crons} == {"qt-daily", "qt-premarket", "qt-weekly", "qt-monthly"}
     for c in crons:
         env = _env(c)
         for k in SECRETS:
             assert env[k]["fromService"] == {"type": "web", "name": "qt-web", "envVarKey": k}, (c["name"], k)
+        assert not OPTIONAL & env.keys(), c["name"]
         assert env["QT_DATABASE_URL"]["fromDatabase"]["name"] == "qt-db"
         # the Telegram links must be the public https URL, not the internal hostname
         assert env["QT_PUBLIC_URL"]["fromService"]["envVarKey"] == "RENDER_EXTERNAL_URL"

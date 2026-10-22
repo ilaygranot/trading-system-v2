@@ -4,6 +4,8 @@
 # Secrets are entered once, on qt-web (sync: false); the cron jobs copy them from qt-web (fromService envVarKey),
 # so Render asks for each secret one time. After changing a secret on qt-web, run "Manual Sync" on the Blueprint.
 # The IBKR login is entered on qt-ibgateway only. No secret is in this file.
+# Optional keys (ANTHROPIC_API_KEY, FRED_API_KEY, FMP_API_KEY) are not copied to the crons: a fromService copy of a
+# variable that qt-web does not have fails the whole sync. When one is added on qt-web, add its copy here too.
 # The agents run on ANTHROPIC_API_KEY, or, when it is empty, on CLAUDE_CODE_OAUTH_TOKEN through the Claude Code CLI;
 # the build copies the CLI binary (pinned) into ./bin because Render keeps only the project directory at runtime.
 
@@ -99,16 +101,10 @@ services:
         fromDatabase: {name: qt-db, property: connectionString}
       - key: PYTHON_VERSION
         value: "3.12.7"
-      - key: ANTHROPIC_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: ANTHROPIC_API_KEY}
       - key: CLAUDE_CODE_OAUTH_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
       - key: DISABLE_AUTOUPDATER
         value: "1"
-      - key: FRED_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
-      - key: FMP_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
       - key: TELEGRAM_BOT_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
       - key: TELEGRAM_CHAT_ID
@@ -135,16 +131,10 @@ services:
         fromDatabase: {name: qt-db, property: connectionString}
       - key: PYTHON_VERSION
         value: "3.12.7"
-      - key: ANTHROPIC_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: ANTHROPIC_API_KEY}
       - key: CLAUDE_CODE_OAUTH_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
       - key: DISABLE_AUTOUPDATER
         value: "1"
-      - key: FRED_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
-      - key: FMP_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
       - key: TELEGRAM_BOT_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
       - key: TELEGRAM_CHAT_ID
@@ -171,16 +161,10 @@ services:
         fromDatabase: {name: qt-db, property: connectionString}
       - key: PYTHON_VERSION
         value: "3.12.7"
-      - key: ANTHROPIC_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: ANTHROPIC_API_KEY}
       - key: CLAUDE_CODE_OAUTH_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
       - key: DISABLE_AUTOUPDATER
         value: "1"
-      - key: FRED_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
-      - key: FMP_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
       - key: TELEGRAM_BOT_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
       - key: TELEGRAM_CHAT_ID
@@ -207,16 +191,10 @@ services:
         fromDatabase: {name: qt-db, property: connectionString}
       - key: PYTHON_VERSION
         value: "3.12.7"
-      - key: ANTHROPIC_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: ANTHROPIC_API_KEY}
       - key: CLAUDE_CODE_OAUTH_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
       - key: DISABLE_AUTOUPDATER
         value: "1"
-      - key: FRED_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
-      - key: FMP_API_KEY
-        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
       - key: TELEGRAM_BOT_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
       - key: TELEGRAM_CHAT_ID
