@@ -38,7 +38,7 @@ services:
       - key: DISABLE_AUTOUPDATER
         value: "1"                        # the CLI stays at the pinned build
       - key: QT_START_EQUITY
-        value: "100000"                   # the paper book's cash until the first portfolio or fill exists
+        value: "10000"                    # the paper book's cash until the first portfolio or fill exists
       - key: FRED_API_KEY
         sync: false
       - key: FMP_API_KEY
@@ -113,7 +113,7 @@ services:
       - key: DISABLE_AUTOUPDATER
         value: "1"
       - key: QT_START_EQUITY
-        value: "100000"                   # the paper book's cash until the first portfolio or fill exists
+        value: "10000"                    # the paper book's cash until the first portfolio or fill exists
       - key: TELEGRAM_BOT_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
       - key: TELEGRAM_CHAT_ID
@@ -145,7 +145,7 @@ services:
       - key: DISABLE_AUTOUPDATER
         value: "1"
       - key: QT_START_EQUITY
-        value: "100000"                   # the paper book's cash until the first portfolio or fill exists
+        value: "10000"                    # the paper book's cash until the first portfolio or fill exists
       - key: TELEGRAM_BOT_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
       - key: TELEGRAM_CHAT_ID
@@ -179,7 +179,7 @@ services:
       - key: FRED_API_KEY                 # the macro stance (monthly) and the weekly research
         fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
       - key: QT_START_EQUITY
-        value: "100000"                   # the paper book's cash until the first portfolio or fill exists
+        value: "10000"                    # the paper book's cash until the first portfolio or fill exists
       - key: TELEGRAM_BOT_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
       - key: TELEGRAM_CHAT_ID
@@ -213,7 +213,7 @@ services:
       - key: FRED_API_KEY                 # the macro stance (monthly) and the weekly research
         fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
       - key: QT_START_EQUITY
-        value: "100000"                   # the paper book's cash until the first portfolio or fill exists
+        value: "10000"                    # the paper book's cash until the first portfolio or fill exists
       - key: TELEGRAM_BOT_TOKEN
         fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
       - key: TELEGRAM_CHAT_ID
