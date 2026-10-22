@@ -44,7 +44,8 @@ def test_every_idea_has_its_page_with_the_whole_dossier(site):
 
 
 def test_overview_links_tickers_to_their_pages(site):
-    page = _call(site, "/")[2]
+    assert "rep-slot" in _call(site, "/")[2]                              # the report comes in after the live parts
+    page = _call(site, "/", query="part=report")[2]
     assert 'href="#idea-' not in page and 'href="/stock/SHEL"' in page
     assert '<h3><a href="/stock/SHEL">SHEL</a>' in page                  # the idea's header
     assert 'href="/sectors">XLE' in page and 'href="/stock/XLE"' not in page
@@ -77,3 +78,17 @@ def test_what_the_agents_do_not_write_stays_from_the_last_research():
     html = report.render(new)
     assert f"מהמחקר של {prev['meta']['as_of']}" in html and "הסיפור של השבוע" in html and "הפד מקל" in html and "• A1 note" in html and "• A<" not in html
     carry_forward(new, None)                                               # nothing before it: nothing changes
+
+
+def test_big_answers_go_out_gzipped(site):
+    import gzip
+    import io
+    import base64
+    env = {"PATH_INFO": "/", "REQUEST_METHOD": "GET", "QUERY_STRING": "part=report", "wsgi.input": io.BytesIO(b""),
+           "HTTP_HOST": "qt.test", "HTTP_ACCEPT_ENCODING": "gzip, br",
+           "HTTP_AUTHORIZATION": "Basic " + base64.b64encode(b"ilay:pw").decode()}
+    out = {}
+    body = b"".join(site(env, lambda s, h: out.update(status=s, headers=dict(h))))
+    assert out["headers"]["Content-Encoding"] == "gzip" and int(out["headers"]["Content-Length"]) == len(body)
+    assert 'id="macro"' in gzip.decompress(body).decode()
+    assert _call(site, "/health")[2] == "ok"

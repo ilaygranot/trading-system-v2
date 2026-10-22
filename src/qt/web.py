@@ -141,6 +141,24 @@ class App:
 
     # ------------------------------------------------------------ routing
     def __call__(self, env: dict, start: Start) -> list[bytes]:
+        """Every answer of some size goes out gzipped when the browser takes it: the overview is the whole research
+        report (~500KB of tables and charts) and a phone on a slow line showed a white screen until it came in."""
+        if "gzip" not in env.get("HTTP_ACCEPT_ENCODING", ""):
+            return self._route(env, start)
+        got: dict = {}
+        body = b"".join(self._route(env, lambda status, headers, *a: got.update(status=status, headers=list(headers))))
+        headers = got["headers"]
+        ctype = next((v for k, v in headers if k.lower() == "content-type"), "")
+        if len(body) < 1024 or not ctype.startswith(("text/", "application/json", "application/javascript", "image/svg")):
+            start(got["status"], headers)
+            return [body]
+        import gzip
+        body = gzip.compress(body, compresslevel=6)
+        start(got["status"], headers + [("Content-Encoding", "gzip"), ("Vary", "Accept-Encoding"),
+                                        ("Content-Length", str(len(body)))])
+        return [body]
+
+    def _route(self, env: dict, start: Start) -> list[bytes]:
         path, method = env.get("PATH_INFO", "/"), env.get("REQUEST_METHOD", "GET")
         try:
             if path == "/health":
@@ -665,6 +683,21 @@ class App:
             return [(k, html.unescape(t)) for k, t in nav], body.rstrip()[:-len("</div>")], m.group(1) if m else None
         return [], "", None
 
+    def overview_report(self) -> tuple[list[tuple[str, str]], str, str | None]:
+        """report_parts with the site's links in, kept until a newer report or dossier comes in."""
+        Queue(self.db)                                                  # its tables
+        key = self.db.one("SELECT MAX(id) AS id FROM uploads WHERE kind IN ('dossier', 'report')")
+        key = key and key["id"]
+        if key is not None and getattr(self, "_rep_cache", (None,))[0] == key:
+            return self._rep_cache[1]
+        nav, report, as_of = self.report_parts()
+        if report:
+            report = self.rep_links(report)
+            for sec, href in (("macro", "/macro"), ("sectors", "/sectors"), ("screen", "/sectors")):
+                report = re.sub(rf'(<section id="{sec}"><h2>[^<]*)', rf"\1 <a class=note href='{href}'>פתח בדף מלא ←</a>", report, count=1)
+        self._rep_cache = (key, (nav, report, as_of))
+        return nav, report, as_of
+
     def watch_html(self) -> str:
         """The watchlist: each idea as the research left it (trigger, stop width, target, why) with the latest daily
         check (close, distance to the trigger, reward:risk, the 078 trend columns)."""
@@ -1012,14 +1045,17 @@ class App:
         what they said, and the system's status. The report changes once a week, so only the parts around it refresh."""
         if "fragment" in parse_qs(env.get("QUERY_STRING", "")):
             return self._send(start, "200 OK", self.overview_html(), headers=[("Cache-Control", "no-store")])
+        nav, report, as_of = self.overview_report()
+        if "part=report" in env.get("QUERY_STRING", ""):
+            return self._send(start, "200 OK", f"<div class=rep>{report}</div>" if report else "")
         parts = self.overview_parts()
         live = lambda k: f"<div data-live={k} class=wrap style='padding:0;width:100%'>{parts[k]}</div>"  # noqa: E731
-        nav, report, as_of = self.report_parts()
         if report:
-            report = self.rep_links(report)
-            for sec, href in (("macro", "/macro"), ("sectors", "/sectors"), ("screen", "/sectors")):
-                report = re.sub(rf'(<section id="{sec}"><h2>[^<]*)', rf"\1 <a class=note href='{href}'>פתח בדף מלא ←</a>", report, count=1)
-            rep = f"<div class=rep>{report}</div>"
+            # the report is most of the page (~500KB): the live parts paint first and the report comes in right after
+            rep = ("<div id=rep-slot><p class=note style='padding:1rem'>טוען את דוח המחקר…</p></div><script>"
+                   "fetch('/?part=report',{credentials:'same-origin'}).then(function(r){return r.text()}).then(function(t){"
+                   "var s=document.getElementById('rep-slot');s.outerHTML=t;var h=location.hash&&document.getElementById("
+                   "location.hash.slice(1));if(h)h.scrollIntoView()})</script>")
             sub = f"דוח המחקר האחרון: {ui.e(as_of or '')}{self.stale(as_of)} · הפוזיציות, התור והריצות מתעדכנים לבד"
         else:
             rep = ui.section("דוח המחקר", ui.empty("עוד אין דוח מחקר: הריצה השבועית מפיקה אותו בשבת (צריך מפתח FRED, "

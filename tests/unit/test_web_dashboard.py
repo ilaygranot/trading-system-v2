@@ -90,7 +90,7 @@ def test_overview_is_the_research_report_with_the_live_parts_around_it(web, db):
     assert "עוד אין דוח מחקר" in page
     assert web.upload("dossier-2026-10-20.json", fix).startswith("דוח המחקר")
     assert web.upload("dossier.json", "{}").startswith("הקובץ לא נקרא")
-    page = _call(web, "/")[2]
+    page = _call(web, "/")[2] + _call(web, "/", query="part=report")[2]
     for part in ("class=rep", "id=\"macro\"", "id=\"sectors\"", "id=\"ideas\"", "href='#macro'", "href='#watch'",
                  "data-live=book", "data-live=watch", "data-live=runs", "data-live=system", "רשימת מעקב"):
         assert part in page, part
