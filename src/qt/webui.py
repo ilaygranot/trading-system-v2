@@ -5,6 +5,7 @@ script every REFRESH_S seconds while the tab is visible.
 from __future__ import annotations
 
 import html
+import re
 from datetime import datetime, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
@@ -101,6 +102,38 @@ border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 ul{margin:0;padding-inline-start:1.3em;display:flex;flex-direction:column;gap:8px}
 .failed{color:var(--bad)}
 footer{font-size:.84rem;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+nav svg{display:none;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+@media (max-width:640px){
+body{font-size:15px}
+.wrap{padding:calc(12px + env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) calc(96px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));gap:28px}
+h1{font-size:1.5rem}
+nav{position:fixed;bottom:0;left:0;right:0;z-index:10;flex-wrap:nowrap;gap:0;justify-content:space-around;
+background:var(--surface);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+box-shadow:0 -2px 12px rgba(0,0,0,.06)}
+nav a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;border:0;background:none;border-radius:10px;
+padding:4px 2px;font-size:.72rem;color:var(--muted);min-height:48px;justify-content:center}
+nav a.on{background:var(--accent-soft);color:var(--accent);font-weight:700}
+nav svg{display:block}
+.verdict{padding:14px 16px;font-size:1rem}
+.cell .big{font-size:1.15rem}
+button{min-height:40px;padding:6px 14px}button.go{min-height:44px}
+.acts button{flex:1}.acts form{display:flex;flex:1}
+.tbl{border:0;background:none;overflow:visible}
+table,table tbody,table tr,table td{display:block;min-width:0;width:100%%}
+table{font-size:.92rem}
+table tr:first-child{display:none}
+table tr{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:4px 14px;margin-bottom:10px}
+table td{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:7px 0;border-bottom:1px dashed var(--line);
+text-align:left;white-space:normal}
+table td.num{flex-direction:row-reverse}
+table td::before{content:attr(data-label);font-size:.78rem;font-weight:700;color:var(--muted);text-align:right;flex:none;max-width:45%%}
+table td:first-child{font-family:var(--display);font-size:1.02rem;border-bottom:1px solid var(--line)}
+table td:last-child{border-bottom:0}
+table td:empty{display:none}
+.bars div{grid-template-columns:56px 1fr 60px}
+.two{grid-template-columns:1fr}
+}
+@media (display-mode:standalone){.brand{padding-top:2px}}
 """ % {"dark": _DARK}
 
 # Live refresh (runtime plan 7.1): the page re-reads its own fragment every REFRESH_S seconds while it is visible,
@@ -116,24 +149,52 @@ setInterval(tick,%d*1000);document.addEventListener('visibilitychange',tick)})()
 
 NAV = (("/", "סקירה"), ("/positions", "פוזיציות"), ("/runs", "ריצות"), ("/journal", "יומן"), ("/system", "מצב המערכת"))
 
+# Tab icons for the phone's bottom bar (24px line icons, currentColor).
+_ICON = {"/": "<path d='M4 11l8-7 8 7v9h-5v-6H9v6H4z'/>",
+         "/positions": "<path d='M4 19V9m6 10V5m6 14v-7m4 7H2'/>",
+         "/runs": "<circle cx='12' cy='12' r='8'/><path d='M12 8v4l3 2'/>",
+         "/journal": "<path d='M6 3h10l3 3v15H6zM9 9h7M9 13h7M9 17h4'/>",
+         "/system": "<path d='M3 12h4l3-7 4 14 3-7h4'/>"}
+
+# The installed app (22.10): manifest, icons, theme colour, and the service worker (static/sw.js).
+APP_HEAD = ("<meta name=theme-color content='#0f5f73' media='(prefers-color-scheme: light)'>"
+            "<meta name=theme-color content='#0f161c' media='(prefers-color-scheme: dark)'>"
+            "<link rel=manifest href='/manifest.webmanifest'><link rel=icon href='/favicon.png' type='image/png'>"
+            "<link rel=apple-touch-icon href='/apple-touch-icon.png'><meta name=apple-mobile-web-app-capable content=yes>"
+            "<meta name=mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content=Quantum>"
+            "<meta name=apple-mobile-web-app-status-bar-style content=default>")
+SW_JS = ("<script>if('serviceWorker' in navigator)addEventListener('load',function(){"
+         "navigator.serviceWorker.register('/sw.js').catch(function(){})})</script>")
+
 
 def e(v: Any) -> str:
     return html.escape("" if v is None else str(v))
 
 
 def page(title: str, body: str, active: str = "", live: bool = False, nav_q: str = "") -> str:
-    """The whole document: brand and tabs, the title, then the body (inside #live when it refreshes)."""
-    nav = "".join(f"<a href='{h}{nav_q if h == '/journal' else ''}'{' class=on' if h == active else ''}>{t}</a>"
-                  for h, t in NAV)
+    """The whole document: brand and tabs, the title, then the body (inside #live when it refreshes). On a phone
+    the tabs move to a bar at the bottom, like an app."""
+    nav = "".join(f"<a href='{h}{nav_q if h == '/journal' else ''}'{' class=on aria-current=page' if h == active else ''}>"
+                  f"<svg viewBox='0 0 24 24' aria-hidden=true>{_ICON[h]}</svg><span>{t}</span></a>" for h, t in NAV)
     stamp = (f"<div class=eyebrow><span id=pulse class=pulse></span><span id=stamp>מתעדכן כל {REFRESH_S} שניות</span>"
              f"</div>" if live else "")
     main = f"<main id=live class=wrap style='padding:0;width:100%'>{body}</main>" if live else body
     return (f"<!doctype html><html lang=he dir=rtl><meta charset=utf-8>"
-            f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{e(title)}</title>{FONTS}"
-            f"<style>{CSS}</style><body><div class=wrap><header class=top><div class=bar><span class=brand>"
+            f"<meta name=viewport content='width=device-width,initial-scale=1,viewport-fit=cover'><title>{e(title)}</title>"
+            f"{APP_HEAD}{FONTS}<style>{CSS}</style><body><div class=wrap><header class=top><div class=bar><span class=brand>"
             f"Quantum Trader</span><nav>{nav}</nav></div>{stamp}<h1>{e(title)}</h1></header>{main}"
             f"<footer>תיק נייר בלבד. שום פקודה לא נשלחת ל-IBKR. מחירים מ-Yahoo בעיכוב.</footer></div>"
-            + (LIVE_JS if live else "") + "</body></html>")
+            + (LIVE_JS if live else "") + SW_JS + "</body></html>")
+
+
+def offline() -> str:
+    """What the installed app shows when the server cannot be reached (cached by the service worker)."""
+    return (f"<!doctype html><html lang=he dir=rtl><meta charset=utf-8>"
+            f"<meta name=viewport content='width=device-width,initial-scale=1,viewport-fit=cover'><title>אין חיבור</title>"
+            f"{APP_HEAD}<style>{CSS}</style><body><div class=wrap><header class=top><span class=brand>Quantum Trader</span>"
+            f"<h1>אין חיבור לשרת</h1></header><div class=verdict><p>לא הצלחתי להגיע ללוח הבקרה. ייתכן שאין רשת, או "
+            f"שהשירות ב-Render עולה מחדש אחרי פריסה. שום פקודה לא נשלחה.</p>"
+            f"<div class=acts><button class=go onclick='location.reload()'>נסה שוב</button></div></div></div></body></html>")
 
 
 def section(title: str, body: str, tag: str = "") -> str:
@@ -142,9 +203,14 @@ def section(title: str, body: str, tag: str = "") -> str:
 
 def table(heads: Iterable[str], rows: Iterable[Iterable[Any]]) -> str:
     """Cells are HTML already (escape with e())."""
+    heads = list(heads)
     th = "".join(f"<th>{h}</th>" for h in heads)
-    trs = "".join("<tr>" + "".join(c if str(c).startswith("<td") else f"<td>{c}</td>" for c in r) + "</tr>"
-                  for r in rows)
+    labels = [e(re.sub(r"<[^>]+>", "", str(h))) for h in heads]                # each cell's label on a phone
+
+    def td(c: Any, i: int) -> str:
+        lab = f" data-label='{labels[i]}'" if i < len(labels) else ""
+        return f"<td{lab}{str(c)[3:]}" if str(c).startswith("<td") else f"<td{lab}>{c}</td>"
+    trs = "".join("<tr>" + "".join(td(c, i) for i, c in enumerate(r)) + "</tr>" for r in rows)
     return f"<div class=tbl><table><tr>{th}</tr>{trs}</table></div>"
 
 
