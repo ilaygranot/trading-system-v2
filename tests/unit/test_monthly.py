@@ -143,7 +143,7 @@ def test_monthly_run_end_to_end(db):
     assert [c[1] for c in ag.cards] == ["DC-01", "DC-02", "DC-03", "DC-04"] and ag.cards[0][2] == "a1"
     item = Queue(db).for_day(AS_OF)[0]
     assert item["rule_id"] == "S02-STANCE" and "A1: DC-01 hot" in item["payload"]["detail"]
-    prep = bot.sent[-1]
+    prep = bot.sent[-2]
     for s in ("הכנה חודשית", "A1 על המקרו: DC-01 hot", "XLK משתפרות", "נרות החודש", "XLK", "ISM: 2 תעשיות צומחות",
               "עונתיות החודש", "10-15 CPI", "10-28 החלטת ריבית (FOMC)", "10-29 דוח ABC", "11-06 תעסוקה",
               "אין תקרות", "NAAIM"):
@@ -202,5 +202,5 @@ def test_monthly_sentiment_step_with_cot_and_naaim(db):
     Queue(db).upload("manual_macro", "m.yaml", _manual() + naaim)
     Runner(db, PIPELINES, {"telegram": bot, "fred": Fred(), "prices": Prices(), "cftc": Cftc(),
                            "portfolio": {"cash": 100_000, "positions": []}}).start("monthly", AS_OF)
-    prep = bot.sent[-1]
+    prep = bot.sent[-2]
     assert "COT (" in prep and "NAAIM (2026-09-30)" in prep and "סנטימנט חסר" not in prep

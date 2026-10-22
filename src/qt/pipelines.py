@@ -2,10 +2,10 @@
 
 premarket: expire -> quotes -> recheck -> notify. Items still open or approved are checked against the latest
            price; a move past the threshold, or a hard block now in force, sends the item back as "changed".
-weekly:    expire -> report -> wfetch -> arena -> revisit -> week -> research -> notify. Runs that failed or resumed, agent cost
+weekly:    expire -> report -> wfetch -> arena -> revisit -> week -> research -> learn -> notify. Runs that failed or resumed, agent cost
            per agent, queue discipline (approved / rejected / not reviewed / changed), agent decisions that were
            undecided or returned; then the end-of-week review (qt.weekly, S13-R21).
-monthly:   manual -> fred -> stance -> queue -> notify. Waits for the manual ISM / NFIB file: without it the run
+monthly:   manual -> fred -> stance -> ... -> queue -> learn -> notify. The learn steps are qt.learning (architecture 7.3). Waits for the manual ISM / NFIB file: without it the run
            fails with a reminder, and resumes when the file arrives (the bot's upload calls resume).
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from qt.approvals import Queue
 from qt.daily import DAILY, load_portfolio  # noqa: F401  (load_portfolio re-exported for the CLI)
 from qt.runs import RunContext, Step
+from qt import learning as L
 from qt import monthly as MO
 from qt import weekly as W
 
@@ -125,6 +126,9 @@ def weekly_notify(ctx: RunContext, _: str) -> dict:
     text = "\n".join(lines)
     if ctx.out("week") is not None:                  # the review first, operations in a second message (4096 cap)
         review = W.summary(ctx)
+        learned = L.weekly_lines(ctx.out("learn"))
+        if learned:
+            review += "\n\n" + "\n".join(learned + _journal_link())
         _send(ctx, review)
         text = review + "\n\nתפעול\n" + text
         _send(ctx, "תפעול\n" + "\n".join(lines))
@@ -206,15 +210,25 @@ def monthly_notify(ctx: RunContext, _: str) -> dict:
     prep = MO.summary(ctx)
     _send(ctx, text)
     _send(ctx, prep)
-    return {"text": text, "prep": prep}
+    learned = "\n".join(L.monthly_lines(ctx.out("learn")) + _journal_link())
+    if learned:
+        _send(ctx, learned)
+    return {"text": text, "prep": prep, "learn": learned}
+
+
+def _journal_link() -> list[str]:
+    from qt.telegram import journal_link
+    link = journal_link()
+    return [f"יומן המסחר (טבלאות ו-CSV): {link}"] if link else []
 
 
 PREMARKET = (Step("expire", expire), Step("quotes", quotes), Step("recheck", recheck), Step("notify", premarket_notify))
 WEEKLY = (Step("expire", expire), Step("report", report), Step("wfetch", W.wfetch), Step("arena", W.arena),
-          Step("revisit", W.revisit), Step("week", W.week), Step("research", W.research), Step("notify", weekly_notify))
+          Step("revisit", W.revisit), Step("week", W.week), Step("research", W.research), Step("learn", L.learn_weekly),
+          Step("notify", weekly_notify))
 MONTHLY = (Step("manual", manual), Step("fred", fred), Step("stance", stance), Step("a1", MO.a1),
            Step("mfetch", MO.mfetch), Step("candles", MO.candles), Step("sectors", MO.sectors), Step("ism", MO.ism),
            Step("calendar", MO.calendar), Step("season", MO.season), Step("sentiment", MO.sentiment),
            Step("exposure", MO.exposure),
-           Step("queue", monthly_queue), Step("notify", monthly_notify))
+           Step("queue", monthly_queue), Step("learn", L.learn_monthly), Step("notify", monthly_notify))
 PIPELINES = {"daily": DAILY, "premarket": PREMARKET, "weekly": WEEKLY, "monthly": MONTHLY}

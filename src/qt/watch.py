@@ -158,7 +158,7 @@ def entry_action(e: WatchEntry, c: WatchCheck, equity: float) -> dict[str, Any]:
               f"{e.tldr}" + (f" ⚠️ {'; '.join(c.notes)}" if c.notes else ""))
     return dict(kind="enter", rule_id="S10-R4", symbol=e.symbol, qty=qty, price=c.close, preapproved=False,
                 detail=detail, direction=e.direction, sector=e.etf, stop=round(c.stop, 2), target=c.target,
-                size_pct=e.first_size_pct)
+                size_pct=e.first_size_pct, equity=round(equity, 2))
 
 
 def load(raw: dict | None) -> list[WatchEntry]:

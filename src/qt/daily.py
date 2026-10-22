@@ -1,6 +1,6 @@
 """The daily run without agents (runtime plan 10, step 3): data, code numbers and rules only.
 
-fetch -> fill -> calc -> rules -> watch -> news -> agents -> journal -> queue -> book -> notify. The agents step runs
+fetch -> fill -> calc -> rules -> watch -> news -> agents -> journal -> queue -> book -> learn -> notify. The agents step runs
 A7 on positions with an event against them (from the portfolio or from today's news, qt.news) when an agent runner is configured; A5 and A6 join it as their inputs arrive. The portfolio
 comes from a YAML file (cash, peak equity, open positions); nothing here sends an order: the queue holds
 proposals and the standing orders approved with each trade, and approvals become paper orders (qt.approvals).
@@ -81,7 +81,8 @@ def fill(ctx: RunContext, _: str) -> dict:
     pf, log, filled = snap["portfolio"], [], []
     for o in q.fill(opens):
         item = q.get(o["item_id"]) or {}
-        payload = dict(item.get("payload") or {}, as_of=ctx.as_of.isoformat())
+        payload = dict(item.get("payload") or {}, as_of=ctx.as_of.isoformat(), item_id=item.get("id"),
+                       decision_id=item.get("decision_id"))
         pf, what = B.apply_fill(pf, o["kind"], o["symbol"], o["qty"], o["fill_price"], payload)
         log.append(what)
         filled.append({k: o[k] for k in ("id", "symbol", "kind", "qty", "fill_on", "fill_price")})
@@ -223,7 +224,8 @@ def journal(ctx: RunContext, _: str) -> dict:
             continue
         ids.append(j.record(Decision(decided_by="code", subject=a["symbol"] or "portfolio", choice=a["kind"],
                                      playbook_version=pb, card_id=a["rule_id"], action=a["kind"],
-                                     reasoning=a["detail"], cited_rules=[a["rule_id"]]), run_id=ctx.run_id))
+                                     reasoning=a["detail"], cited_rules=[a["rule_id"]], **idea_prediction(a, ctx.as_of)),
+                            run_id=ctx.run_id))
     return {"decision_ids": ids}
 
 
@@ -353,8 +355,9 @@ def day_summary(ctx: RunContext) -> str:
 
 
 from qt.news import diary_lines, news  # noqa: E402  (qt.news imports _pf from here)
+from qt.learning import idea_prediction, learn_daily  # noqa: E402
 
 DAILY = (Step("fetch", fetch), Step("fill", fill), Step("calc", calc), Step("rules", rules), Step("watch", watch),
          Step("news", news), Step("agents", agents), Step("journal", journal),
-         Step("queue", queue), Step("book", book), Step("notify", notify))
+         Step("queue", queue), Step("book", book), Step("learn", learn_daily), Step("notify", notify))
 PIPELINES = {"daily": DAILY}
