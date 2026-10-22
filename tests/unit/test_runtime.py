@@ -287,3 +287,14 @@ def test_webhook_token_is_telegram_safe_and_matches_the_web_route(db):
     upd = json.dumps({"update_id": 1}).encode()
     st, _ = _call(web, f"/telegram/{tok}", "POST", upd, headers={"HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN": tok})
     assert not st.startswith("403")
+
+
+def test_services_start_from_an_empty_book_only_when_nothing_was_sent(db, monkeypatch):
+    monkeypatch.delenv("QT_PORTFOLIO", raising=False)
+    monkeypatch.delenv("QT_START_EQUITY", raising=False)
+    assert "portfolio" not in A.services(db)
+    monkeypatch.setenv("QT_START_EQUITY", "100000")
+    assert A.services(db)["portfolio"] == {"cash": 100000.0, "peak_equity": 100000.0,
+                                           "portfolio_stop_triggered": False, "positions": []}
+    Queue(db).upload("portfolio", "portfolio.yaml", "cash: 5\npositions: []\n")
+    assert A.services(db)["portfolio"] == {"cash": 5, "positions": []}
