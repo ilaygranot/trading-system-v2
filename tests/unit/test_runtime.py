@@ -308,5 +308,6 @@ def test_services_start_from_an_empty_book_only_when_nothing_was_sent(db, monkey
     monkeypatch.setenv("QT_START_EQUITY", "100000")
     assert A.services(db)["portfolio"] == {"cash": 100000.0, "peak_equity": 100000.0,
                                            "portfolio_stop_triggered": False, "positions": []}
+    assert A.portfolio(db)["cash"] == 100000.0                       # the positions screen reads the same book
     Queue(db).upload("portfolio", "portfolio.yaml", "cash: 5\npositions: []\n")
     assert A.services(db)["portfolio"] == {"cash": 5, "positions": []}

@@ -21,7 +21,7 @@ from qt.runs import AlreadyRunning, Runner
 
 def portfolio(db: DB, path: str | None = None) -> dict | None:
     """An explicit path wins; then the book the last daily run saved (qt.book); then QT_PORTFOLIO; then the last
-    portfolio sent to the bot. Sending a new portfolio file to the bot replaces the book."""
+    portfolio sent to the bot; then an all-cash book of QT_START_EQUITY. Sending a new portfolio file to the bot replaces the book."""
     if path and Path(path).exists():
         return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     up = Queue(db).latest_upload("portfolio")
@@ -30,7 +30,10 @@ def portfolio(db: DB, path: str | None = None) -> dict | None:
     env = os.environ.get("QT_PORTFOLIO")
     if env and Path(env).exists():
         return yaml.safe_load(Path(env).read_text(encoding="utf-8"))
-    return yaml.safe_load(up["content"]) if up else None
+    if up:
+        return yaml.safe_load(up["content"])
+    start = os.environ.get("QT_START_EQUITY")                  # nothing sent yet: an all-cash paper book (22.10)
+    return start_book(float(start)) if start else None
 
 
 def start_book(equity: float) -> dict:
@@ -56,8 +59,6 @@ def services(db: DB, portfolio_path: str | None = None) -> dict[str, Any]:
     yahoo = Yahoo(store)
     s: dict[str, Any] = {"prices": yahoo, "prices_fallback": FMP(store), "quote": yahoo.quote, "cftc": CFTC()}
     pf = portfolio(db, portfolio_path)
-    if pf is None and os.environ.get("QT_START_EQUITY"):
-        pf = start_book(float(os.environ["QT_START_EQUITY"]))
     if pf is not None:
         s["portfolio"] = pf
     wl = watchlist(db)
