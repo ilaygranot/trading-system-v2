@@ -37,7 +37,9 @@ class App:
                  webhook_secret: str | None = None, resume: Callable[[str], Any] | None = None):
         self.db_url = db_url or os.environ.get("QT_DATABASE_URL", ":memory:")
         self.password = password if password is not None else os.environ.get("DASHBOARD_PASSWORD", "")
-        self.webhook_secret = webhook_secret if webhook_secret is not None else os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+        from qt.telegram import webhook_token
+        self.webhook_secret = webhook_token(webhook_secret if webhook_secret is not None
+                                            else os.environ.get("TELEGRAM_WEBHOOK_SECRET", ""))
         self._bot = bot
         self._resume = resume
         self._db: DB | None = None

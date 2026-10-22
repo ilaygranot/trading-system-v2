@@ -3,6 +3,7 @@ on SQLite and Postgres. No network: Telegram, prices and FRED are fakes."""
 import base64
 import io
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -273,3 +274,16 @@ def test_scheduled_runs_once_skips_done_and_auto_resumes_a_failure(db):
     out = A.scheduled("monthly", db, svc, datetime(2026, 10, 10, 15, 5, tzinfo=UTC))
     assert out.startswith("failed again")
     assert A.scheduled("monthly", db, svc, datetime(2026, 10, 10, 15, 6, tzinfo=UTC)) == "not due: monthly"
+
+
+def test_webhook_token_is_telegram_safe_and_matches_the_web_route(db):
+    from qt.telegram import webhook_token
+    assert webhook_token("hook") == "hook"
+    raw = "aB3+/xY9=="                                          # Render generateValue is base64
+    tok = webhook_token(raw)
+    assert re.fullmatch(r"[A-Za-z0-9_-]+", tok) and tok == webhook_token(raw)
+    web = App(bot=Bot(), password="pw", webhook_secret=raw, resume=lambda rid: None)
+    web._db = db
+    upd = json.dumps({"update_id": 1}).encode()
+    st, _ = _call(web, f"/telegram/{tok}", "POST", upd, headers={"HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN": tok})
+    assert not st.startswith("403")
