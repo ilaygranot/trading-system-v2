@@ -243,3 +243,31 @@ def test_watch_check_has_the_078_trend_columns():
     assert c.trend_1y_pct > c.trend_3m_pct > 0 and round(c.since_add_pct, 6) == 10.0
     short = W.check(_entry(price_at_add=None), bars[-70:], AS_OF)               # ~3 months of bars, not a year
     assert short.trend_1y_pct is None and short.trend_3m_pct > 0 and short.since_add_pct is None
+
+
+# ------------------------------------------------------------------ every green stock on the daily pass (Ilay 22.10)
+
+def test_watchlist_keeps_every_green_stock_with_its_reason():
+    import copy
+    import json as _j
+    from pathlib import Path
+    d = copy.deepcopy(_j.loads((Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8")))
+    d["ideas"]["SHEL"]["bucket"] = "reject"                             # a green idea the rules engine blocked
+    d.setdefault("judgments", {})["A3"] = {"skipped": {"CVX": "דוח מחר"}}
+    for t in d["timing"]:
+        if t["sym"] == "CVX":
+            t.update(extreme=t["price"] * 1.2, adr=1.5)
+    es = {e["symbol"]: e for e in W.from_dossier(d)["entries"]}
+    assert "MAA" not in es                                              # a red reject stays out
+    assert es["SHEL"]["bucket"] == "watch" and es["SHEL"]["green_at_add"] and es["SHEL"]["risk_pct_at_add"] > 0
+    cvx = es["CVX"]                                                     # skipped before the deep dive, still followed
+    assert cvx["bucket"] == "watch" and cvx["why_not"] == "דוח מחר" and cvx["risk_pct_at_add"] == 6.0
+    assert cvx["target_source"] == "all_time_high_target"
+
+
+def test_hindsight_says_when_not_entering_was_wrong_or_right():
+    e = _entry(bucket="watch", trigger_kind="now", trigger_level=None, price_at_add=100.0, risk_pct_at_add=5.0)
+    assert W.hindsight(e, 116.0) == "missed" and W.hindsight(e, 94.0) == "saved" and W.hindsight(e, 105.0) is None
+    assert W.hindsight(_entry(bucket="enter", price_at_add=100.0, risk_pct_at_add=5.0), 130.0) is None
+    s = _entry(direction="short", bucket="watch", price_at_add=100.0, risk_pct_at_add=5.0)
+    assert W.hindsight(s, 84.0) == "missed" and W.hindsight(s, 106.0) == "saved"

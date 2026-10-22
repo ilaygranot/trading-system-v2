@@ -42,6 +42,9 @@ class WatchEntry:
     price_at_add: float | None = None
     tldr: str = ""
     breakers: list[str] = field(default_factory=list)
+    risk_pct_at_add: float | None = None    # the stop's width when the decision was made (k x ADR, % of price)
+    green_at_add: bool = False              # Ilay 22.10: every green stock stays on the daily pass
+    why_not: str = ""                       # why it was not entered then (the research's reason)
 
 
 @dataclass
@@ -70,6 +73,7 @@ class WatchCheck:
     trend_1y_pct: float | None = None       # the 078 watchlist's three trend columns: price change over the last
     trend_3m_pct: float | None = None       # year, the last 3 months and since the idea was added (S08-R4)
     since_add_pct: float | None = None
+    hindsight: str | None = None            # missed (moved 3R our way without us) | saved (would have hit the stop)
 
 
 def _change_since(bars: Sequence[Bar], start: date) -> float | None:
@@ -85,31 +89,64 @@ def _pct(a: float, b: float) -> float:
 
 
 def from_dossier(d: dict) -> dict[str, Any]:
-    """The watchlist file from a research dossier: every idea that is not rejected."""
+    """The watchlist file from a research dossier: every idea that is not rejected, and every green stock even when
+    it was rejected or skipped (Ilay 22.10: each green stock is followed daily, to learn whether the decision was
+    right and to catch the day it meets the criteria)."""
     as_of = d["meta"]["as_of"]
+    color = {t["sym"]: t.get("combined") for t in d.get("timing") or []}
     out = []
     for sym, i in d["ideas"].items():
-        if i["bucket"] == "reject":
+        green = color.get(sym) == "green"
+        if i["bucket"] == "reject" and not green:
             continue
         j, p, x = i["judgment"], i["plan"], i.get("exit") or {}
+        bucket = "watch" if i["bucket"] == "reject" else i["bucket"]
         trig = j.get("trigger") or {}
         level = trig.get("level")
-        kind: TriggerKind = "now" if i["bucket"] == "enter" or level is None else (
+        kind: TriggerKind = "now" if bucket == "enter" or level is None else (
             "close_above" if i["direction"] == "long" else "close_below")
         inval = None
-        if i["bucket"] == "conditional":
+        if bucket == "conditional":
             sup = (i.get("levels") or {}).get("nearest_support" if i["direction"] == "long" else "nearest_resistance")
             inval = round(sup, 2) if sup else None
         out.append(asdict(WatchEntry(
-            symbol=sym, direction=i["direction"], etf=i["etf"], bucket=i["bucket"], added=as_of,
+            symbol=sym, direction=i["direction"], etf=i["etf"], bucket=bucket, added=as_of,
             trigger_kind=kind, trigger_level=round(level, 2) if level else None, k=p["k"],
             target=round(p["target"], 2) if p.get("target") else None, target_source=p.get("target_source"),
             invalidate_level=inval, time_stop=x.get("time_stop_date"), next_earnings=x.get("next_earnings") or
             (i.get("catalysts") or {}).get("next_earnings"),
             first_size_pct=float((j.get("sizing") or {}).get("first_size_pct") or p["sizing"]["allowed_pct"]),
             price_at_add=round(p["entry"], 2), tldr=(j.get("tldr") or {}).get("line", "") or j.get("why", ""),
-            breakers=[b["text"] for b in j.get("breakers", [])])))
+            breakers=[b["text"] for b in j.get("breakers", [])],
+            risk_pct_at_add=round(T.stop_distance_pct(p["entry"], p["stop"]), 2) if p.get("stop") else None,
+            green_at_add=green, why_not="" if bucket == "enter" else (i.get("bucket_reason") or j.get("why", "")))))
+    skipped = ((d.get("judgments") or {}).get("A3") or {}).get("skipped")
+    k = load_policy().stop.k_default
+    for t in d.get("timing") or []:                     # a green stock skipped before the deep dive, with its reason
+        if t.get("combined") != "green" or t["sym"] in d["ideas"] or t.get("error"):
+            continue
+        why = skipped.get(t["sym"], "") if isinstance(skipped, dict) else ""
+        out.append(asdict(WatchEntry(
+            symbol=t["sym"], direction=t["dir"], etf=t["etf"], bucket="watch", added=as_of, trigger_kind="now",
+            trigger_level=None, k=k, target=round(t["extreme"], 2) if t.get("extreme") else None,
+            target_source="all_time_high_target", price_at_add=round(t["price"], 2),
+            risk_pct_at_add=round(k * t["adr"], 2) if t.get("adr") else None, green_at_add=True,
+            why_not=why or "ירוקה שלא נותחה לעומק", tldr=why)))
     return {"as_of": as_of, "source": "research " + as_of, "entries": out}
+
+
+def hindsight(e: WatchEntry, close: float) -> str | None:
+    """Was not entering right, so far (not from course)? 'missed': since the decision the price moved our way by 3
+    times the stop width it had then (a 1:3 trade that happened without us); 'saved': it moved against us by the
+    whole stop width (the trade would have been stopped out)."""
+    if e.bucket == "enter" or not e.price_at_add or not e.risk_pct_at_add:
+        return None
+    move = (1 if e.direction == "long" else -1) * _pct(close, e.price_at_add)
+    if move >= 3 * e.risk_pct_at_add:
+        return "missed"
+    if move <= -e.risk_pct_at_add:
+        return "saved"
+    return None
 
 
 def check(e: WatchEntry, bars: Sequence[Bar], as_of: date) -> WatchCheck:
@@ -143,6 +180,11 @@ def check(e: WatchEntry, bars: Sequence[Bar], as_of: date) -> WatchCheck:
         notes.append("רותח: זזה חזק בשבועיים, לא רודפים (S08-R25)")
     if triggered and e.trigger_kind != "now" and not rr_ok:
         notes.append("הטריגר הופעל אבל היחס ירד מתחת למינימום")
+    hs = hindsight(e, close)
+    if hs == "missed":
+        notes.append(f"זזה {sg * _pct(close, e.price_at_add):.0f}% מאז ההחלטה לא להיכנס, פי 3 מהסיכון: לבדוק אם טעינו")
+    elif hs == "saved":
+        notes.append("ההחלטה לא להיכנס הייתה נכונה עד עכשיו: המחיר עבר את העצירה שהייתה אז")
     if invalidated:
         status = "invalidated"
     elif expired:
@@ -160,7 +202,7 @@ def check(e: WatchEntry, bars: Sequence[Bar], as_of: date) -> WatchCheck:
                       review_day60=days > 60, earnings_in_days=ne, boiling=boiling, status=status, notes=notes,
                       trend_1y_pct=_change_since(bars, as_of - timedelta(days=365)),
                       trend_3m_pct=_change_since(bars, as_of - timedelta(days=91)),
-                      since_add_pct=_pct(close, e.price_at_add) if e.price_at_add else None)
+                      since_add_pct=_pct(close, e.price_at_add) if e.price_at_add else None, hindsight=hs)
 
 
 def entry_action(e: WatchEntry, c: WatchCheck, equity: float) -> dict[str, Any]:
