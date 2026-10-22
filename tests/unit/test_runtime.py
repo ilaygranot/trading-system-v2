@@ -162,6 +162,20 @@ def test_bot_answers_only_ilay_and_records_buttons_and_reasons(db):
     assert got and got[0][0] == "ism.yaml"
 
 
+def test_a_dossier_that_lost_its_extension_is_still_taken(db):
+    """22.10: the 20.10 dossier reached the bot renamed, and the bot refused it."""
+    q, files = Queue(db), {"d": b'{"meta": {"as_of": "2026-10-20"}, "ideas": {}}', "x": b"just text"}
+    bot = Bot()
+    bot.download = lambda fid: files[fid]
+    got = []
+    for fid, name in (("d", "dossier-2026-10-20"), ("d", None), ("x", "notes.txt")):
+        doc = {"file_id": fid, **({"file_name": name} if name else {})}
+        handle_update({"message": {"chat": {"id": 42}, "document": doc}}, bot, q,
+                      on_upload=lambda n, c: got.append(n) or "ok")
+    assert got == ["dossier-2026-10-20.json", "dossier-2026-10-20.json"]
+    assert "dossier.json" in bot.sent[-1][1]                          # the plain text file is still refused
+
+
 def test_daily_run_sends_summary_and_one_message_per_item(db):
     bot = Bot()
     Runner(db, PIPELINES, {"prices": Prices(), "portfolio": PF, "telegram": bot}).start("daily", AS_OF)

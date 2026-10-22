@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -124,6 +125,18 @@ class Telegram:
 
     def set_webhook(self, url: str, secret: str) -> None:
         self._api("setWebhook", url=url, secret_token=secret, allowed_updates=["message", "callback_query"])
+
+
+def _dossier_name(bot: Any, doc: dict) -> str:
+    """A file without a .yaml/.json name is taken only when it is a research dossier (JSON with meta.as_of):
+    files forwarded from other apps often arrive renamed or without an extension."""
+    if (doc.get("file_size") or 0) > 20_000_000:
+        return ""
+    try:
+        d = json.loads(bot.download(doc["file_id"]).decode("utf-8"))
+        return f"dossier-{d['meta']['as_of']}.json"
+    except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+        return ""
 
 
 def webhook_token(secret: str) -> str:
@@ -252,13 +265,16 @@ def handle_update(update: dict, bot: Telegram, queue: Queue, on_resume: Callable
         return f"lesson #{m.group(1)}"
     doc = msg.get("document")
     if doc:
-        if on_upload is None or not doc.get("file_name", "").endswith((".yaml", ".yml", ".json")):
+        name = doc.get("file_name") or ""
+        if on_upload is not None and not name.lower().endswith((".yaml", ".yml", ".json")):
+            name = _dossier_name(bot, doc)                      # a dossier that lost its .json on the way (22.10)
+        if on_upload is None or not name:
             bot.send("אני מקבל קבצי YAML (תיק, רשימת מעקב, קובץ המקרו החודשי) ו-dossier.json של המחקר")
             return "upload refused"
         text = bot.download(doc["file_id"]).decode("utf-8")
-        result = on_upload(doc["file_name"], text)
+        result = on_upload(name, text)
         bot.send(result)
-        return f"upload {doc['file_name']}"
+        return f"upload {name}"
     if (msg.get("text") or "").strip() == "/journal":
         link = journal_link()
         bot.send(f"יומן המסחר: {link}" if link else "אין כתובת ציבורית (QT_PUBLIC_URL) לקישור ליומן")
