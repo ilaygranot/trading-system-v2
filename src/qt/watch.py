@@ -67,6 +67,17 @@ class WatchCheck:
     boiling: bool
     status: str                             # opportunity | ready | recheck | waiting | expired | invalidated | stale
     notes: list[str] = field(default_factory=list)
+    trend_1y_pct: float | None = None       # the 078 watchlist's three trend columns: price change over the last
+    trend_3m_pct: float | None = None       # year, the last 3 months and since the idea was added (S08-R4)
+    since_add_pct: float | None = None
+
+
+def _change_since(bars: Sequence[Bar], start: date) -> float | None:
+    """Close now vs the first close on or after `start`; None when the bars don't reach back that far."""
+    if not bars or bars[0].day > start:
+        return None
+    first = next(b for b in bars if b.day >= start)
+    return _pct(bars[-1].close, first.close)
 
 
 def _pct(a: float, b: float) -> float:
@@ -146,7 +157,10 @@ def check(e: WatchEntry, bars: Sequence[Bar], as_of: date) -> WatchCheck:
                       trigger_kind=e.trigger_kind, trigger_level=e.trigger_level, dist_to_trigger_pct=dist,
                       triggered=triggered, invalidated=invalidated, expired=expired, stop=stop, target=e.target,
                       rr=rr, rr_ok=rr_ok, potential_pct=pot, potential_at_add_pct=pot0, days_on_list=days,
-                      review_day60=days > 60, earnings_in_days=ne, boiling=boiling, status=status, notes=notes)
+                      review_day60=days > 60, earnings_in_days=ne, boiling=boiling, status=status, notes=notes,
+                      trend_1y_pct=_change_since(bars, as_of - timedelta(days=365)),
+                      trend_3m_pct=_change_since(bars, as_of - timedelta(days=91)),
+                      since_add_pct=_pct(close, e.price_at_add) if e.price_at_add else None)
 
 
 def entry_action(e: WatchEntry, c: WatchCheck, equity: float) -> dict[str, Any]:
