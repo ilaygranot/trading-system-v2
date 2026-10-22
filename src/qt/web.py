@@ -25,7 +25,34 @@ CSS = """body{font-family:system-ui,sans-serif;max-width:960px;margin:0 auto;pad
 table{border-collapse:collapse;width:100%;margin:8px 0 24px}td,th{border-bottom:1px solid #ddd;padding:6px;text-align:start;
 vertical-align:top;font-size:14px}pre{white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:8px;font-size:13px}
 .failed{color:#b00}.done{color:#070}form{display:inline}button{margin:2px}
-@media (prefers-color-scheme:dark){body{background:#161616;color:#ddd}pre{background:#222;border-color:#444}td,th{border-color:#333}}"""
+.up{color:#070}.down{color:#b00}.num{text-align:end;font-variant-numeric:tabular-nums}.muted{color:#888;font-size:13px}
+.cards{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 16px}.card{border:1px solid #ddd;padding:6px 10px;border-radius:6px}
+.card b{display:block;font-size:18px}.wrap{overflow-x:auto}nav a{margin-inline-end:12px}
+@media (prefers-color-scheme:dark){body{background:#161616;color:#ddd}pre{background:#222;border-color:#444}td,th{border-color:#333}
+.card{border-color:#333}.up{color:#5c5}.down{color:#f66}}"""
+
+# Live refresh (runtime plan 7.1): the page re-reads its own fragment every REFRESH_S seconds while it is visible,
+# and swaps it in, so positions, the queue and the runs stay current without a reload.
+REFRESH_S = 30
+LIVE_JS = """<script>(function(){var el=document.getElementById('live'),st=document.getElementById('stamp');
+function tick(){if(document.visibilityState!=='visible')return;
+var u=location.pathname+(location.search?location.search+'&':'?')+'fragment=1';
+fetch(u,{credentials:'same-origin',cache:'no-store'}).then(function(r){if(!r.ok)throw r.status;return r.text()})
+.then(function(t){el.innerHTML=t;st.textContent='עודכן '+new Date().toLocaleTimeString('he-IL');st.className='muted'})
+.catch(function(){st.textContent='אין חיבור לשרת, מנסה שוב';st.className='down'})}
+setInterval(tick,%d*1000);document.addEventListener('visibilitychange',tick)})()</script>"""
+
+
+def _n(v: Any, d: int = 2) -> str:
+    return "" if v is None else f"{v:,.{d}f}"
+
+
+def _signed(v: Any, d: int = 2, suffix: str = "") -> str:
+    if v is None:
+        return ""
+    if round(v, d) == 0:
+        return f"<span dir=ltr>{0:.{d}f}{suffix}</span>"
+    return f"<span dir=ltr class={'up' if v > 0 else 'down'}>{v:+,.{d}f}{suffix}</span>"
 
 
 def _e(v: Any) -> str:
@@ -34,7 +61,8 @@ def _e(v: Any) -> str:
 
 class App:
     def __init__(self, db_url: str | None = None, bot: Any = None, password: str | None = None,
-                 webhook_secret: str | None = None, resume: Callable[[str], Any] | None = None):
+                 webhook_secret: str | None = None, resume: Callable[[str], Any] | None = None,
+                 prices: Callable[[list[str]], dict[str, float]] | None = None):
         self.db_url = db_url or os.environ.get("QT_DATABASE_URL", ":memory:")
         self.password = password if password is not None else os.environ.get("DASHBOARD_PASSWORD", "")
         from qt.telegram import webhook_token
@@ -42,6 +70,7 @@ class App:
                                             else os.environ.get("TELEGRAM_WEBHOOK_SECRET", ""))
         self._bot = bot
         self._resume = resume
+        self._prices = prices
         self._db: DB | None = None
 
     # ------------------------------------------------------------ plumbing
@@ -57,6 +86,14 @@ class App:
             from qt.telegram import Telegram
             self._bot = Telegram.from_env()
         return self._bot
+
+    @property
+    def prices(self) -> Callable[[list[str]], dict[str, float]]:
+        if self._prices is None:
+            from qt.data.store import Store
+            from qt.positions import yahoo_prices
+            self._prices = yahoo_prices(Store(self.db))
+        return self._prices
 
     def resume(self, run_id: str) -> None:
         if self._resume is not None:
@@ -96,6 +133,14 @@ class App:
                           f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{_e(title)}</title>"
                           f"<style>{CSS}</style><h1>{_e(title)}</h1>{body}</html>")
 
+    def _live(self, env: dict, start: Start, title: str, body: str) -> list[bytes]:
+        """A page that refreshes itself; with ?fragment=1 only the refreshing part (what the script fetches)."""
+        if "fragment" in parse_qs(env.get("QUERY_STRING", "")):
+            return self._send(start, "200 OK", body, headers=[("Cache-Control", "no-store")])
+        nav = "<nav><a href='/'>לוח בקרה</a><a href='/positions'>פוזיציות</a></nav>"
+        return self._page(start, title, f"{nav}<p id=stamp class=muted>מתעדכן כל {REFRESH_S} שניות</p>"
+                                        f"<div id=live>{body}</div>" + LIVE_JS % REFRESH_S)
+
     def _deny(self, start: Start) -> list[bytes]:
         return self._send(start, "401 Unauthorized", "auth required", "text/plain",
                           [("WWW-Authenticate", 'Basic realm="qt"')])
@@ -121,7 +166,12 @@ class App:
             if not self._authed(env):
                 return self._deny(start)
             if path == "/" and method == "GET":
-                return self.dashboard(start)
+                return self.dashboard(env, start)
+            if path == "/positions" and method == "GET":
+                return self._live(env, start, "פוזיציות פתוחות", self.positions_html())
+            if path == "/api/positions" and method == "GET":
+                return self._send(start, "200 OK", json.dumps(self.positions(), ensure_ascii=False, default=str),
+                                  "application/json; charset=utf-8", [("Cache-Control", "no-store")])
             if method == "POST" and not self._same_origin(env):
                 return self._send(start, "403 Forbidden", "cross-site request", "text/plain")
             m = re.fullmatch(r"/item/(\d+)/(approve|reject|postpone)", path)
@@ -229,7 +279,9 @@ class App:
         return self._page(start, "יומן המסחר", body)
 
     def decide(self, env: dict, start: Start, item_id: int, choice: str) -> list[bytes]:
-        note = (parse_qs(self._body(env).decode()).get("note") or [""])[0]
+        form = parse_qs(self._body(env).decode())
+        note = (form.get("note") or [""])[0]
+        back = "/positions" if (form.get("back") or [""])[0] == "positions" else "/"
         try:
             Queue(self.db).decide(item_id, choice, note)
         except NotOpen as e:
@@ -240,19 +292,88 @@ class App:
                 refresh_item(self.bot, Queue(self.db), item_id)
             except Exception:                                       # noqa: BLE001 - the decision stands
                 pass
-        return self._send(start, "303 See Other", "", headers=[("Location", "/")])
+        return self._send(start, "303 See Other", "", headers=[("Location", back)])
 
-    def dashboard(self, start: Start) -> list[bytes]:
+    def positions(self) -> dict:
+        """The paper book (the newest portfolio upload, saved by the daily run after the morning's fills) marked
+        to the latest prices, with the paper orders still waiting for the next open."""
+        from qt.app import portfolio
+        from qt.positions import snapshot
+        q = Queue(self.db)
+        pf = portfolio(self.db)
+        symbols = sorted({p["symbol"] for p in (pf or {}).get("positions", [])
+                          if p.get("instrument", "stock") == "stock"})
+        return snapshot(pf, self.prices(symbols), q.open_orders())
+
+    def positions_html(self) -> str:
+        s = self.positions()
+        if not s["has_portfolio"]:
+            return "<h2>פוזיציות פתוחות</h2><p>עוד אין תיק: שלח לבוט קובץ portfolio.yaml.</p>"
+        cards = "".join(f"<div class=card>{t}<b>{v}</b></div>" for t, v in (
+            ("שווי תיק", _n(s["equity"], 0)), ("מזומן", _n(s["cash"], 0)),
+            ("רווח/הפסד פתוח", _signed(s["unrealized"], 0)), ("רווח ממומש", _signed(s["realized"], 0)),
+            ("לונג / שורט", f"{_n(s['long_value'], 0)} / {_n(s['short_value'], 0)}"),
+            ("ירידה מהשיא", _signed(s["drawdown_pct"], 1, "%"))))
+        rows = "".join(
+            f"<tr><td><b>{_e(p['symbol'])}</b></td><td>{'לונג' if p['direction'] == 'long' else 'שורט'}</td>"
+            f"<td>{_e(p['sector'])}</td><td class=num>{_n(p['qty'], 0)}</td><td class=num>{_n(p['entry'])}</td>"
+            f"<td class=num>{_n(p['last']) if p['priced'] else '<span class=muted>אין מחיר</span>'}</td>"
+            f"<td class=num>{_signed(p['pl'], 0)}</td><td class=num>{_signed(p['pl_pct'], 2, '%')}</td>"
+            f"<td class=num>{_n(p['stop'])}</td><td class=num>{_n(p['stop_dist_pct'], 1)}{'%' if p['stop_dist_pct'] is not None else ''}</td>"
+            f"<td class=num>{_n(p['target'])}</td><td class=num>{_n(p['weight_pct'], 1)}%</td><td>{_e(p['opened'])}</td></tr>"
+            for p in s["positions"])
+        body = (f"<h2>פוזיציות פתוחות ({len(s['positions'])})</h2><div class=cards>{cards}</div>"
+                f"<div class=wrap><table><tr><th>מניה</th><th>כיוון</th><th>סקטור</th><th>כמות</th><th>כניסה</th>"
+                f"<th>מחיר</th><th>רו\"ה $</th><th>רו\"ה %</th><th>סטופ</th><th>מרחק לסטופ</th><th>יעד</th><th>משקל</th>"
+                f"<th>נפתחה</th></tr>{rows}</table></div>")
+        if s["pending"]:
+            body += ("<h3>ממתינות לביצוע בפתיחה</h3><table><tr><th>מניה</th><th>סוג</th><th>כמות</th><th>בפתיחת</th></tr>"
+                     + "".join(f"<tr><td>{_e(o['symbol'])}</td><td>{_e(o['kind'])}</td><td class=num>{_e(o['qty'])}</td>"
+                               f"<td>{_e(o['fill_on'])}</td></tr>" for o in s["pending"]) + "</table>")
+        return self.ready_html(s) + body + "<p class=muted>מחירים מ-Yahoo (בעיכוב), נשמרים לדקה. התיק: תיק הנייר אחרי הריצה היומית האחרונה.</p>"
+
+    def ready_html(self, s: dict) -> str:
+        """Entries the system prepared (a watchlist opportunity the daily run queued: size, stop, target) with the one
+        button that opens them: approving makes the paper order, filled at the next open and written to the book."""
+        ready = [i for i in Queue(self.db).open_items() if i["kind"] in ("enter", "add")]
+        if not ready:
+            return ""
+        out = f"<h2>מוכנות לפתיחה ({len(ready)})</h2>"
+        for i in ready:
+            p = i["payload"]
+            qty, entry, stop = p.get("qty"), p.get("price") or i["ref_price"], p.get("stop")
+            risk = qty * abs(entry - stop) if qty and entry and stop else None
+            facts = (("כיוון", "לונג" if p.get("direction", "long") == "long" else "שורט"), ("כמות", _n(qty, 0)),
+                     ("כניסה", _n(entry)), ("סטופ", _n(stop)), ("יעד", _n(p.get("target"))),
+                     ("סכום", _n(qty * entry, 0) if qty and entry else ""),
+                     ("סיכון", f"{_n(risk, 0)}$" + (f" ({risk / s['equity'] * 100:.2f}%)" if risk and s.get("equity") else "")
+                      if risk else ""))
+            out += (f"<div class=card><b>{_e(i['symbol'])} · <a href='/item/{i['id']}'>#{i['id']}</a></b>"
+                    + " · ".join(f"{t} {v}" for t, v in facts if v)
+                    + f"<p>{_e(p.get('detail'))}</p><p class=muted>בתוקף עד {_e(str(i['valid_until'])[:16].replace('T', ' '))} UTC; "
+                    f"אישור יוצר פקודת נייר שתתבצע בפתיחה הבאה</p>"
+                    f"<form method=post action='/item/{i['id']}/approve'><input type=hidden name=back value=positions>"
+                    f"<button style='font-size:16px;padding:6px 14px'>✅ פתח פוזיציה</button></form>"
+                    f"<form method=post action='/item/{i['id']}/reject'><input type=hidden name=back value=positions>"
+                    f"<button>❌ דחה</button></form></div>")
+        return out
+
+    def dashboard(self, env: dict, start: Start) -> list[bytes]:
         from qt.runs import SCHEMA
         self.db.ddl(SCHEMA)
         q = Queue(self.db)
+        try:
+            body = self.positions_html()
+        except Exception as e:                                          # noqa: BLE001 - the rest of the page stands
+            print(json.dumps({"level": "error", "path": "/positions", "error": f"{type(e).__name__}: {e}"}), flush=True)
+            body = "<h2>פוזיציות פתוחות</h2><p class=failed>לא הצלחתי לטעון את התיק</p>"
         runs = self.db.all("SELECT * FROM runs ORDER BY started_at DESC LIMIT 15")
         rows = "".join(
             f"<tr><td>{_e(r['id'])}</td><td class={_e(r['status'])}>{_e(r['status'])}</td><td>{_e(r['resumes'])}</td>"
             f"<td>{_e(r['error'])}</td><td>" + (f"<form method=post action='/runs/{_e(r['id'])}/resume'>"
                                               f"<button>המשך ריצה</button></form>" if r["status"] == "failed" else "")
             + "</td></tr>" for r in runs)
-        body = f"<h2>ריצות</h2><table><tr><th>ריצה</th><th>מצב</th><th>המשכים</th><th>שגיאה</th><th></th></tr>{rows}</table>"
+        body += f"<h2>ריצות</h2><table><tr><th>ריצה</th><th>מצב</th><th>המשכים</th><th>שגיאה</th><th></th></tr>{rows}</table>"
         items = q.open_items()
         irows = "".join(
             f"<tr><td><a href='/item/{i['id']}'>#{i['id']}</a></td><td>{_e(i['as_of'])}</td><td>{_e(i['symbol'])}</td>"
@@ -271,7 +392,7 @@ class App:
         month = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(timespec="seconds")
         cost = self.db.one("SELECT COALESCE(SUM(cost_usd), 0) AS c FROM agent_calls WHERE created_at >= ?", (month,))
         body += f"<p>עלות Agents ב-30 הימים האחרונים: {float(cost['c'] or 0):.2f}$</p>"
-        return self._page(start, "Quantum Trader · לוח בקרה", body)
+        return self._live(env, start, "Quantum Trader · לוח בקרה", body)
 
 
 _APP: App | None = None
