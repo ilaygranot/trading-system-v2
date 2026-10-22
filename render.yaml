@@ -78,6 +78,8 @@ services:
         value: restart
       - key: RELOGIN_AFTER_TWOFA_TIMEOUT
         value: "yes"
+      - key: EXISTING_SESSION_DETECTED_ACTION
+        value: primary                    # as on Ilay's earlier gateway: keep this session when another login appears
       - key: JAVA_HEAP_SIZE
         value: "1024"
 
