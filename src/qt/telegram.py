@@ -252,8 +252,8 @@ def handle_update(update: dict, bot: Telegram, queue: Queue, on_resume: Callable
         return f"lesson #{m.group(1)}"
     doc = msg.get("document")
     if doc:
-        if on_upload is None or not doc.get("file_name", "").endswith((".yaml", ".yml")):
-            bot.send("אני מקבל רק את קובץ המקרו החודשי (YAML)")
+        if on_upload is None or not doc.get("file_name", "").endswith((".yaml", ".yml", ".json")):
+            bot.send("אני מקבל קבצי YAML (תיק, רשימת מעקב, קובץ המקרו החודשי) ו-dossier.json של המחקר")
             return "upload refused"
         text = bot.download(doc["file_id"]).decode("utf-8")
         result = on_upload(doc["file_name"], text)

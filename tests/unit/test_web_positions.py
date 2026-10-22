@@ -68,7 +68,7 @@ def test_positions_need_the_password(web):
 def test_positions_screen_reads_the_newest_book_and_refreshes(web, db):
     Queue(db).upload("portfolio", "portfolio.yaml", yaml.safe_dump(PF))
     st, h, page = _call(web, "/positions")
-    assert st.startswith("200") and "MSFT" in page and "BA" in page and "id=live" in page and "fragment=1" in page
+    assert st.startswith("200") and "MSFT" in page and "BA" in page and "data-live=" in page and "fragment=1" in page
     assert web.asked[-1] == ["BA", "MSFT"]
     st, h, frag = _call(web, "/positions", query="fragment=1")             # what the script fetches
     assert st.startswith("200") and "<script" not in frag and "MSFT" in frag and h["Cache-Control"] == "no-store"

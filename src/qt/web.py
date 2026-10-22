@@ -63,6 +63,7 @@ class App:
         self._prices = prices
         self._db: DB | None = None
         self._gw: tuple[float, tuple[str | None, str]] | None = None
+        self._dossier: tuple[int, dict] | None = None
 
     # ------------------------------------------------------------ plumbing
     @property
@@ -111,7 +112,7 @@ class App:
     @staticmethod
     def _body(env: dict) -> bytes:
         n = int(env.get("CONTENT_LENGTH") or 0)
-        return env["wsgi.input"].read(min(n, 2_000_000)) if n else b""
+        return env["wsgi.input"].read(min(n, 8_000_000)) if n else b""
 
     @staticmethod
     def _send(start: Start, status: str, body: str | bytes, ctype: str = "text/html; charset=utf-8",
@@ -177,6 +178,10 @@ class App:
                                   "application/json; charset=utf-8", [("Cache-Control", "no-store")])
             if method == "POST" and not self._same_origin(env):
                 return self._send(start, "403 Forbidden", "cross-site request", "text/plain")
+            if path == "/api/dossier" and method == "POST":           # the research dossier, for the dashboard
+                msg = self.upload("dossier.json", self._body(env).decode("utf-8"))
+                return self._send(start, "200 OK" if msg.startswith("דוח") else "400 Bad Request", msg,
+                                  "text/plain; charset=utf-8")
             m = re.fullmatch(r"/item/(\d+)/(approve|reject|postpone)", path)
             if m and method == "POST":
                 return self.decide(env, start, int(m.group(1)), m.group(2))
@@ -209,9 +214,17 @@ class App:
         return self._send(start, "200 OK", "ok", "text/plain")
 
     def upload(self, name: str, content: str) -> str:
-        """A portfolio file replaces the portfolio, a watchlist file the watchlist; anything else is the monthly manual macro file, and a monthly
-        run waiting for it resumes."""
+        """A portfolio file replaces the portfolio, a watchlist file the watchlist, a research dossier (JSON) the report on the
+        dashboard; anything else is the monthly manual macro file, and a monthly run waiting for it resumes."""
         import yaml
+        if name.lower().startswith("dossier"):
+            try:
+                d = json.loads(content)
+                d["meta"]["as_of"]
+            except (ValueError, KeyError, TypeError) as e:
+                return f"הקובץ לא נקרא כ-dossier של מחקר: {e}"
+            Queue(self.db).upload("dossier", name, content)
+            return f"דוח המחקר מ-{d['meta']['as_of']} עלה ללוח הבקרה"
         try:
             yaml.safe_load(content)
         except yaml.YAMLError as e:
@@ -493,93 +506,6 @@ class App:
                           f"<td class=t>{ui.when(runs[k]['next'])}<br><span class=note>{ui.ago(runs[k]['next'])}</span></td>",
                           _e(texts.get(k, ""))] for k, he in self.KINDS))
 
-    def overview_html(self) -> str:
-        st = self.status()
-        s, items, costs = st["book"], st["queue"], st["costs"]
-        equity = s.get("equity") if s else None
-        # the verdict: what needs Ilay, how the last daily run went, what runs next
-        daily = st["runs"]["daily"]
-        cls, text = daily["state"]
-        lines = [f"<strong>{len(items)} פריטים מחכים לך</strong>" if items else "אין כרגע פריטים שמחכים לך."]
-        if daily["last"]:
-            d = daily["last"]
-            lines.append(f"הריצה היומית האחרונה ({_e(d['as_of'])}) {ui.pill(text, cls)} "
-                         f"{ui.ago(d['finished_at'] or d['started_at'])}.")
-        upcoming = sorted(((v["next"], k) for k, v in st["runs"].items() if v["next"]))
-        if upcoming:
-            n, k = upcoming[0]
-            lines.append(f"הריצה הבאה: {dict(self.KINDS)[k]}, {ui.when(n)} ({ui.ago(n)}).")
-        body = "<div class=verdict>" + "".join(f"<p>{x}</p>" for x in lines) + "</div>"
-        # the status strip
-        gw_state, gw_text = st["gateway"]
-        cells = [ui.cell(f"ריצה {he}", f"{st['runs'][k]['state'][1]} {ui.ago((st['runs'][k]['last'] or {}).get('finished_at') or (st['runs'][k]['last'] or {}).get('started_at'))}"
-                         f" · הבאה {ui.when(st['runs'][k]['next'])}", st["runs"][k]["state"][0])
-                 for k, he in self.KINDS]
-        cells.append(ui.cell("IB Gateway", gw_text, gw_state or ""))
-        if s and s["has_portfolio"]:
-            cells.append(ui.cell(f"{_n(equity, 0)}$", f"שווי התיק · פתוח {_signed(s['unrealized'], 0)}", "ok"))
-        else:
-            cells.append(ui.cell("תיק", "לא הצלחתי לטעון את התיק" if s is None else "עוד אין תיק", "bad" if s is None else "warn"))
-        cells.append(ui.cell(f"Agents {costs['month']:.2f}$", f"30 יום · היום {costs['today']:.2f}$"))
-        body += "<div class=strip aria-label='מצב השירותים'>" + "".join(cells) + "</div>"
-        # what waits for Ilay
-        body += ui.section(f"מחכה לך ({len(items)})", "<div class=cards>" + "".join(
-            self.item_card(i, equity) for i in items) + "</div>" if items else ui.empty("אין כרגע פריטים בתור."))
-        # the book
-        if s is None:
-            body += ui.section("פוזיציות פתוחות", "<p class=failed>לא הצלחתי לטעון את התיק</p>")
-        elif not s["has_portfolio"]:
-            body += ui.section("פוזיציות פתוחות", ui.empty("עוד אין תיק: שלח לבוט קובץ portfolio.yaml."))
-        else:
-            body += ui.section(f"פוזיציות פתוחות ({len(s['positions'])})", self.book_strip(s) + self.book_table(s)
-                               + self.pending_table(s) + "<p class=note><a href='/positions'>למסך הפוזיציות</a></p>")
-        # runs
-        runs = self.db.all("SELECT * FROM runs ORDER BY started_at DESC LIMIT 8")
-        body += ui.section("ריצות", ("<ol class=timeline>" + "".join(self.run_li(r) for r in runs) + "</ol>"
-                                     if runs else ui.empty("עוד לא היו ריצות"))
-                           + "<p class=note><a href='/runs'>כל הריצות</a></p>")
-        # paper orders and warnings side by side
-        orders = self.db.all("SELECT * FROM paper_orders ORDER BY id DESC LIMIT 10")
-        otbl = ui.table(("מניה", "סוג", "כמות", "בפתיחת", "מצב", "מחיר"), (
-            [f"<b>{_e(o['symbol'])}</b>", _e(o["kind"]), f"<td class=num>{_e(o['qty'])}</td>", f"<td class=t>{_e(o['fill_on'])}</td>",
-             ui.pill({"filled": "בוצעה", "open": "ממתינה", "cancelled": "בוטלה"}.get(o["status"], o["status"]),
-                     {"filled": "ok", "open": "warn"}.get(o["status"], "mute")),
-             f"<td class=num>{_n(o['fill_price'])}</td>"] for o in orders)) if orders else ui.empty("עוד אין עסקאות נייר")
-        ev = self.db.all("SELECT * FROM run_events WHERE level IN ('warn', 'error') ORDER BY id DESC LIMIT 8")
-        etbl = ("<ol class=timeline>" + "".join(
-            f"<li class={'bad' if x['level'] == 'error' else 'warn'}><span class=d>{ui.when(x['at'])} · {_e(x['step'])}</span>"
-            f"{_e(x['message'])} <a class=note href='/runs/{_e(x['run_id'])}'>לריצה</a></li>" for x in ev) + "</ol>"
-                if ev else ui.empty("אין התראות"))
-        body += f"<div class=two>{ui.section('עסקאות נייר', otbl)}{ui.section('התראות מהריצות', etbl)}</div>"
-        # the decision journal
-        dec = self.db.all("SELECT * FROM decisions ORDER BY id DESC LIMIT 10", (), ["deviations"])
-        body += ui.section("החלטות אחרונות", ui.table(("מתי", "מי", "על מה", "פעולה", "החלטה", "ביטחון", "כרטיס"), (
-            [f"<td class=t>{ui.when(d['created_at'])}</td>", _e(d["decided_by"]), f"<b>{_e(d['subject'])}</b>",
-             _e(d["action"]), _e(str(d["choice"])[:160]), _e(d["confidence"]), _e(d["card_id"])] for d in dec))
-            + "<p class=note><a href='/journal'>ליומן המסחר המלא</a></p>" if dec else ui.empty("עוד אין החלטות ביומן"))
-        # reports and files, agent cost
-        reps = self.db.all("SELECT id, name, created_at FROM uploads WHERE kind = 'report' ORDER BY id DESC LIMIT 5")
-        files = []
-        for kind, he in (("portfolio", "תיק / ספר נייר"), ("watchlist", "רשימת מעקב"), ("manual_macro", "קובץ מקרו ידני")):
-            u = self.db.one("SELECT name, created_at FROM uploads WHERE kind = ? ORDER BY id DESC LIMIT 1", (kind,))
-            files.append(f"<li><b>{he}</b>: " + (f"{_e(u['name'])} <span class=note>{ui.when(u['created_at'])}</span>"
-                                                 if u else "<span class=note>עוד לא התקבל</span>") + "</li>")
-        rep = ("<ul>" + "".join(f"<li><a href='/report/{r['id']}'>{_e(r['name'])}</a> <span class=note>"
-                                f"{ui.when(r['created_at'])}</span></li>" for r in reps) + "</ul>"
-               if reps else ui.empty("הדוח השבועי הראשון יגיע אחרי הריצה השבועית"))
-        top = max((a["cost"] for a in costs["by_agent"]), default=0) or 1
-        bars = ("<div class=bars>" + "".join(
-            f"<div><span>{_e(a['agent'])}</span><i style='width:{max(a['cost'] / top * 100, 1):.0f}%'></i>"
-            f"<span class=num>{a['cost']:.2f}$</span></div>" for a in costs["by_agent"]) + "</div>"
-                if costs["by_agent"] else ui.empty("אין קריאות ל-Agents ב-30 הימים האחרונים"))
-        cost = (f"<p><b>{costs['month']:.2f}$</b> ב-30 יום, {costs['calls']} קריאות. היום {costs['today']:.2f}$.</p>"
-                + bars + "<p class=note>הערכה לפי מחיר API. בפועל רץ על המנוי.</p>")
-        files_html = rep + "<h3>הקבצים האחרונים</h3><ul>" + "".join(files) + "</ul>"
-        body += f"<div class=two>{ui.section('דוחות וקבצים', files_html)}{ui.section('עלות Agents', cost)}</div>"
-        body += ui.section("לוח זמנים", self.schedule_table(st)
-                           + "<p class=note>לפי שעון ניו יורק, בימי מסחר בלבד. כשהשעון בישראל ובארה\"ב זז בתאריכים שונים, השעה בישראל זזה בהתאם.</p>")
-        return body
-
     def runs_html(self) -> str:
         self._schemas()
         runs = self.db.all("SELECT * FROM runs ORDER BY started_at DESC LIMIT 60")
@@ -660,7 +586,8 @@ class App:
             out["macro"] = ("warn", "עוד לא התקבל החודש")
         return out
 
-    def system_html(self) -> str:
+    def system_html(self, compact: bool = False) -> str:
+        """The status page (status.yaml with live checks). Compact (inside the overview): without its own strip."""
         doc = self.status_doc()
         checks = self.system_checks()
         body = (f"<div class=eyebrow>עודכן ביד ב-{_e(doc.get('updated'))} · החלקים החיים מתעדכנים לבד</div>"
@@ -668,7 +595,7 @@ class App:
         gw_state, gw_text = self.gateway()
         st = {k: self.run_state(self.db.one("SELECT * FROM runs WHERE kind = ? ORDER BY started_at DESC LIMIT 1", (k,)))
               for k, _ in self.KINDS}
-        body += "<div class=strip>" + "".join(
+        body += "" if compact else "<div class=strip>" + "".join(
             [ui.cell("qt-web", "הבוט, ה-webhook ולוח הבקרה", "ok"),
              *(ui.cell(f"ריצה {he}", st[k][1], st[k][0]) for k, he in self.KINDS),
              ui.cell("qt-db", "Postgres עם גיבוי יומי" if self.db.pg else "SQLite מקומי", "ok"),
@@ -699,8 +626,194 @@ class App:
             for x in doc.get("next", [])) + "</ol>")
         return body
 
+    # ---- the overview: the research report's structure, with the live parts around it
+    def report_doc(self) -> dict | None:
+        """The newest research dossier (the weekly run saves it with its report), cached by upload id."""
+        row = self.db.one("SELECT id FROM uploads WHERE kind = 'dossier' ORDER BY id DESC LIMIT 1")
+        if row is None:
+            return None
+        if self._dossier is None or self._dossier[0] != row["id"]:
+            up = self.db.one("SELECT content FROM uploads WHERE id = ?", (row["id"],))
+            self._dossier = (row["id"], json.loads(up["content"]))
+        return self._dossier[1]
+
+    def report_parts(self) -> tuple[list[tuple[str, str]], str, str | None]:
+        """(rail, sections, as of) of the newest research report: from its dossier, else cut out of the saved HTML."""
+        from qt.research import report
+        d = self.report_doc()
+        if d is not None:
+            nav, body = report.sections(d)
+            return nav, body, d["meta"]["as_of"]
+        row = self.db.one("SELECT name, content FROM uploads WHERE kind = 'report' ORDER BY id DESC LIMIT 1")
+        if row is not None and '<nav class="rail">' in row["content"]:
+            head, _, rest = row["content"].partition('<nav class="rail">')
+            links, _, body = rest.partition("</nav>")
+            nav = re.findall(r'<a href="#([\w-]+)">([^<]*)</a>', links)
+            m = re.search(r"report-(\d{4}-\d\d-\d\d)", row["name"] or "")
+            return [(k, html.unescape(t)) for k, t in nav], body.rstrip()[:-len("</div>")], m.group(1) if m else None
+        return [], "", None
+
+    def watch_html(self) -> str:
+        """The watchlist: each idea as the research left it (trigger, stop width, target, why) with the latest daily
+        check (close, distance to the trigger, reward:risk, the 078 trend columns)."""
+        from qt.app import watchlist
+        from qt.daily import STATUS_HE
+        wl = watchlist(self.db) or {}
+        entries = wl.get("entries") or []
+        if not entries:
+            return ui.empty("רשימת המעקב ריקה: היא מתמלאת מהמחקר השבועי (או מקובץ watchlist.yaml שנשלח לבוט)")
+        row = self.db.one("SELECT s.output, r.as_of FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE s.step = 'watch' "
+                          "AND s.status = 'done' AND r.kind = 'daily' ORDER BY r.started_at DESC LIMIT 1", (), ["output"])
+        checks = {c["symbol"]: c for c in ((row or {}).get("output") or {}).get("checks") or []}
+        bucket = {"enter": ("כניסה", "ok"), "conditional": ("מותנה בטריגר", "warn"), "watch": ("מעקב", "")}
+        rows = []
+        for e in entries:
+            c = checks.get(e["symbol"]) or {}
+            b, bc = bucket.get(e.get("bucket"), (e.get("bucket") or "", ""))
+            status = ("בתיק" if c.get("held") else STATUS_HE.get(c.get("status"), "")) if c else "עוד לא נבדקה"
+            trend = " / ".join(f"{_signed(c.get(k), 1, '%')}" if c.get(k) is not None else "–"
+                               for k in ("trend_1y_pct", "trend_3m_pct", "since_add_pct"))
+            rows.append([f"<b>{_e(e['symbol'])}</b> <span class=note>{'לונג' if e.get('direction') == 'long' else 'שורט'} · "
+                         f"{_e(e.get('etf'))}</span>", ui.pill(b, bc), _e(status),
+                         f"<td class=num>{_n(c.get('close'))}</td>",
+                         f"<td class=num>{_n(e.get('trigger_level'))}"
+                         + (f" <span class=note>({_n(c['dist_to_trigger_pct'], 1)}%)</span>"
+                            if c.get("dist_to_trigger_pct") is not None and not c.get("triggered") else "") + "</td>",
+                         f"<td class=num>{_n(c.get('stop'))}</td>", f"<td class=num>{_n(e.get('target'))}</td>",
+                         f"<td class=num>{_n(c.get('rr'), 1)}</td>", f"<td class=num>{trend}</td>",
+                         f"<td class=t>{_e(c.get('days_on_list', ''))}</td>", f"<td class=t>{_e(e.get('next_earnings'))}</td>",
+                         f"<td class=note style='min-width:260px'>{_e(e.get('tldr'))}</td>"])
+        when = f"הבדיקה היומית מ-{_e(row['as_of'])}" if row else "עוד לא הייתה בדיקה יומית"
+        return (ui.table(("מניה", "סטטוס", "מצב היום", "סגירה", "טריגר", "עצירה", "יעד", "יחס", "שנה / 3ח' / מאז", "ימים",
+                          "דוח", "למה"), rows)
+                + f"<p class=note>{len(entries)} רעיונות · {_e(wl.get('source') or '')} · {when}</p>")
+
+    def summaries_html(self) -> str:
+        """What each run last told Ilay in Telegram (its notify step), word for word."""
+        out = []
+        for k, he in self.KINDS:
+            row = self.db.one("SELECT s.output, r.as_of, r.id FROM run_steps s JOIN runs r ON r.id = s.run_id "
+                              "WHERE s.step = 'notify' AND s.status = 'done' AND r.kind = ? ORDER BY r.started_at DESC LIMIT 1",
+                              (k,), ["output"])
+            text = ((row or {}).get("output") or {}).get("text") if row else None
+            if text:
+                out.append(f"<div class=card><h3>{he} · {_e(row['as_of'])} <a class=note href='/runs/{_e(row['id'])}'>"
+                           f"לריצה</a></h3><p style='white-space:pre-line;max-width:none'>{_e(text)}</p></div>")
+        return "<div class=cards>" + "".join(out) + "</div>" if out else ui.empty("עוד אין סיכומים: הם מגיעים אחרי הריצות")
+
+    def overview_parts(self) -> dict[str, str]:
+        """The live parts of the overview, by name (each one is refreshed in place)."""
+        st = self.status()
+        s, items, costs = st["book"], st["queue"], st["costs"]
+        equity = s.get("equity") if s else None
+        # the bottom line: what needs Ilay, how the last daily run went, what runs next
+        daily = st["runs"]["daily"]
+        cls, text = daily["state"]
+        lines = [f"<strong>{len(items)} פריטים מחכים לך</strong>" if items else "אין כרגע פריטים שמחכים לך."]
+        if daily["last"]:
+            d = daily["last"]
+            lines.append(f"הריצה היומית האחרונה ({_e(d['as_of'])}) {ui.pill(text, cls)} "
+                         f"{ui.ago(d['finished_at'] or d['started_at'])}.")
+        upcoming = sorted(((v["next"], k) for k, v in st["runs"].items() if v["next"]))
+        if upcoming:
+            n, k = upcoming[0]
+            lines.append(f"הריצה הבאה: {dict(self.KINDS)[k]}, {ui.when(n)} ({ui.ago(n)}).")
+        top = "<div class=verdict>" + "".join(f"<p>{x}</p>" for x in lines) + "</div>"
+        gw_state, gw_text = st["gateway"]
+        cells = [ui.cell(f"ריצה {he}", f"{st['runs'][k]['state'][1]} {ui.ago((st['runs'][k]['last'] or {}).get('finished_at') or (st['runs'][k]['last'] or {}).get('started_at'))}"
+                         f" · הבאה {ui.when(st['runs'][k]['next'])}", st["runs"][k]["state"][0])
+                 for k, he in self.KINDS]
+        cells.append(ui.cell("IB Gateway", gw_text, gw_state or ""))
+        if s and s["has_portfolio"]:
+            cells.append(ui.cell(f"{_n(equity, 0)}$", f"שווי התיק · פתוח {_signed(s['unrealized'], 0)}", "ok"))
+        else:
+            cells.append(ui.cell("תיק", "לא הצלחתי לטעון את התיק" if s is None else "עוד אין תיק", "bad" if s is None else "warn"))
+        cells.append(ui.cell(f"Agents {costs['month']:.2f}$", f"30 יום · היום {costs['today']:.2f}$"))
+        top += "<div class=strip aria-label='מצב השירותים'>" + "".join(cells) + "</div>"
+        top += ui.section(f"מחכה לך ({len(items)})", "<div class=cards>" + "".join(
+            self.item_card(i, equity) for i in items) + "</div>" if items else ui.empty("אין כרגע פריטים בתור."), id="queue")
+        # the book
+        if s is None:
+            book = ui.section("פוזיציות פתוחות", "<p class=failed>לא הצלחתי לטעון את התיק</p>", id="book")
+        elif not s["has_portfolio"]:
+            book = ui.section("פוזיציות פתוחות", ui.empty("עוד אין תיק: שלח לבוט קובץ portfolio.yaml."), id="book")
+        else:
+            book = ui.section(f"פוזיציות פתוחות ({len(s['positions'])})", self.book_strip(s) + self.book_table(s)
+                              + self.pending_table(s) + "<p class=note><a href='/positions'>למסך הפוזיציות</a></p>", id="book")
+        watch = ui.section("רשימת מעקב", self.watch_html(), id="watch")
+        # runs and everything they put out
+        runs = self.db.all("SELECT * FROM runs ORDER BY started_at DESC LIMIT 8")
+        out = ui.section("ריצות", ("<ol class=timeline>" + "".join(self.run_li(r) for r in runs) + "</ol>"
+                                   if runs else ui.empty("עוד לא היו ריצות"))
+                         + "<p class=note><a href='/runs'>כל הריצות</a></p>", id="runs")
+        out += ui.section("מה הריצות אמרו", self.summaries_html())
+        orders = self.db.all("SELECT * FROM paper_orders ORDER BY id DESC LIMIT 10")
+        otbl = ui.table(("מניה", "סוג", "כמות", "בפתיחת", "מצב", "מחיר"), (
+            [f"<b>{_e(o['symbol'])}</b>", _e(o["kind"]), f"<td class=num>{_e(o['qty'])}</td>", f"<td class=t>{_e(o['fill_on'])}</td>",
+             ui.pill({"filled": "בוצעה", "open": "ממתינה", "cancelled": "בוטלה"}.get(o["status"], o["status"]),
+                     {"filled": "ok", "open": "warn"}.get(o["status"], "mute")),
+             f"<td class=num>{_n(o['fill_price'])}</td>"] for o in orders)) if orders else ui.empty("עוד אין עסקאות נייר")
+        ev = self.db.all("SELECT * FROM run_events WHERE level IN ('warn', 'error') ORDER BY id DESC LIMIT 8")
+        etbl = ("<ol class=timeline>" + "".join(
+            f"<li class={'bad' if x['level'] == 'error' else 'warn'}><span class=d>{ui.when(x['at'])} · {_e(x['step'])}</span>"
+            f"{_e(x['message'])} <a class=note href='/runs/{_e(x['run_id'])}'>לריצה</a></li>" for x in ev) + "</ol>"
+                if ev else ui.empty("אין התראות"))
+        out += f"<div class=two>{ui.section('עסקאות נייר', otbl)}{ui.section('התראות מהריצות', etbl)}</div>"
+        dec = self.db.all("SELECT * FROM decisions ORDER BY id DESC LIMIT 10", (), ["deviations"])
+        out += ui.section("החלטות אחרונות", ui.table(("מתי", "מי", "על מה", "פעולה", "החלטה", "ביטחון", "כרטיס"), (
+            [f"<td class=t>{ui.when(d['created_at'])}</td>", _e(d["decided_by"]), f"<b>{_e(d['subject'])}</b>",
+             _e(d["action"]), _e(str(d["choice"])[:160]), _e(d["confidence"]), _e(d["card_id"])] for d in dec))
+            + "<p class=note><a href='/journal'>ליומן המסחר המלא</a></p>" if dec else ui.empty("עוד אין החלטות ביומן"))
+        reps = self.db.all("SELECT id, name, created_at FROM uploads WHERE kind = 'report' ORDER BY id DESC LIMIT 5")
+        files = []
+        for kind, he in (("portfolio", "תיק / ספר נייר"), ("watchlist", "רשימת מעקב"), ("manual_macro", "קובץ מקרו ידני"),
+                         ("dossier", "נתוני המחקר")):
+            u = self.db.one("SELECT name, created_at FROM uploads WHERE kind = ? ORDER BY id DESC LIMIT 1", (kind,))
+            files.append(f"<li><b>{he}</b>: " + (f"{_e(u['name'])} <span class=note>{ui.when(u['created_at'])}</span>"
+                                                 if u else "<span class=note>עוד לא התקבל</span>") + "</li>")
+        rep = ("<ul>" + "".join(f"<li><a href='/report/{r['id']}'>{_e(r['name'])}</a> <span class=note>"
+                                f"{ui.when(r['created_at'])}</span></li>" for r in reps) + "</ul>"
+               if reps else ui.empty("הדוח השבועי הראשון יגיע אחרי הריצה השבועית"))
+        peak = max((a["cost"] for a in costs["by_agent"]), default=0) or 1
+        bars = ("<div class=bars>" + "".join(
+            f"<div><span>{_e(a['agent'])}</span><i style='width:{max(a['cost'] / peak * 100, 1):.0f}%'></i>"
+            f"<span class=num>{a['cost']:.2f}$</span></div>" for a in costs["by_agent"]) + "</div>"
+                if costs["by_agent"] else ui.empty("אין קריאות ל-Agents ב-30 הימים האחרונים"))
+        cost = (f"<p><b>{costs['month']:.2f}$</b> ב-30 יום, {costs['calls']} קריאות. היום {costs['today']:.2f}$.</p>"
+                + bars + "<p class=note>הערכה לפי מחיר API. בפועל רץ על המנוי.</p>")
+        files_html = rep + "<h3>הקבצים האחרונים</h3><ul>" + "".join(files) + "</ul>"
+        out += f"<div class=two>{ui.section('דוחות וקבצים', files_html)}{ui.section('עלות Agents', cost)}</div>"
+        out += ui.section("לוח זמנים", self.schedule_table(st)
+                          + "<p class=note>לפי שעון ניו יורק, בימי מסחר בלבד. כשהשעון בישראל ובארה\"ב זז בתאריכים שונים, השעה בישראל זזה בהתאם.</p>")
+        system = ui.section("מצב המערכת", self.system_html(compact=True), id="system")
+        return {"top": top, "book": book, "watch": watch, "runs": out, "system": system}
+
+    def overview_html(self) -> str:
+        """The live parts only (what the page's script re-fetches)."""
+        return "".join(f"<div data-live={k} class=wrap style='padding:0;width:100%'>{v}</div>"
+                       for k, v in self.overview_parts().items())
+
     def dashboard(self, env: dict, start: Start) -> list[bytes]:
-        return self._live(env, start, "לוח בקרה", self.overview_html, "/")
+        """The overview, in the research report's structure (Ilay, 22.10): the bottom line and what waits for Ilay,
+        then the newest report (macro, sectors, screens, ideas, charts), then the book, the watchlist, the runs and
+        what they said, and the system's status. The report changes once a week, so only the parts around it refresh."""
+        if "fragment" in parse_qs(env.get("QUERY_STRING", "")):
+            return self._send(start, "200 OK", self.overview_html(), headers=[("Cache-Control", "no-store")])
+        parts = self.overview_parts()
+        live = lambda k: f"<div data-live={k} class=wrap style='padding:0;width:100%'>{parts[k]}</div>"  # noqa: E731
+        nav, report, as_of = self.report_parts()
+        if report:
+            rep = f"<div class=rep>{report}</div>"
+            sub = f"דוח המחקר האחרון: {ui.e(as_of or '')} · הפוזיציות, התור והריצות מתעדכנים לבד"
+        else:
+            rep = ui.section("דוח המחקר", ui.empty("עוד אין דוח מחקר: הריצה השבועית מפיקה אותו בשבת (צריך מפתח FRED, "
+                                                   "קובץ מקרו ו-Claude), או שלח לבוט dossier.json של מחקר"), id="summary")
+            sub = "הפוזיציות, התור והריצות מתעדכנים לבד"
+        rail = ([("queue", "מחכה לך")] + list(nav) + [("book", "פוזיציות"), ("watch", "רשימת מעקב"), ("runs", "ריצות ופלט"),
+                                                     ("system", "מצב המערכת")])
+        body = live("top") + rep + live("book") + live("watch") + live("runs") + live("system")
+        return self._send(start, "200 OK", ui.page("Quantum Trader · לוח בקרה", body, "/", live=True, sub=sub, rail=rail,
+                                                   css=ui.report_css() if report else ""))
 
 
 _APP: App | None = None
