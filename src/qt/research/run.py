@@ -279,13 +279,14 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
 
     surv = sum(len(s["long"]) + len(s["short"]) for s in screens.values())
     in_sectors = sum(s["n"] for s in screens.values())
+    n_ok = sum(1 for t in timing if not t.get("error") and t.get("combined") in ("green", "orange"))
     funnel = [
         dict(stage="universe", label="יקום: מניות ארה\"ב בבורסות NYSE/NASDAQ מעל רצפת השווי", n=len(u["quotes"])),
         dict(stage="sectors", label=f"בסקטורים שנבחרו ({', '.join(sectors['long'] + sectors['short'])})", n=in_sectors),
         dict(stage="screen", label="עברו את סינון S06 (פרופיל צמיחה/תמחור)", n=surv),
         dict(stage="timing", label="רמזור S09 (ירוק / כתום / אדום)",
              n=surv, split=dict(Counter(t.get("combined", "error") for t in timing))),
-        dict(stage="deep_dive", label="נבחרו ל-deep dive", n=len(ideas)),
+        dict(stage="deep_dive", label=f"נבחרו ל-deep dive (מתוך {n_ok} ירוקים וכתומים)", n=len(ideas)),
         dict(stage="trades", label="מוכנות לכניסה / מותנות טריגר",
              n=sum(i["bucket"] in ("enter", "conditional") for i in ideas.values()),
              split=dict(Counter(i["bucket"] for i in ideas.values()))),

@@ -4,7 +4,8 @@ The research run (qt.research.run) computes every number; this module asks the c
 judgments dict a person writes by hand (judgments.yaml), so the dossier, the report and the watchlist do not
 change. Order:
   A1  DC-01..DC-04 on the macro stance (grey band, compass, macro vs market, confidence).
-  A3  DC-09 ranks the timing survivors when there are more than the deep-dive cap; otherwise all pass (card).
+  A3  DC-09 ranks the green and orange stocks when there are more than the deep-dive cap; otherwise all pass (card).
+      Red never passes. Who was left out is kept under J["A3"] for the report.
   A4  per idea: DC-10 story, DC-11 premium and target method, DC-12 thesis breakers, DC-13 watchlist and heat.
   A6  only for a "hot" idea (DC-17's trigger): DC-17 trigger, DC-19 k, DC-20 tranches and first size.
 Every card gets a fact sheet built from the code's numbers for that idea (principle 4: no fact without an id), and
@@ -103,6 +104,7 @@ class Judge:
     def __init__(self, runner, run_id: str | None = None, max_deep: int = MAX_DEEP, step: str = "research"):
         self.runner, self.run_id, self.max_deep, self.step = runner, run_id, max_deep, step
         self.log: list[dict] = []
+        self.selection: dict[str, Any] = {}
 
     def _decide(self, agent: str, card: str, fs: FactSheet, world: dict, subject: str) -> dict:
         r = self.runner.decide(agent, card, fs, world, run_id=self.run_id, step=self.step, subject=subject)
@@ -126,9 +128,26 @@ class Judge:
         return out
 
     # ---------------------------------------------------------------- A3
+    def code_order(self, ok: list[dict]) -> list[dict]:
+        """DC-09 when undecided: the profile order (decision 12, D-S06-11), green before orange, then R:R to the
+        extreme. The card's territory step is not here: the timing rows do not carry it."""
+        sc = load_policy().screening
+        rank = {"long": list(sc.long_rank), "short": list(sc.short_rank)}
+
+        def key(t: dict) -> tuple:
+            r = rank.get(t.get("dir"), [])
+            return (r.index(t.get("profile")) if t.get("profile") in r else len(r), t.get("combined") != "green",
+                    -(t.get("rr_extreme") or 0))
+        return sorted(ok, key=key)
+
     def pick(self, timing: list[dict], macro: dict, as_of: date) -> list[dict]:
+        """Every green and orange stock when they fit under the cap; above it DC-09 ranks and the top go on. What
+        was left out, and why, is kept in self.selection (the report shows it)."""
         ok = [t for t in timing if not t.get("error") and t.get("combined") in ("green", "orange")]
+        sel: dict[str, Any] = {"candidates": len(ok), "cap": self.max_deep}
+        self.selection = sel
         if len(ok) <= self.max_deep:
+            sel.update(mode="all", picked=[t["sym"] for t in ok], skipped=[])
             return ok
         fs = FactSheet()
         for t in ok:
@@ -138,9 +157,15 @@ class Judge:
         o = self._decide("A3", "DC-09", fs, {"candidates": [t["sym"] for t in ok], "cap": self.max_deep}, "screen")
         by = {t["sym"]: t for t in ok}
         ranked = [by[s] for s in o.get("ranked") or [] if s in by]
-        if not ranked:                                    # undecided: the code's order (rr to the extreme)
-            ranked = sorted(ok, key=lambda t: -(t.get("rr_extreme") or 0))
-        return ranked[: self.max_deep]
+        sel.update(mode="ranked", why=o.get("reasoning", ""))
+        if not ranked:                                    # undecided: the card's code order
+            ranked = self.code_order(ok)
+            sel.update(mode="code_order", why="")
+        picked = ranked[: self.max_deep]
+        chosen = {t["sym"] for t in picked}
+        sel.update(picked=[t["sym"] for t in picked],
+                   skipped=[t["sym"] for t in self.code_order(ok) if t["sym"] not in chosen])
+        return picked
 
     # ---------------------------------------------------------------- A4 + A6
     def idea(self, t: dict, deep_dive: DeepDive, macro: dict, as_of: date) -> dict:
@@ -194,12 +219,15 @@ class Judge:
     def __call__(self, stages: dict, deep_dive: DeepDive) -> dict:
         as_of, macro = stages["as_of"], stages["macro"]
         J: dict[str, Any] = {"judged_by": JUDGED_BY, "A1": self.macro(macro, as_of), "ideas": {}}
-        for t in self.pick(stages["timing"], macro, as_of):
+        picked = self.pick(stages["timing"], macro, as_of)
+        for n, t in enumerate(picked):
             try:
                 J["ideas"][t["sym"]] = self.idea(t, deep_dive, macro, as_of)
             except Exception as e:                       # noqa: BLE001 - one idea's failure (budget, data) is reported
                 J.setdefault("errors", {})[t["sym"]] = f"{type(e).__name__}: {e}"
                 if type(e).__name__ == "BudgetExceeded":
+                    self.selection["cut_by_budget"] = [x["sym"] for x in picked[n + 1:]]
                     break
+        J["A3"] = self.selection
         J["agent_log"] = self.log
         return J

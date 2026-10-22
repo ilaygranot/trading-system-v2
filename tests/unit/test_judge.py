@@ -179,3 +179,17 @@ def test_report_renders_an_agent_judged_idea(db):
     h = report.render(d)
     for s in ("שורה לחבר", "נימוק DC-10", "ירידה בתפוקה", 'class="tldr"', "Agents A1"):
         assert s in h, s
+
+
+def test_dc09_keeps_who_was_left_out_and_orders_by_profile_when_undecided(db):
+    tm = _timing(4)
+    tm[3] |= {"profile": "L4"}                                         # best R:R but the weakest profile
+    tm[0] |= {"combined": "orange"}
+    client = CardClient({"DC-09": _answer("DC-09", "ranked", ranked=[], skipped=[])})
+    jg = _judge(db, client, max_deep=2)
+    assert [t["sym"] for t in jg.pick(tm, FIX["macro"], AS_OF)] == ["S2", "S1"]   # L1 green first, by R:R
+    assert jg.selection["mode"] == "code_order" and jg.selection["candidates"] == 4
+    assert jg.selection["skipped"] == ["S0", "S3"]
+    jg = _judge(db, CardClient(), max_deep=8)
+    jg.pick(tm, FIX["macro"], AS_OF)
+    assert jg.selection["mode"] == "all" and jg.selection["skipped"] == []
