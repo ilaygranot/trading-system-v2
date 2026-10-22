@@ -157,6 +157,8 @@ def test_full_judgment_and_budget_stop(db):
             return super().decide(agent, card_id, *a, **k)
     J = JG.Judge(Broke(db, CardClient()))({"as_of": AS_OF, "macro": FIX["macro"], "timing": _timing(3)}, _deep_dive([]))
     assert J["ideas"] == {} and list(J["errors"]) == ["S0"] and "budget" in J["errors"]["S0"]   # stops at the first
+    assert J["A3"]["cut_by_budget"] == ["S1", "S2"] and set(J["A3"]["skipped"]) == {"S0", "S1", "S2"}
+    assert JG.unexplained_greens(_timing(3), set(J["ideas"]), J["A3"]["skipped"]) == []   # each has a reason
 
 
 def test_runner_uses_the_run_cap_instead_of_the_daily_one(db):
@@ -189,7 +191,57 @@ def test_dc09_keeps_who_was_left_out_and_orders_by_profile_when_undecided(db):
     jg = _judge(db, client, max_deep=2)
     assert [t["sym"] for t in jg.pick(tm, FIX["macro"], AS_OF)] == ["S2", "S1"]   # L1 green first, by R:R
     assert jg.selection["mode"] == "code_order" and jg.selection["candidates"] == 4
-    assert jg.selection["skipped"] == ["S0", "S3"]
+    assert list(jg.selection["skipped"]) == ["S0", "S3"] and all(jg.selection["skipped"].values())
     jg = _judge(db, CardClient(), max_deep=8)
     jg.pick(tm, FIX["macro"], AS_OF)
-    assert jg.selection["mode"] == "all" and jg.selection["skipped"] == []
+    assert jg.selection["mode"] == "all" and jg.selection["skipped"] == {}
+
+
+def _mixed(n_green, n_orange):
+    tm = _timing(n_green + n_orange)
+    for t in tm[n_green:]:
+        t["combined"] = "orange"
+    return tm
+
+
+def test_dc09_cap_is_12_and_every_candidate_up_to_it_passes(db):
+    assert JG.MAX_DEEP == 12 and JG.MIN_DEEP == 8
+    client = CardClient()
+    assert len(_judge(db, client).pick(_mixed(5, 7), FIX["macro"], AS_OF)) == 12 and not client.cards
+
+
+def test_dc09_a_green_left_out_without_a_reason_still_goes_on(db):
+    tm = _mixed(3, 12)                                                 # S0-S2 green, S3-S14 orange
+    ranked = [f"S{i}" for i in range(3, 15)]                           # the agent ranks only oranges
+    client = CardClient({"DC-09": _answer("DC-09", "ranked", ranked=ranked, skipped=[])})
+    jg = _judge(db, client)
+    picked = [t["sym"] for t in jg.pick(tm, FIX["macro"], AS_OF)]
+    assert len(picked) == 12 and {"S0", "S1", "S2"} <= set(picked) and set(picked[:3]) == {"S0", "S1", "S2"}   # greens first
+    sk = jg.selection["skipped"]
+    assert set(sk) == {"S12", "S13", "S14"} and all(sk.values())       # the last oranges, each with a reason
+    assert JG.unexplained_greens(tm, set(picked), sk) == []
+
+
+def test_dc09_a_green_skipped_with_the_agents_reason_stays_out(db):
+    tm = _mixed(3, 12)
+    ranked = [f"S{i}" for i in range(1, 13)]
+    client = CardClient({"DC-09": _answer("DC-09", "ranked", ranked=ranked,
+                                          skipped=[{"sym": "S0", "reason": "דוח בעוד יומיים"}])})
+    jg = _judge(db, client)
+    picked = [t["sym"] for t in jg.pick(tm, FIX["macro"], AS_OF)]
+    assert "S0" not in picked and jg.selection["skipped"]["S0"] == "דוח בעוד יומיים"
+    assert JG.unexplained_greens(tm, set(picked), jg.selection["skipped"]) == []
+
+
+def test_dc09_too_few_ranked_is_filled_to_8(db):
+    client = CardClient({"DC-09": _answer("DC-09", "ranked", ranked=["S20", "S19"], skipped=[])})
+    picked = _judge(db, client).pick(_mixed(0, 21), FIX["macro"], AS_OF)
+    assert len(picked) == 8 and [t["sym"] for t in picked][:2] == ["S20", "S19"]
+
+
+def test_unexplained_greens_and_the_hand_written_run_refuses_them():
+    tm = _mixed(2, 1)
+    assert JG.unexplained_greens(tm, {"S0"}, {}) == ["S1"]
+    assert JG.unexplained_greens(tm, {"S0"}, {"S1": "  "}) == ["S1"]          # a blank reason is no reason
+    assert JG.unexplained_greens(tm, {"S0"}, {"S1": "סיבה"}) == []
+    assert JG.unexplained_greens(tm, set(), ["S0", "S1"]) == ["S0", "S1"]     # the old list form has no reasons

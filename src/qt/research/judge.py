@@ -4,8 +4,8 @@ The research run (qt.research.run) computes every number; this module asks the c
 judgments dict a person writes by hand (judgments.yaml), so the dossier, the report and the watchlist do not
 change. Order:
   A1  DC-01..DC-04 on the macro stance (grey band, compass, macro vs market, confidence).
-  A3  DC-09 ranks the green and orange stocks when there are more than the deep-dive cap; otherwise all pass (card).
-      Red never passes. Who was left out is kept under J["A3"] for the report.
+  A3  DC-09 ranks the green and orange stocks when there are more than the deep-dive cap (12); otherwise all pass.
+      Red never passes; green always does unless skipped with a reason. J["A3"] keeps who was skipped and why.
   A4  per idea: DC-10 story, DC-11 premium and target method, DC-12 thesis breakers, DC-13 watchlist and heat.
   A6  only for a "hot" idea (DC-17's trigger): DC-17 trigger, DC-19 k, DC-20 tranches and first size.
 Every card gets a fact sheet built from the code's numbers for that idea (principle 4: no fact without an id), and
@@ -21,8 +21,8 @@ from typing import Any, Callable
 from qt.facts import FactSheet
 from qt.policy import load_policy
 
-MAX_DEEP = 8                    # DC-09: below 8 candidates all pass; above, the agent ranks and the top 8 go on
-                                # (not from course: the cap at the card's lower bound, for cost)
+MIN_DEEP, MAX_DEEP = 8, 12     # DC-09: up to 12 green and orange stocks all pass; above, the agent ranks and 8 to 12
+                                # go on (Ilay 22.10, to start; the card had 8-15 per direction; not from course)
 K_OPTIONS = {"k_min": 3.0, "k_mid": 4.0, "k_max": 5.0}       # DC-19: 3 (20.10), default 4, 5 inferred from 102
 TARGET_SOURCE = {"hist_3y": "own_multiple_target", "sector": "own_multiple_target", "other": None}
 SRC = "code:research"
@@ -98,6 +98,18 @@ def idea_facts(d: dict, macro: dict, as_of: date) -> FactSheet:
     return fs
 
 
+def candidates(timing: list[dict]) -> list[dict]:
+    """Who may go to the deep dive (DC-09): green or orange on the combined light, with data. Red never does."""
+    return [t for t in timing if not t.get("error") and t.get("combined") in ("green", "orange")]
+
+
+def unexplained_greens(timing: list[dict], analysed, skipped: dict | None) -> list[str]:
+    """Green stocks that were neither analysed nor skipped with a reason (Ilay 22.10: must be empty)."""
+    skipped = skipped if isinstance(skipped, dict) else {}
+    return [t["sym"] for t in candidates(timing) if t["combined"] == "green" and t["sym"] not in analysed
+            and not str(skipped.get(t["sym"]) or "").strip()]
+
+
 class Judge:
     """Calls the cards for one research run and assembles the judgments dict."""
 
@@ -141,30 +153,54 @@ class Judge:
         return sorted(ok, key=key)
 
     def pick(self, timing: list[dict], macro: dict, as_of: date) -> list[dict]:
-        """Every green and orange stock when they fit under the cap; above it DC-09 ranks and the top go on. What
-        was left out, and why, is kept in self.selection (the report shows it)."""
-        ok = [t for t in timing if not t.get("error") and t.get("combined") in ("green", "orange")]
+        """Every green and orange stock when they fit under the cap; above it DC-09 ranks and 8 to 12 go on. A green
+        stock is never left out silently: it goes on, or it is skipped with the agent's reason, or (only when the
+        cap is full of green stocks) with the code's. Every skipped stock has a reason; self.selection keeps them."""
+        ok = candidates(timing)
         sel: dict[str, Any] = {"candidates": len(ok), "cap": self.max_deep}
         self.selection = sel
         if len(ok) <= self.max_deep:
-            sel.update(mode="all", picked=[t["sym"] for t in ok], skipped=[])
+            sel.update(mode="all", picked=[t["sym"] for t in ok], skipped={})
             return ok
         fs = FactSheet()
         for t in ok:
             add_facts(fs, t["sym"], {k: t.get(k) for k in ("etf", "dir", "profile", "combined", "stock", "sector",
                                                           "market", "rr_extreme", "adr", "price")}, as_of, depth=1)
         add_facts(fs, "macro.stance", {k: macro["stage2"]["stance"].get(k) for k in ("zone", "bias")}, as_of, depth=1)
-        o = self._decide("A3", "DC-09", fs, {"candidates": [t["sym"] for t in ok], "cap": self.max_deep}, "screen")
+        world = {"candidates": [t["sym"] for t in ok], "green": [t["sym"] for t in ok if t["combined"] == "green"],
+                 "min": MIN_DEEP, "cap": self.max_deep,
+                 "rule": "every green stock goes on unless skipped with a reason of its own in skipped"}
+        o = self._decide("A3", "DC-09", fs, world, "screen")
         by = {t["sym"]: t for t in ok}
-        ranked = [by[s] for s in o.get("ranked") or [] if s in by]
+        why = {x.get("sym"): (x.get("reason") or "").strip() for x in o.get("skipped") or [] if isinstance(x, dict)}
+        ranked = [by[s] for s in dict.fromkeys(o.get("ranked") or []) if s in by]
         sel.update(mode="ranked", why=o.get("reasoning", ""))
         if not ranked:                                    # undecided: the card's code order
-            ranked = self.code_order(ok)
+            ranked, why = self.code_order(ok), {}
             sel.update(mode="code_order", why="")
+        order = ranked + [t for t in self.code_order(ok) if t not in ranked]
         picked = ranked[: self.max_deep]
+        if len(picked) < min(MIN_DEEP, self.max_deep, len(ok)):          # the agent passed too few: fill by the code order
+            picked += [t for t in order if t not in picked][: min(MIN_DEEP, self.max_deep) - len(picked)]
+        for t in [t for t in order if t["combined"] == "green" and t not in picked and not why.get(t["sym"])]:
+            oranges = [x for x in picked if x["combined"] != "green"]
+            if len(picked) < self.max_deep:
+                picked.append(t)                          # an unexplained green goes on while there is room
+            elif oranges:
+                picked.remove(oranges[-1])                # or takes the place of the last orange
+                picked.append(t)
+        picked = [t for t in picked if t["combined"] == "green"] + [t for t in picked if t["combined"] != "green"]
         chosen = {t["sym"] for t in picked}
-        sel.update(picked=[t["sym"] for t in picked],
-                   skipped=[t["sym"] for t in self.code_order(ok) if t["sym"] not in chosen])
+        rank = {t["sym"]: n + 1 for n, t in enumerate(order)}
+        skipped = {}
+        for t in order:
+            if t["sym"] in chosen:
+                continue
+            skipped[t["sym"]] = why.get(t["sym"]) or (
+                f"תקרה של {self.max_deep}: כל המקומות תפוסים במניות ירוקות שדורגו לפניה" if t["combined"] == "green"
+                else f"כתומה, מקום {rank[t['sym']]} בדירוג, מחוץ ל-{len(picked)} שנבחרו")
+        sel.update(picked=[t["sym"] for t in picked], skipped=skipped)
+        assert not unexplained_greens(timing, chosen, skipped)
         return picked
 
     # ---------------------------------------------------------------- A4 + A6
@@ -225,8 +261,11 @@ class Judge:
                 J["ideas"][t["sym"]] = self.idea(t, deep_dive, macro, as_of)
             except Exception as e:                       # noqa: BLE001 - one idea's failure (budget, data) is reported
                 J.setdefault("errors", {})[t["sym"]] = f"{type(e).__name__}: {e}"
+                self.selection.setdefault("skipped", {})[t["sym"]] = f"הניתוח נכשל: {type(e).__name__}: {e}"
                 if type(e).__name__ == "BudgetExceeded":
                     self.selection["cut_by_budget"] = [x["sym"] for x in picked[n + 1:]]
+                    for x in picked[n + 1:]:
+                        self.selection["skipped"][x["sym"]] = "נעצר: תקציב ה-Agents לריצה נגמר (ירוקות נותחו ראשונות)"
                     break
         J["A3"] = self.selection
         J["agent_log"] = self.log
