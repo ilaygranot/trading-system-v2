@@ -626,8 +626,8 @@ class App:
         from qt.app import waiting_monthly
         q = self._schemas()
         out: dict[str, tuple[str, str]] = {}
-        pf = self.db.one("SELECT name, created_at FROM uploads WHERE kind = 'portfolio' AND name NOT LIKE 'book-%' "
-                         "ORDER BY id DESC LIMIT 1")
+        pf = self.db.one("SELECT name, created_at FROM uploads WHERE kind = 'portfolio' AND name NOT LIKE ? "
+                         "ORDER BY id DESC LIMIT 1", ("book-%",))
         start = os.environ.get("QT_START_EQUITY")
         out["portfolio"] = (("ok", f"נשלח {ui.when(pf['created_at'])} ({_e(pf['name'])})") if pf else
                             ("warn", "לא נשלח" + (f": הספר מתחיל ב-{float(start):,.0f}$ במזומן" if start else "")))
