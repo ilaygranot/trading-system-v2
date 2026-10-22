@@ -596,17 +596,47 @@ def _screen(d: dict) -> str:
     good = [t for t in tm if t.get("combined") == "green" or (t.get("combined") == "orange" and (t.get("rr_extreme") or 0) >= 3)]
     out.append('<h3>מי שעבר את הרמזור: כל הירוקים, והכתומים עם יחס של 3 ומעלה לשיא</h3><div class="tbl"><table><thead><tr>'
                '<th>מניה</th><th>סקטור</th><th>פרופיל</th><th>מניה</th><th>סקטור</th><th>שוק</th><th>משולב</th><th>מקורות אדומים</th>'
-               '<th>R:R לשיא</th><th>ADR</th></tr></thead><tbody>')
+               '<th>R:R לשיא</th><th>ADR</th><th>ניתוח עומק</th></tr></thead><tbody>')
     for t in sorted(good, key=lambda t: (t["combined"] != "green", -(t.get("rr_extreme") or 0))):
         reds = [SOURCE_HE.get(k, k) for k, v in t["sources"].items() if v == "red"]
         link = f'<a href="#idea-{E(t["sym"])}">{E(t["sym"])}</a>' if t["sym"] in d["ideas"] else E(t["sym"])
         out.append(f'<tr><td><b>{link}</b></td><td>{E(t["etf"])}</td><td>{E(t["profile"])}</td><td>{pill(t["stock"])}</td>'
                    f'<td>{pill(t["sector"])}</td><td>{pill(t["market"])}</td><td>{pill(t["combined"])}</td>'
                    f'<td>{E(", ".join(reds) or "—")}</td><td class="n">{num(t.get("rr_extreme"), 1)}</td>'
-                   f'<td class="n">{num(t["adr"], 1, True)}</td></tr>')
+                   f'<td class="n">{num(t["adr"], 1, True)}</td><td>{"נבחר" if t["sym"] in d["ideas"] else "לא נבחר"}</td></tr>')
     out.append('</tbody></table></div><p class="note">R:R לשיא מחושב עם k=4 מול השיא של 8 שנים. זה סינון ראשוני בלבד: '
-               'היעד הסופי נבחר בניתוח העמוק מבין שלושת מקורות הקורס.</p></section>')
+               'היעד הסופי נבחר בניתוח העמוק מבין שלושת מקורות הקורס.</p>')
+    out.append(_selection(d))
+    out.append('</section>')
     return "".join(out)
+
+
+SELECT_HE = {"all": "כולם עברו, כי מספרם לא עובר את התקרה",
+             "ranked": "ה-Agent דירג לפי כרטיס DC-09 ועברו הראשונים עד התקרה",
+             "code_order": "ה-Agent לא הכריע, ועברו הראשונים לפי סדר הקוד (פרופיל, ירוק לפני כתום, R:R לשיא)"}
+
+
+def _selection(d: dict) -> str:
+    """Who of the green and orange stocks went on to the deep dive, and the rule that chose them (DC-09)."""
+    ok = [t for t in d["timing"] if not t.get("error") and t.get("combined") in ("green", "orange")]
+    left = [t for t in ok if t["sym"] not in d["ideas"]]
+    a3 = (d.get("judgments") or {}).get("A3") or {}
+    if a3:
+        rule = (f'הכלל (כרטיס DC-09): ירוק או כתום, ועד {a3["cap"]} מניות לניתוח עומק. '
+                f'בריצה הזו {a3["candidates"]} מועמדים: {SELECT_HE.get(a3.get("mode"), a3.get("mode", ""))}.')
+        if a3.get("why"):
+            rule += f' הנימוק: {a3["why"]}'
+        if a3.get("cut_by_budget"):
+            rule += f' נעצרו בגלל תקציב ה-Agents: {", ".join(a3["cut_by_budget"])}.'
+    else:
+        rule = (f'הכלל (כרטיס DC-09): ירוק או כתום, ועד תקרה של מניות לניתוח עומק. בריצה הזו הבחירה נעשתה ידנית '
+                f'({d["meta"].get("judged_by", "")}), והנימוק לבחירה לא נשמר.')
+    greens = [t["sym"] for t in left if t["combined"] == "green"]
+    reds = [t["sym"] for t in d["timing"] if t["sym"] in d["ideas"] and t.get("combined") not in ("green", "orange")]
+    tail = (f' ירוקים שלא נבחרו: {", ".join(greens)}.' if greens else '')
+    tail += (f' נותחו גם מחוץ לכלל (לא ירוק או כתום): {", ".join(reds)}.' if reds else '')
+    return (f'<p class="note"><b>מי עבר לניתוח עומק:</b> {E(rule)} {len(ok) - len(left)} מתוך {len(ok)} ירוקים וכתומים נבחרו.'
+            f'{E(tail)}</p>')
 
 
 def _idea(i: dict, checks: list[dict] | None = None) -> str:
