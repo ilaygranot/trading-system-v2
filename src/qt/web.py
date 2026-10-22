@@ -115,6 +115,9 @@ class App:
             m = re.fullmatch(r"/report/(\d+)", path)
             if m and method == "GET":
                 return self.report(env, start, int(m.group(1)))
+            m = re.fullmatch(r"/journal(?:/(trades|ideas|equity)\.csv)?", path)
+            if m and method == "GET":
+                return self.journal(env, start, m.group(1))
             if not self._authed(env):
                 return self._deny(start)
             if path == "/" and method == "GET":
@@ -198,6 +201,32 @@ class App:
         if row is None:
             return self._send(start, "404 Not Found", "not found", "text/plain")
         return self._send(start, "200 OK", row["content"])
+
+    def journal(self, env: dict, start: Start, csv_name: str | None) -> list[bytes]:
+        """The trade journal (qt.learning.tables): the page with every table, or one table as CSV for Excel or
+        Google Sheets. Opens from the signed link in Telegram (/journal) or after login."""
+        from qt.app import portfolio
+        from qt.learning import tables
+        from qt.telegram import verify_journal
+        from qt.tradelog import to_csv
+        sig = (parse_qs(env.get("QUERY_STRING", "")).get("sig") or [""])[0]
+        if not (verify_journal(sig, self.password) or self._authed(env)):
+            return self._deny(start)
+        t = tables(self.db, portfolio(self.db) or {})
+        if csv_name:
+            rows, cols = t[csv_name]
+            return self._send(start, "200 OK", to_csv(rows, cols), "text/csv; charset=utf-8",
+                              [("Content-Disposition", f'attachment; filename="qt-{csv_name}.csv"')])
+        q = f"?sig={_e(sig)}" if sig else ""
+        names = {"trades": "עסקאות", "ideas": "רעיונות כניסה ומה קרה איתם", "equity": "Equity יומי"}
+        body = ""
+        for name, (rows, cols) in t.items():
+            head = "".join(f"<th>{_e(h)}</th>" for _, h in cols)
+            trs = "".join("<tr>" + "".join(f"<td>{_e('' if r.get(k) is None else r.get(k))}</td>" for k, _ in cols)
+                          + "</tr>" for r in rows)
+            body += (f"<h2>{names[name]} ({len(rows)})</h2><p><a href='/journal/{name}.csv{q}'>הורדה כ-CSV</a></p>"
+                     f"<div style='overflow-x:auto'><table><tr>{head}</tr>{trs}</table></div>")
+        return self._page(start, "יומן המסחר", body)
 
     def decide(self, env: dict, start: Start, item_id: int, choice: str) -> list[bytes]:
         note = (parse_qs(self._body(env).decode()).get("note") or [""])[0]

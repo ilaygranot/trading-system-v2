@@ -149,7 +149,7 @@ def test_weekly_run_end_to_end_and_rank_moves_from_last_week(db):
     rid = r.start("weekly", AS_OF)
     st = [x for x in r.status() if x["id"] == rid][0]
     assert [s["step"] for s in st["steps"]] == ["expire", "report", "wfetch", "arena", "revisit", "week", "research",
-                                                    "notify"]
+                                                    "learn", "notify"]
     assert bot.sent[-2].startswith("סיכום שבוע עד 2026-10-23") and bot.sent[-1].startswith("תפעול")
     text = bot.sent[-2] + bot.sent[-1]
     for s in ("זירת סקטורים", "XLK 11", "XLU 1", "פוזיציות:", "• XLE", "רשימת מעקב: 1 (1 לונג, 0 שורט)",
