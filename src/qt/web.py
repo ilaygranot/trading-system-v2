@@ -12,7 +12,7 @@ import html
 import json
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs
@@ -52,7 +52,8 @@ def _e(v: Any) -> str:
 class App:
     def __init__(self, db_url: str | None = None, bot: Any = None, password: str | None = None,
                  webhook_secret: str | None = None, resume: Callable[[str], Any] | None = None,
-                 prices: Callable[[list[str]], dict[str, float]] | None = None):
+                 prices: Callable[[list[str]], dict[str, float]] | None = None,
+                 bars: Callable[[str], list] | None = None, news: Callable[[str], list[dict]] | None = None):
         self.db_url = db_url or os.environ.get("QT_DATABASE_URL", ":memory:")
         self.password = password if password is not None else os.environ.get("DASHBOARD_PASSWORD", "")
         from qt.telegram import webhook_token
@@ -61,9 +62,12 @@ class App:
         self._bot = bot
         self._resume = resume
         self._prices = prices
+        self._bars = bars
+        self._news = news
         self._db: DB | None = None
         self._gw: tuple[float, tuple[str | None, str]] | None = None
         self._dossier: tuple[int, dict] | None = None
+        self._web_cache: dict[str, tuple[float, Any]] = {}
 
     # ------------------------------------------------------------ plumbing
     @property
@@ -124,12 +128,12 @@ class App:
         return self._send(start, "200 OK", ui.page(title, body, active, nav_q=nav_q))
 
     def _live(self, env: dict, start: Start, title: str, body: Callable[[], str] | str,
-              active: str = "") -> list[bytes]:
+              active: str = "", css: str = "") -> list[bytes]:
         """A page that refreshes itself; with ?fragment=1 only the refreshing part (what the script fetches)."""
         body = body() if callable(body) else body
         if "fragment" in parse_qs(env.get("QUERY_STRING", "")):
             return self._send(start, "200 OK", body, headers=[("Cache-Control", "no-store")])
-        return self._send(start, "200 OK", ui.page(title, body, active, live=True))
+        return self._send(start, "200 OK", ui.page(title, body, active, live=True, css=css))
 
     def _deny(self, start: Start) -> list[bytes]:
         return self._send(start, "401 Unauthorized", "auth required", "text/plain",
@@ -168,6 +172,14 @@ class App:
             m = re.fullmatch(r"/runs/([\w.-]+)", path)
             if m and method == "GET":
                 return self._live(env, start, f"ריצה {m.group(1)}", lambda: self.run_html(m.group(1)), "/runs")
+            m = re.fullmatch(r"/stock/([\w.\-]{1,12})", path)
+            if m and method == "GET":
+                sym = m.group(1).upper()
+                return self._live(env, start, sym, lambda: self.stock_html(sym), "/", css=ui.report_css())
+            if path == "/macro" and method == "GET":
+                return self._live(env, start, "דוח מקרו", self.macro_html, "/", css=ui.report_css())
+            if path == "/sectors" and method == "GET":
+                return self._live(env, start, "סקטורים וסינון", self.sectors_html, "/", css=ui.report_css())
             if path == "/system" and method == "GET":
                 return self._live(env, start, "מצב המערכת", self.system_html, "/system")
             if path == "/api/status" and method == "GET":
@@ -416,7 +428,7 @@ class App:
         else:
             buttons = (("approve", "✅ אשר", " class=go"), ("reject", "❌ דחה", ""), ("postpone", "⏸ מחר", ""))
         st = {"changed": ui.pill("השתנה מאז ההצעה", "warn"), "postponed": ui.pill("נדחה למחר", "mute")}.get(i["status"], "")
-        return (f"<div class=card><h3>{icon} {_e(i['symbol'] or '')} · {_e(name)} {st} "
+        return (f"<div class=card><h3>{icon} {ui.sym(i['symbol'])} · {_e(name)} {st} "
                 f"<a class=note href='/item/{i['id']}'>#{i['id']}</a></h3>"
                 f"<div class=facts>" + "".join(f"<span>{t} <b>{v}</b></span>" for t, v in facts if v) + "</div>"
                 + (f"<p>{_e(p.get('detail'))}</p>" if p.get("detail") else "")
@@ -451,7 +463,7 @@ class App:
         return ui.table(
             ("מניה", "כיוון", "סקטור", "כמות", "כניסה", "מחיר", "רו\"ה $", "רו\"ה %", "סטופ", "מרחק לסטופ", "יעד",
              "משקל", "נפתחה"),
-            ([f"<b>{_e(p['symbol'])}</b>", ui.pill("לונג", "ok") if p["direction"] == "long" else ui.pill("שורט", "bad"),
+            ([f"<b>{ui.sym(p['symbol'])}</b>", ui.pill("לונג", "ok") if p["direction"] == "long" else ui.pill("שורט", "bad"),
               _e(p["sector"]), f"<td class=num>{_n(p['qty'], 0)}</td>", f"<td class=num>{_n(p['entry'])}</td>",
               f"<td class=num>{_n(p['last']) if p['priced'] else '<span class=muted>אין מחיר</span>'}</td>",
               f"<td class=num>{_signed(p['pl'], 0)}</td>", f"<td class=num>{_signed(p['pl_pct'], 2, '%')}</td>",
@@ -673,7 +685,7 @@ class App:
             status = ("בתיק" if c.get("held") else STATUS_HE.get(c.get("status"), "")) if c else "עוד לא נבדקה"
             trend = " / ".join(f"{_signed(c.get(k), 1, '%')}" if c.get(k) is not None else "–"
                                for k in ("trend_1y_pct", "trend_3m_pct", "since_add_pct"))
-            rows.append([f"<b>{_e(e['symbol'])}</b> <span class=note>{'לונג' if e.get('direction') == 'long' else 'שורט'} · "
+            rows.append([f"<b>{ui.sym(e['symbol'])}</b> <span class=note>{'לונג' if e.get('direction') == 'long' else 'שורט'} · "
                          f"{_e(e.get('etf'))}</span>", ui.pill(b, bc), _e(status),
                          f"<td class=num>{_n(c.get('close'))}</td>",
                          f"<td class=num>{_n(e.get('trigger_level'))}"
@@ -793,6 +805,207 @@ class App:
         return "".join(f"<div data-live={k} class=wrap style='padding:0;width:100%'>{v}</div>"
                        for k, v in self.overview_parts().items())
 
+    # ---- drill-down pages: one stock, the macro report, the sectors (Ilay, 22.10: "click a stock, see everything")
+    @staticmethod
+    def rep_links(body: str) -> str:
+        """The report's links to an idea on the same page open that stock's page instead; every ticker in the
+        screen table becomes a link too."""
+        body = re.sub(r'href="#idea-([\w.\-]+)"', r'href="/stock/\1"', body)
+        body = re.sub(r'(<article class="idea[^"]*" id="idea-([\w.\-]+)">.*?<h3>)([\w.\-]+)( <span>)',
+                      r'\1<a href="/stock/\2">\3</a>\4', body, flags=re.S)          # the idea's header too
+        def one(m: re.Match) -> str:
+            s = m.group(1)
+            href = "/sectors" if re.fullmatch(r"XL[A-Z]{1,2}", s) else f"/stock/{s}"   # a sector ETF row: the sectors page
+            return f'<tr><td><b><a href="{href}">{s}</a></b></td>'
+        return re.sub(r'<tr><td><b>([A-Z][A-Z0-9.\-]{0,9})</b></td>', one, body)
+
+    def _yahoo(self, key: str, url: str, ttl: float, parse: Callable[[Any], Any]) -> Any:
+        """One quick Yahoo read for a page (6s, no retries, kept in memory for `ttl`): a slow Yahoo must not hold the
+        page. None when it fails."""
+        import time
+        import requests
+        from qt.data.providers import BROWSER_UA
+        hit = self._web_cache.get(key)
+        if hit and time.monotonic() - hit[0] < ttl:
+            return hit[1]
+        try:
+            r = requests.get(url, headers={"User-Agent": BROWSER_UA}, timeout=6)
+            r.raise_for_status()
+            val = parse(r.json())
+        except Exception:                                               # noqa: BLE001 - the page says so
+            return None
+        self._web_cache[key] = (time.monotonic(), val)
+        return val
+
+    def bars(self, symbol: str) -> list:
+        """About 400 days of daily bars for one symbol (Yahoo), [] when there are none."""
+        if self._bars is not None:
+            return self._bars(symbol)
+        from qt.calc.volatility import parse_yahoo_chart
+        from qt.data.providers import Yahoo
+        return self._yahoo(f"bars:{symbol}", f"{Yahoo.BASE}/v8/finance/chart/{symbol}?range=13mo&interval=1d", 600,
+                           parse_yahoo_chart) or []
+
+    def news(self, symbol: str) -> list[dict]:
+        if self._news is not None:
+            return self._news(symbol)
+        from qt.data.providers import Yahoo
+
+        def parse(body: Any) -> list[dict]:
+            return [dict(title=x.get("title") or "", publisher=x.get("publisher") or "", link=x.get("link") or "",
+                         published=datetime.fromtimestamp(x.get("providerPublishTime", 0), timezone.utc).date().isoformat())
+                    for x in body.get("news", [])]
+        return self._yahoo(f"news:{symbol}", f"{Yahoo.BASE}/v1/finance/search?q={symbol}&newsCount=8&quotesCount=0",
+                           1800, parse) or []
+
+    @staticmethod
+    def chart_from_bars(bars: list) -> dict:
+        """The research report's chart input (dates, closes, moving averages 21/63/252) from daily bars."""
+        close = [float(b.close) for b in bars]
+
+        def ma(n: int) -> list[float | None]:
+            return [None if i + 1 < n else sum(close[i + 1 - n:i + 1]) / n for i in range(len(close))]
+        return {"dates": [b.day.isoformat() for b in bars], "close": close, "ma": {"21": ma(21), "63": ma(63), "252": ma(252)}}
+
+    def stock_html(self, symbol: str) -> str:
+        from qt.app import watchlist
+        from qt.daily import STATUS_HE
+        from qt.research import report
+        sym = symbol.upper()
+        d = self.report_doc() or {}
+        idea = (d.get("ideas") or {}).get(sym)
+        timing = next((t for t in d.get("timing") or [] if t.get("sym") == sym), None)
+        entry = next((x for x in (watchlist(self.db) or {}).get("entries") or [] if x["symbol"] == sym), None)
+        row = self.db.one("SELECT s.output FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE s.step = 'watch' "
+                          "AND s.status = 'done' AND r.kind = 'daily' ORDER BY r.started_at DESC LIMIT 1", (), ["output"])
+        check = next((c for c in ((row or {}).get("output") or {}).get("checks") or [] if c["symbol"] == sym), None)
+        try:
+            book = self.positions()
+        except Exception:                                               # noqa: BLE001 - the rest of the page stands
+            book = {"positions": [], "equity": None}
+        pos = next((p for p in book["positions"] if p["symbol"] == sym), None)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(2) as ex:                               # Yahoo only, no database on these threads
+            fb, fn = ex.submit(self.bars, sym), ex.submit(self.news, sym)
+            bars, news = fb.result(), fn.result()
+        last = float(bars[-1].close) if bars else None
+        prev = float(bars[-2].close) if len(bars) > 1 else None
+        # the strip: price now, since the research, the plan, the light, the position
+        plan = (idea or {}).get("plan") or {}
+        ref = ((idea or {}).get("row") or {}).get("price") or (entry or {}).get("price_at_add")
+        cells = [ui.cell(f"{_n(last)}" if last else "אין מחיר", "סגירה אחרונה" + (f" · {_signed((last / prev - 1) * 100, 1, '%')} היום"
+                                                                              if last and prev else "")),
+                 ui.cell(_signed((last / ref - 1) * 100, 1, "%") if last and ref else "–", f"מאז המחקר ({_n(ref)})")]
+        if plan or entry:
+            e = entry or {}
+            cells.append(ui.cell(f"{_n(plan.get('entry') or e.get('trigger_level'))} / {_n(plan.get('stop'))} / "
+                                 f"{_n(plan.get('target') or e.get('target'))}", "כניסה / עצירה / יעד"))
+        if idea:
+            cells.append(ui.cell(report.BUCKET_HE.get(idea["bucket"], idea["bucket"]),
+                                 f"רמזור {report.COLOR_HE.get(idea['timing'].get('combined'), '')} · R:R {_n(plan.get('rr'), 1)}"))
+        if check:
+            cells.append(ui.cell("בתיק" if check.get("held") else STATUS_HE.get(check["status"], check["status"]),
+                                 f"הבדיקה היומית · יחס {_n(check.get('rr'), 1)}"))
+        if pos:
+            cells.append(ui.cell(_signed(pos["pl"], 0), f"בתיק: {_n(pos['qty'], 0)} יח' · {_signed(pos['pl_pct'], 2, '%')}", "ok"))
+        out = "<div class=strip>" + "".join(cells) + "</div>"
+        # the live chart with the plan's lines
+        if bars:
+            c = self.chart_from_bars(bars)
+            lines = {"entry": plan.get("entry") or (entry or {}).get("trigger_level") or (pos or {}).get("entry") or last,
+                     "stop": plan.get("stop") or (pos or {}).get("stop") or (check or {}).get("stop") or last,
+                     "target": plan.get("target") or (entry or {}).get("target") or (pos or {}).get("target")}
+            fig = report.price_chart(c, lines, (idea or {}).get("levels") or {}, (idea or {}).get("direction", "long"))
+            out += ui.section("המחיר עכשיו", f"<div class=rep><figure>{fig}</figure></div>"
+                              "<p class=note>שנה אחרונה מ-Yahoo, עם ממוצעים 21/63/252 וקווי התוכנית. מתעדכן בכל טעינה.</p>")
+        else:
+            out += ui.section("המחיר עכשיו", ui.empty("לא הצלחתי להביא מחירים מ-Yahoo כרגע"))
+        # what the research found: the whole dossier of the idea, as in the report
+        if idea:
+            checks = [r for r in (d.get("verification") or {}).get("checks", []) if r["subject"] == sym]
+            out += ui.section(f"מה המחקר מצא ({_e(d['meta']['as_of'])})",
+                              "<div class=rep>" + self.rep_links(report._idea(idea, checks)) + "</div>")
+            if sym in ((d.get("portfolio") or {}).get("syms") or []):      # S11: how it sits with the other trades
+                out += f"<div class=rep>{self.rep_links(report._portfolio(d))}</div>"
+        elif timing:
+            out += ui.section(f"בסינון וברמזור ({_e(d['meta']['as_of'])})", ui.data(timing)
+                              + "<p class=note>המניה עברה את הסינון אבל לא נבחרה לניתוח עמוק.</p>")
+        else:
+            out += ui.section("מה המחקר מצא", ui.empty("המניה לא הופיעה בדוח המחקר האחרון"))
+        if entry or check:
+            out += ui.section("ברשימת המעקב", (ui.data({k: v for k, v in (entry or {}).items() if k != "breakers"})
+                                               + ("<h3>מה ישבור את התזה</h3><ul>" + "".join(f"<li>{_e(b)}</li>" for b in entry["breakers"])
+                                                  + "</ul>" if (entry or {}).get("breakers") else "")
+                                               + ("<h3>הבדיקה היומית האחרונה</h3>" + ui.data(check) if check else "")))
+        if pos:
+            out += ui.section("הפוזיציה", self.book_table({"positions": [pos]}))
+        items = self.db.all("SELECT * FROM approval_queue WHERE symbol = ? ORDER BY id DESC LIMIT 10", (sym,), ["payload"])
+        if items:
+            out += ui.section("בתור ובהחלטות", ui.table(("#", "יום", "מה", "מצב", "פירוט"), (
+                [f"<a href='/item/{i['id']}'>#{i['id']}</a>", f"<td class=t>{_e(i['as_of'])}</td>",
+                 f"{_e(i['kind'])} · {_e(i['rule_id'])}", _e(i["status"]), _e((i["payload"] or {}).get("detail"))] for i in items)))
+        orders = self.db.all("SELECT * FROM paper_orders WHERE symbol = ? ORDER BY id DESC LIMIT 10", (sym,))
+        if orders:
+            out += ui.section("עסקאות נייר", ui.table(("סוג", "כמות", "בפתיחת", "מצב", "מחיר"), (
+                [_e(o["kind"]), f"<td class=num>{_e(o['qty'])}</td>", f"<td class=t>{_e(o['fill_on'])}</td>", _e(o["status"]),
+                 f"<td class=num>{_n(o['fill_price'])}</td>"] for o in orders)))
+        dec = self.db.all("SELECT * FROM decisions WHERE subject = ? ORDER BY id DESC LIMIT 10", (sym,))
+        if dec:
+            out += ui.section("ביומן ההחלטות", ui.table(("מתי", "מי", "פעולה", "החלטה", "ביטחון", "כרטיס"), (
+                [f"<td class=t>{ui.when(x['created_at'])}</td>", _e(x["decided_by"]), _e(x["action"]), _e(str(x["choice"])[:200]),
+                 _e(x["confidence"]), _e(x["card_id"])] for x in dec)))
+        out += ui.section("חדשות", "<ul>" + "".join(
+            f"<li><span class=note>{_e(n['published'])} · {_e(n['publisher'])}</span> <a href='{_e(n['link'])}' target=_blank "
+            f"rel=noopener>{_e(n['title'])}</a></li>" for n in news[:8]) + "</ul>" if news else ui.empty("אין חדשות מ-Yahoo כרגע"))
+        return out
+
+    def _latest_out(self, kind: str, step: str) -> tuple[Any, dict | None]:
+        row = self.db.one("SELECT s.output, r.id, r.as_of FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE s.step = ? "
+                          "AND s.status = 'done' AND r.kind = ? ORDER BY r.started_at DESC LIMIT 1", (step, kind), ["output"])
+        return (row or {}).get("output"), row
+
+    def runs_said(self, kind: str, steps: Iterable[tuple[str, str]]) -> str:
+        """What the newest run of `kind` put out at each step: its summary text first, then the data."""
+        self._schemas()
+        text, row = self._latest_out(kind, "notify")
+        out = ""
+        if row and isinstance(text, dict) and text.get("text"):
+            out += (f"<div class=card><h3>{_e(row['as_of'])} <a class=note href='/runs/{_e(row['id'])}'>לריצה</a></h3>"
+                    f"<p style='white-space:pre-line;max-width:none'>{_e(text['text'])}</p></div>")
+        for step, he in steps:
+            o, r = self._latest_out(kind, step)
+            if o:
+                out += f"<h3>{he} <span class=note>{_e(r['as_of'])}</span></h3>" + ui.data(o)
+        return out or ui.empty("הריצה עוד לא רצה")
+
+    def macro_html(self) -> str:
+        from qt.research import report
+        d = self.report_doc()
+        out = (f"<div class=rep>{self.rep_links(report._macro(d))}</div>" if d else ui.empty("עוד אין דוח מחקר"))
+        return out + ui.section("הריצה החודשית האחרונה", self.runs_said("monthly", (
+            ("stance", "עמדת מקרו"), ("a1", "A1"), ("ism", "ISM לפי סקטור"), ("sentiment", "סנטימנט"),
+            ("calendar", "יומן אירועים"), ("season", "עונתיות"), ("exposure", "חשיפה מול תקרות"))))
+
+    def sectors_html(self) -> str:
+        from qt.research import report
+        d = self.report_doc()
+        out = (f"<div class=rep>{self.rep_links(report._sectors(d) + report._screen(d))}</div>" if d
+               else ui.empty("עוד אין דוח מחקר"))
+        return out + ui.section("הריצה השבועית האחרונה", self.runs_said("weekly", (
+            ("arena", "זירת הסקטורים"), ("revisit", "ביקור ברעיונות ישנים"), ("week", "סיכום השבוע"))))
+
+    def stale(self, as_of: str | None) -> str:
+        """The report is weekly: past 8 days the header says how old it is and why the last research did not write one."""
+        try:
+            days = (datetime.now(timezone.utc).date() - date.fromisoformat(str(as_of)[:10])).days
+        except ValueError:
+            return ""
+        if days <= 8:
+            return ""
+        out = self._latest_out("weekly", "research")[0] or {}
+        why = f": חסר {', '.join(out['skipped'])}" if isinstance(out, dict) and out.get("skipped") else ""
+        return f" · <b class=bad>בן {days} ימים, המחקר השבועי לא הפיק דוח חדש{ui.e(why)}</b>"
+
     def dashboard(self, env: dict, start: Start) -> list[bytes]:
         """The overview, in the research report's structure (Ilay, 22.10): the bottom line and what waits for Ilay,
         then the newest report (macro, sectors, screens, ideas, charts), then the book, the watchlist, the runs and
@@ -803,8 +1016,11 @@ class App:
         live = lambda k: f"<div data-live={k} class=wrap style='padding:0;width:100%'>{parts[k]}</div>"  # noqa: E731
         nav, report, as_of = self.report_parts()
         if report:
+            report = self.rep_links(report)
+            for sec, href in (("macro", "/macro"), ("sectors", "/sectors"), ("screen", "/sectors")):
+                report = re.sub(rf'(<section id="{sec}"><h2>[^<]*)', rf"\1 <a class=note href='{href}'>פתח בדף מלא ←</a>", report, count=1)
             rep = f"<div class=rep>{report}</div>"
-            sub = f"דוח המחקר האחרון: {ui.e(as_of or '')} · הפוזיציות, התור והריצות מתעדכנים לבד"
+            sub = f"דוח המחקר האחרון: {ui.e(as_of or '')}{self.stale(as_of)} · הפוזיציות, התור והריצות מתעדכנים לבד"
         else:
             rep = ui.section("דוח המחקר", ui.empty("עוד אין דוח מחקר: הריצה השבועית מפיקה אותו בשבת (צריך מפתח FRED, "
                                                    "קובץ מקרו ו-Claude), או שלח לבוט dossier.json של מחקר"), id="summary")
