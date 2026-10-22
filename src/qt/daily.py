@@ -305,6 +305,14 @@ STATUS_HE = {"opportunity": "🟢 הזדמנות: הטריגר הופעל", "rea
              "stale": "⚠️ אין נתונים"}
 
 
+def _trend(x: dict) -> str:
+    """The 078 trend columns (S08-R4): price change over a year, 3 months and since the idea was added."""
+    parts = [(lbl, x.get(k)) for lbl, k in (("שנה", "trend_1y_pct"), ("3ח׳", "trend_3m_pct"),
+                                            ("מאז ההוספה", "since_add_pct"))]
+    shown = [f"{lbl} {_f(v, 0, True)}%" for lbl, v in parts if v is not None]
+    return " · מגמה: " + ", ".join(shown) if shown else ""
+
+
 def _f(v: float | None, d: int = 2, sign: bool = False) -> str:
     return "—" if v is None else (f"{v:+.{d}f}" if sign else f"{v:.{d}f}")
 
@@ -343,6 +351,7 @@ def day_summary(ctx: RunContext) -> str:
                     if x.get("dist_to_trigger_pct") is not None and not x["triggered"] else "")
             lines.append(f"• {x['symbol']} {x['close']:.2f} ({_f(x['change_1d_pct'], 1, True)}%) · {head}{dist}"
                          f" · יחס {_f(x['rr'], 1)} · עד היעד {_f(x['potential_pct'], 0)}%"
+                         + _trend(x)
                          + (f" · {'; '.join(x['notes'])}" if x["notes"] else ""))
     elif ctx.services.get("watchlist") is None:
         lines.append("רשימת מעקב: לא נטענה (שלח watchlist.yaml לבוט)")

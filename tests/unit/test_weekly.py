@@ -233,3 +233,12 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
     st, html = call(f"/report/{rep['id']}", f"sig={sign_report(rep['id'], 'pw')}")
     assert st.startswith("200") and 'id="ideas"' in html
     assert call("/report/99999", f"sig={sign_report(99999, 'pw')}")[0].startswith("404")
+
+
+def test_watch_check_has_the_078_trend_columns():
+    """S08-R4 (078 workbook): change over a year, 3 months and since the idea was added."""
+    bars = _series(0.001)
+    c = W.check(_entry(price_at_add=bars[-1].close / 1.1), bars, AS_OF)
+    assert c.trend_1y_pct > c.trend_3m_pct > 0 and round(c.since_add_pct, 6) == 10.0
+    short = W.check(_entry(price_at_add=None), bars[-70:], AS_OF)               # ~3 months of bars, not a year
+    assert short.trend_1y_pct is None and short.trend_3m_pct > 0 and short.since_add_pct is None
