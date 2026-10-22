@@ -79,7 +79,8 @@ services:
       - key: RELOGIN_AFTER_TWOFA_TIMEOUT
         value: "yes"
       - key: EXISTING_SESSION_DETECTED_ACTION
-        value: primary                    # as on Ilay's earlier gateway: keep this session when another login appears
+        value: primaryoverride            # a deploy runs the new instance beside the old one with the same user:
+                                          # the new one takes the session (with "primary" it exits, IBC error 1100)
       - key: JAVA_HEAP_SIZE
         value: "1024"
 
