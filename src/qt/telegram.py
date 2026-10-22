@@ -126,6 +126,14 @@ class Telegram:
         self._api("setWebhook", url=url, secret_token=secret, allowed_updates=["message", "callback_query"])
 
 
+def webhook_token(secret: str) -> str:
+    """Telegram takes only A-Z, a-z, 0-9, _ and - in a webhook secret (and our /telegram/<x> route the same);
+    Render's generateValue is base64, so anything else is replaced by its sha256."""
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,256}", secret or ""):
+        return secret
+    return hashlib.sha256(secret.encode()).hexdigest() if secret else ""
+
+
 def sign_report(upload_id: int, secret: str) -> str:
     return hmac.new(secret.encode(), f"report:{upload_id}".encode(), hashlib.sha256).hexdigest()[:24]
 

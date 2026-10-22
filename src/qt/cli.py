@@ -121,6 +121,8 @@ def _webhook(args: argparse.Namespace) -> int:
     if bot is None or not secret or not base:
         print("need TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_WEBHOOK_SECRET and the public URL")
         return 1
+    from qt.telegram import webhook_token
+    secret = webhook_token(secret)
     bot.set_webhook(f"{base.rstrip('/')}/telegram/{secret}", secret)
     print("webhook set")
     return 0
