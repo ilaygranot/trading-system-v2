@@ -15,9 +15,11 @@
 
 1. ב-Render: New → Blueprint → בוחרים את הריפו `trading-system-v2`. Render קורא את `render.yaml`.
 2. Render מבקש את הערכים שמסומנים `sync: false`, **פעם אחת בלבד**:
-   - ב-`qt-web`: `ANTHROPIC_API_KEY`, `FRED_API_KEY`, `FMP_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_PASSWORD`.
+   - ב-`qt-web`: `ANTHROPIC_API_KEY` או `CLAUDE_CODE_OAUTH_TOKEN` (אחד מהם, השני נשאר ריק), `FRED_API_KEY`, `FMP_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_PASSWORD`.
      ארבע משימות ה-cron מעתיקות אותם מ-`qt-web` לבד.
    - ב-`qt-ibgateway`: `TWS_USERID`, `TWS_PASSWORD`.
+   הסוכנים רצים על `ANTHROPIC_API_KEY` אם הוא מלא. אחרת הם רצים על `CLAUDE_CODE_OAUTH_TOKEN`, המנוי שלך ב-Claude, דרך Claude Code.
+   הטוקן נוצר במחשב שלך עם `claude setup-token`. ה-build מתקין את Claude Code לבד, בגרסה נעולה.
    `TELEGRAM_WEBHOOK_SECRET` נוצר לבד, והכתובת הציבורית של `qt-web` עוברת ל-cron לבד.
 3. אחרי שה-web עלה: Shell של `qt-web` → `qt set-webhook`. מעכשיו הכפתורים בטלגרם עובדים.
 4. שולחים לבוט את קובץ התיק `portfolio.yaml` (מבנה כמו `examples/portfolio.yaml`). הבוט עונה "התיק עודכן".

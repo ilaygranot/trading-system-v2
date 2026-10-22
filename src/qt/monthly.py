@@ -355,7 +355,7 @@ def summary(ctx: RunContext) -> str:
     elif a.get("error"):
         lines.append(f"A1 לא השלים: {a['error']}")
     else:
-        lines.append("A1 לא רץ (אין מפתח Anthropic): העמדה היא של הקוד בלבד")
+        lines.append("A1 לא רץ (אין חיבור ל-Claude): העמדה היא של הקוד בלבד")
     se = ctx.out("sectors") or {}
     if se.get("changes"):
         moves = [f"{e} {CHANGE_HE[v['change']]}" for e, v in se["changes"].items() if v["change"] != "unchanged"]
