@@ -22,7 +22,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-qt = ["policy.yaml", "agents/*.yaml", "agents/*.md"]
+qt = ["policy.yaml", "status.yaml", "agents/*.yaml", "agents/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

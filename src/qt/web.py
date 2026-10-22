@@ -21,26 +21,8 @@ from qt.db import DB
 
 Start = Callable[[str, list[tuple[str, str]]], Any]
 
-CSS = """body{font-family:system-ui,sans-serif;max-width:960px;margin:0 auto;padding:16px;background:#fafafa;color:#222}
-table{border-collapse:collapse;width:100%;margin:8px 0 24px}td,th{border-bottom:1px solid #ddd;padding:6px;text-align:start;
-vertical-align:top;font-size:14px}pre{white-space:pre-wrap;background:#fff;border:1px solid #ddd;padding:8px;font-size:13px}
-.failed{color:#b00}.done{color:#070}form{display:inline}button{margin:2px}
-.up{color:#070}.down{color:#b00}.num{text-align:end;font-variant-numeric:tabular-nums}.muted{color:#888;font-size:13px}
-.cards{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 16px}.card{border:1px solid #ddd;padding:6px 10px;border-radius:6px}
-.card b{display:block;font-size:18px}.wrap{overflow-x:auto}nav a{margin-inline-end:12px}
-@media (prefers-color-scheme:dark){body{background:#161616;color:#ddd}pre{background:#222;border-color:#444}td,th{border-color:#333}
-.card{border-color:#333}.up{color:#5c5}.down{color:#f66}}"""
-
-# Live refresh (runtime plan 7.1): the page re-reads its own fragment every REFRESH_S seconds while it is visible,
-# and swaps it in, so positions, the queue and the runs stay current without a reload.
-REFRESH_S = 30
-LIVE_JS = """<script>(function(){var el=document.getElementById('live'),st=document.getElementById('stamp');
-function tick(){if(document.visibilityState!=='visible')return;
-var u=location.pathname+(location.search?location.search+'&':'?')+'fragment=1';
-fetch(u,{credentials:'same-origin',cache:'no-store'}).then(function(r){if(!r.ok)throw r.status;return r.text()})
-.then(function(t){el.innerHTML=t;st.textContent='עודכן '+new Date().toLocaleTimeString('he-IL');st.className='muted'})
-.catch(function(){st.textContent='אין חיבור לשרת, מנסה שוב';st.className='down'})}
-setInterval(tick,%d*1000);document.addEventListener('visibilitychange',tick)})()</script>"""
+from qt import webui as ui
+from qt.webui import REFRESH_S  # noqa: F401 - kept for callers
 
 
 def _n(v: Any, d: int = 2) -> str:
@@ -72,6 +54,7 @@ class App:
         self._resume = resume
         self._prices = prices
         self._db: DB | None = None
+        self._gw: tuple[float, tuple[str | None, str]] | None = None
 
     # ------------------------------------------------------------ plumbing
     @property
@@ -128,18 +111,16 @@ class App:
         start(status, [("Content-Type", ctype), *headers])
         return [body.encode()]
 
-    def _page(self, start: Start, title: str, body: str) -> list[bytes]:
-        return self._send(start, "200 OK", f"<!doctype html><html lang=he dir=rtl><meta charset=utf-8>"
-                          f"<meta name=viewport content='width=device-width,initial-scale=1'><title>{_e(title)}</title>"
-                          f"<style>{CSS}</style><h1>{_e(title)}</h1>{body}</html>")
+    def _page(self, start: Start, title: str, body: str, active: str = "", nav_q: str = "") -> list[bytes]:
+        return self._send(start, "200 OK", ui.page(title, body, active, nav_q=nav_q))
 
-    def _live(self, env: dict, start: Start, title: str, body: str) -> list[bytes]:
+    def _live(self, env: dict, start: Start, title: str, body: Callable[[], str] | str,
+              active: str = "") -> list[bytes]:
         """A page that refreshes itself; with ?fragment=1 only the refreshing part (what the script fetches)."""
+        body = body() if callable(body) else body
         if "fragment" in parse_qs(env.get("QUERY_STRING", "")):
             return self._send(start, "200 OK", body, headers=[("Cache-Control", "no-store")])
-        nav = "<nav><a href='/'>לוח בקרה</a><a href='/positions'>פוזיציות</a><a href='/journal'>יומן</a></nav>"
-        return self._page(start, title, f"{nav}<p id=stamp class=muted>מתעדכן כל {REFRESH_S} שניות</p>"
-                                        f"<div id=live>{body}</div>" + LIVE_JS % REFRESH_S)
+        return self._send(start, "200 OK", ui.page(title, body, active, live=True))
 
     def _deny(self, start: Start) -> list[bytes]:
         return self._send(start, "401 Unauthorized", "auth required", "text/plain",
@@ -168,7 +149,17 @@ class App:
             if path == "/" and method == "GET":
                 return self.dashboard(env, start)
             if path == "/positions" and method == "GET":
-                return self._live(env, start, "פוזיציות פתוחות", self.positions_html())
+                return self._live(env, start, "פוזיציות פתוחות", self.positions_html, "/positions")
+            if path == "/runs" and method == "GET":
+                return self._live(env, start, "ריצות", self.runs_html, "/runs")
+            m = re.fullmatch(r"/runs/([\w.-]+)", path)
+            if m and method == "GET":
+                return self._live(env, start, f"ריצה {m.group(1)}", lambda: self.run_html(m.group(1)), "/runs")
+            if path == "/system" and method == "GET":
+                return self._live(env, start, "מצב המערכת", self.system_html, "/system")
+            if path == "/api/status" and method == "GET":
+                return self._send(start, "200 OK", json.dumps(self.status(), ensure_ascii=False, default=str),
+                                  "application/json; charset=utf-8", [("Cache-Control", "no-store")])
             if path == "/api/positions" and method == "GET":
                 return self._send(start, "200 OK", json.dumps(self.positions(), ensure_ascii=False, default=str),
                                   "application/json; charset=utf-8", [("Cache-Control", "no-store")])
@@ -230,15 +221,16 @@ class App:
         it = q.get(item_id)
         if it is None:
             return self._send(start, "404 Not Found", "not found", "text/plain")
-        body = f"<pre>{_e(item_text(it))}</pre>"
+        body = ui.section("ההודעה", f"<pre style='direction:rtl;text-align:right;font-family:var(--body);font-size:.95rem'>"
+                                    f"{_e(item_text(it))}</pre>")
         if it.get("decision_id"):
             d = q.journal.get(it["decision_id"])
             if d:
-                body += "<h2>יומן ההחלטות</h2><pre>" + _e(json.dumps(d, ensure_ascii=False, indent=1, default=str)) + "</pre>"
+                body += ui.section("יומן ההחלטות", "<pre>" + _e(json.dumps(d, ensure_ascii=False, indent=1, default=str)) + "</pre>")
         ag = (it["payload"] or {}).get("agent")
         if ag:
-            body += "<h2>Agent ובודק</h2><pre>" + _e(json.dumps(ag, ensure_ascii=False, indent=1)) + "</pre>"
-        body += "<h2>הפריט</h2><pre>" + _e(json.dumps(it, ensure_ascii=False, indent=1, default=str)) + "</pre>"
+            body += ui.section("Agent ובודק", "<pre>" + _e(json.dumps(ag, ensure_ascii=False, indent=1)) + "</pre>")
+        body += ui.section("הפריט", "<pre>" + _e(json.dumps(it, ensure_ascii=False, indent=1, default=str)) + "</pre>")
         return self._page(start, f"פריט #{item_id}", body)
 
     def report(self, env: dict, start: Start, upload_id: int) -> list[bytes]:
@@ -271,17 +263,17 @@ class App:
         names = {"trades": "עסקאות", "ideas": "רעיונות כניסה ומה קרה איתם", "equity": "Equity יומי"}
         body = ""
         for name, (rows, cols) in t.items():
-            head = "".join(f"<th>{_e(h)}</th>" for _, h in cols)
-            trs = "".join("<tr>" + "".join(f"<td>{_e('' if r.get(k) is None else r.get(k))}</td>" for k, _ in cols)
-                          + "</tr>" for r in rows)
-            body += (f"<h2>{names[name]} ({len(rows)})</h2><p><a href='/journal/{name}.csv{q}'>הורדה כ-CSV</a></p>"
-                     f"<div style='overflow-x:auto'><table><tr>{head}</tr>{trs}</table></div>")
-        return self._page(start, "יומן המסחר", body)
+            tbl = (ui.table((_e(h) for _, h in cols), ([_e(r.get(k)) for k, _ in cols] for r in rows)) if rows
+                   else ui.empty("עוד אין שורות"))
+            body += ui.section(f"{names[name]} ({len(rows)})",
+                               f"<p class=note><a href='/journal/{name}.csv{q}'>הורדה כ-CSV</a> לאקסל או ל-Google Sheets</p>"
+                               + tbl)
+        return self._page(start, "יומן המסחר", body, "/journal", q)
 
     def decide(self, env: dict, start: Start, item_id: int, choice: str) -> list[bytes]:
         form = parse_qs(self._body(env).decode())
         note = (form.get("note") or [""])[0]
-        back = "/positions" if (form.get("back") or [""])[0] == "positions" else "/"
+        back = {"positions": "/positions"}.get((form.get("back") or [""])[0], "/")
         try:
             Queue(self.db).decide(item_id, choice, note)
         except NotOpen as e:
@@ -305,94 +297,392 @@ class App:
                           if p.get("instrument", "stock") == "stock"})
         return snapshot(pf, self.prices(symbols), q.open_orders())
 
-    def positions_html(self) -> str:
-        s = self.positions()
-        if not s["has_portfolio"]:
-            return "<h2>פוזיציות פתוחות</h2><p>עוד אין תיק: שלח לבוט קובץ portfolio.yaml.</p>"
-        cards = "".join(f"<div class=card>{t}<b>{v}</b></div>" for t, v in (
-            ("שווי תיק", _n(s["equity"], 0)), ("מזומן", _n(s["cash"], 0)),
-            ("רווח/הפסד פתוח", _signed(s["unrealized"], 0)), ("רווח ממומש", _signed(s["realized"], 0)),
-            ("לונג / שורט", f"{_n(s['long_value'], 0)} / {_n(s['short_value'], 0)}"),
-            ("ירידה מהשיא", _signed(s["drawdown_pct"], 1, "%"))))
-        rows = "".join(
-            f"<tr><td><b>{_e(p['symbol'])}</b></td><td>{'לונג' if p['direction'] == 'long' else 'שורט'}</td>"
-            f"<td>{_e(p['sector'])}</td><td class=num>{_n(p['qty'], 0)}</td><td class=num>{_n(p['entry'])}</td>"
-            f"<td class=num>{_n(p['last']) if p['priced'] else '<span class=muted>אין מחיר</span>'}</td>"
-            f"<td class=num>{_signed(p['pl'], 0)}</td><td class=num>{_signed(p['pl_pct'], 2, '%')}</td>"
-            f"<td class=num>{_n(p['stop'])}</td><td class=num>{_n(p['stop_dist_pct'], 1)}{'%' if p['stop_dist_pct'] is not None else ''}</td>"
-            f"<td class=num>{_n(p['target'])}</td><td class=num>{_n(p['weight_pct'], 1)}%</td><td>{_e(p['opened'])}</td></tr>"
-            for p in s["positions"])
-        body = (f"<h2>פוזיציות פתוחות ({len(s['positions'])})</h2><div class=cards>{cards}</div>"
-                f"<div class=wrap><table><tr><th>מניה</th><th>כיוון</th><th>סקטור</th><th>כמות</th><th>כניסה</th>"
-                f"<th>מחיר</th><th>רו\"ה $</th><th>רו\"ה %</th><th>סטופ</th><th>מרחק לסטופ</th><th>יעד</th><th>משקל</th>"
-                f"<th>נפתחה</th></tr>{rows}</table></div>")
-        if s["pending"]:
-            body += ("<h3>ממתינות לביצוע בפתיחה</h3><table><tr><th>מניה</th><th>סוג</th><th>כמות</th><th>בפתיחת</th></tr>"
-                     + "".join(f"<tr><td>{_e(o['symbol'])}</td><td>{_e(o['kind'])}</td><td class=num>{_e(o['qty'])}</td>"
-                               f"<td>{_e(o['fill_on'])}</td></tr>" for o in s["pending"]) + "</table>")
-        return self.ready_html(s) + body + "<p class=muted>מחירים מ-Yahoo (בעיכוב), נשמרים לדקה. התיק: תיק הנייר אחרי הריצה היומית האחרונה.</p>"
+    # ------------------------------------------------------------ live pages
+    KINDS = (("daily", "יומית"), ("premarket", "לפני פתיחה"), ("weekly", "שבועית"), ("monthly", "חודשית"))
+
+    def _schemas(self) -> Queue:
+        from qt.runs import SCHEMA
+        self.db.ddl(SCHEMA)
+        return Queue(self.db)
+
+    @staticmethod
+    def run_state(r: dict | None) -> tuple[str, str]:
+        """(dot / pill class, Hebrew) for a run row."""
+        if r is None:
+            return "", "עוד לא רצה"
+        if r["status"] == "done":
+            return "ok", "הושלמה"
+        if r["status"] == "running":
+            return "warn", "רצה עכשיו"
+        if "manual macro" in str(r.get("error") or ""):
+            return "warn", "מחכה לקובץ מקרו"
+        return "bad", "נכשלה"
+
+    def gateway(self) -> tuple[str | None, str]:
+        """Is IB Gateway reachable (a TCP connect to the API port, cached a minute). Read-only: nothing is sent."""
+        import socket
+        import time
+        now = time.monotonic()
+        if self._gw is not None and now - self._gw[0] < 60:
+            return self._gw[1]
+        host, port = os.environ.get("IBKR_HOST"), os.environ.get("IBKR_PORT", "4004")
+        if not host:
+            res: tuple[str | None, str] = (None, "לא מוגדר בשירות הזה")
+        else:
+            try:
+                socket.create_connection((host, int(port)), timeout=1.5).close()
+                res = ("ok", "עונה · paper, קריאה בלבד")
+            except OSError:
+                res = ("bad", "לא עונה")
+        self._gw = (now, res)
+        return res
+
+    def costs(self) -> dict:
+        now = datetime.now(timezone.utc)
+        month = (now - timedelta(days=30)).isoformat(timespec="seconds")
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+        tot = self.db.one("SELECT COALESCE(SUM(cost_usd), 0) AS c, COUNT(*) AS n FROM agent_calls WHERE created_at >= ?",
+                          (month,))
+        day = self.db.one("SELECT COALESCE(SUM(cost_usd), 0) AS c FROM agent_calls WHERE created_at >= ?", (today,))
+        by = self.db.all("SELECT agent, COALESCE(SUM(cost_usd), 0) AS c, COUNT(*) AS n FROM agent_calls "
+                         "WHERE created_at >= ? GROUP BY agent ORDER BY c DESC", (month,))
+        return {"month": float(tot["c"] or 0), "calls": int(tot["n"] or 0), "today": float(day["c"] or 0),
+                "by_agent": [{"agent": r["agent"], "cost": float(r["c"] or 0), "calls": int(r["n"])} for r in by]}
+
+    def status(self) -> dict:
+        """Everything the overview shows, as data (also /api/status)."""
+        from qt.schedule import next_run
+        q = self._schemas()
+        runs = {}
+        for k, _ in self.KINDS:
+            r = self.db.one("SELECT * FROM runs WHERE kind = ? ORDER BY started_at DESC LIMIT 1", (k,))
+            nxt = next_run(k)
+            runs[k] = {"last": r, "state": self.run_state(r), "next": nxt.isoformat() if nxt else None}
+        try:
+            book: dict | None = self.positions()
+        except Exception as e:                                          # noqa: BLE001 - the rest of the page stands
+            print(json.dumps({"level": "error", "path": "/positions", "error": f"{type(e).__name__}: {e}"}), flush=True)
+            book = None
+        return {"runs": runs, "queue": q.open_items(), "gateway": self.gateway(), "costs": self.costs(), "book": book}
+
+    # ---- pieces
+    def item_card(self, i: dict, equity: float | None, back: str = "") -> str:
+        """One queue item: what the system proposes, the numbers, and the buttons. An entry gets the one big
+        "open position" button: approving makes the paper order, filled at the next open and written to the book."""
+        from qt.telegram import KIND
+        p = i["payload"] or {}
+        icon, name = KIND.get(i["kind"], ("•", i["kind"]))
+        qty, entry, stop = p.get("qty"), p.get("price") or i.get("ref_price"), p.get("stop")
+        risk = qty * abs(entry - stop) if qty and entry and stop else None
+        facts = (("כיוון", ("לונג" if p.get("direction", "long") == "long" else "שורט") if i["kind"] in ("enter", "add") else ""),
+                 ("כמות", _n(qty, 0)), ("כניסה", _n(entry)), ("סטופ", _n(stop)), ("יעד", _n(p.get("target"))),
+                 ("סכום", _n(qty * entry, 0) if qty and entry else ""),
+                 ("סיכון", f"{_n(risk, 0)}$" + (f" ({risk / equity * 100:.2f}%)" if equity else "") if risk else ""))
+        hidden = f"<input type=hidden name=back value={back}>" if back else ""
+        if i["kind"] in ("enter", "add"):
+            buttons = (("approve", "✅ פתח פוזיציה", " class=go"), ("reject", "❌ דחה", ""))
+        else:
+            buttons = (("approve", "✅ אשר", " class=go"), ("reject", "❌ דחה", ""), ("postpone", "⏸ מחר", ""))
+        st = {"changed": ui.pill("השתנה מאז ההצעה", "warn"), "postponed": ui.pill("נדחה למחר", "mute")}.get(i["status"], "")
+        return (f"<div class=card><h3>{icon} {_e(i['symbol'] or '')} · {_e(name)} {st} "
+                f"<a class=note href='/item/{i['id']}'>#{i['id']}</a></h3>"
+                f"<div class=facts>" + "".join(f"<span>{t} <b>{v}</b></span>" for t, v in facts if v) + "</div>"
+                + (f"<p>{_e(p.get('detail'))}</p>" if p.get("detail") else "")
+                + f"<p class=note>{_e(i['rule_id'])} · בתוקף עד {ui.when(i['valid_until'])} (שעון ישראל)"
+                + ("; אישור יוצר פקודת נייר שתתבצע בפתיחה הבאה" if i["kind"] in ("enter", "add") else "") + "</p>"
+                + "<div class=acts>" + "".join(f"<form method=post action='/item/{i['id']}/{c}'>{hidden}<button{cls}>{t}"
+                                                f"</button></form>" for c, t, cls in buttons) + "</div></div>")
 
     def ready_html(self, s: dict) -> str:
-        """Entries the system prepared (a watchlist opportunity the daily run queued: size, stop, target) with the one
-        button that opens them: approving makes the paper order, filled at the next open and written to the book."""
+        """Entries the system prepared (a watchlist opportunity the daily run queued: size, stop, target)."""
         ready = [i for i in Queue(self.db).open_items() if i["kind"] in ("enter", "add")]
         if not ready:
             return ""
-        out = f"<h2>מוכנות לפתיחה ({len(ready)})</h2>"
-        for i in ready:
-            p = i["payload"]
-            qty, entry, stop = p.get("qty"), p.get("price") or i["ref_price"], p.get("stop")
-            risk = qty * abs(entry - stop) if qty and entry and stop else None
-            facts = (("כיוון", "לונג" if p.get("direction", "long") == "long" else "שורט"), ("כמות", _n(qty, 0)),
-                     ("כניסה", _n(entry)), ("סטופ", _n(stop)), ("יעד", _n(p.get("target"))),
-                     ("סכום", _n(qty * entry, 0) if qty and entry else ""),
-                     ("סיכון", f"{_n(risk, 0)}$" + (f" ({risk / s['equity'] * 100:.2f}%)" if risk and s.get("equity") else "")
-                      if risk else ""))
-            out += (f"<div class=card><b>{_e(i['symbol'])} · <a href='/item/{i['id']}'>#{i['id']}</a></b>"
-                    + " · ".join(f"{t} {v}" for t, v in facts if v)
-                    + f"<p>{_e(p.get('detail'))}</p><p class=muted>בתוקף עד {_e(str(i['valid_until'])[:16].replace('T', ' '))} UTC; "
-                    f"אישור יוצר פקודת נייר שתתבצע בפתיחה הבאה</p>"
-                    f"<form method=post action='/item/{i['id']}/approve'><input type=hidden name=back value=positions>"
-                    f"<button style='font-size:16px;padding:6px 14px'>✅ פתח פוזיציה</button></form>"
-                    f"<form method=post action='/item/{i['id']}/reject'><input type=hidden name=back value=positions>"
-                    f"<button>❌ דחה</button></form></div>")
+        return ui.section(f"מוכנות לפתיחה ({len(ready)})", "<div class=cards>"
+                          + "".join(self.item_card(i, s.get("equity"), "positions") for i in ready) + "</div>")
+
+    @staticmethod
+    def book_strip(s: dict) -> str:
+        dd = s["drawdown_pct"]
+        return "<div class=strip>" + "".join((
+            ui.cell(f"{_n(s['equity'], 0)}$", "שווי התיק", big=True),
+            ui.cell(f"{_n(s['cash'], 0)}$" if s["cash"] is not None else "", "מזומן", big=True),
+            ui.cell(_signed(s["unrealized"], 0), "רווח/הפסד פתוח", big=True),
+            ui.cell(_signed(s["realized"], 0), "רווח ממומש", big=True),
+            ui.cell(f"{_n(s['long_value'], 0)} / {_n(s['short_value'], 0)}", "לונג / שורט", big=True),
+            ui.cell(_signed(dd, 1, "%") if dd else "0.0%", "ירידה מהשיא", big=True))) + "</div>"
+
+    @staticmethod
+    def book_table(s: dict) -> str:
+        if not s["positions"]:
+            return ui.empty("אין פוזיציות פתוחות: התיק כולו במזומן")
+        return ui.table(
+            ("מניה", "כיוון", "סקטור", "כמות", "כניסה", "מחיר", "רו\"ה $", "רו\"ה %", "סטופ", "מרחק לסטופ", "יעד",
+             "משקל", "נפתחה"),
+            ([f"<b>{_e(p['symbol'])}</b>", ui.pill("לונג", "ok") if p["direction"] == "long" else ui.pill("שורט", "bad"),
+              _e(p["sector"]), f"<td class=num>{_n(p['qty'], 0)}</td>", f"<td class=num>{_n(p['entry'])}</td>",
+              f"<td class=num>{_n(p['last']) if p['priced'] else '<span class=muted>אין מחיר</span>'}</td>",
+              f"<td class=num>{_signed(p['pl'], 0)}</td>", f"<td class=num>{_signed(p['pl_pct'], 2, '%')}</td>",
+              f"<td class=num>{_n(p['stop'])}</td>",
+              f"<td class=num>{_n(p['stop_dist_pct'], 1)}{'%' if p['stop_dist_pct'] is not None else ''}</td>",
+              f"<td class=num>{_n(p['target'])}</td>", f"<td class=num>{_n(p['weight_pct'], 1)}%</td>",
+              f"<td class=t>{_e(p['opened'])}</td>"] for p in s["positions"]))
+
+    @staticmethod
+    def pending_table(s: dict) -> str:
+        if not s["pending"]:
+            return ""
+        return ("<h3>ממתינות לביצוע בפתיחה</h3>"
+                + ui.table(("מניה", "סוג", "כמות", "בפתיחת"),
+                           ([f"<b>{_e(o['symbol'])}</b>", _e(o["kind"]), f"<td class=num>{_e(o['qty'])}</td>",
+                             f"<td class=t>{_e(o['fill_on'])}</td>"] for o in s["pending"])))
+
+    def positions_html(self) -> str:
+        s = self.positions()
+        if not s["has_portfolio"]:
+            return ui.section("פוזיציות פתוחות", ui.empty("עוד אין תיק: שלח לבוט קובץ portfolio.yaml."))
+        return (self.ready_html(s)
+                + ui.section(f"פוזיציות פתוחות ({len(s['positions'])})",
+                             self.book_strip(s) + self.book_table(s) + self.pending_table(s)
+                             + "<p class=note>מחירים מ-Yahoo (בעיכוב), נשמרים לדקה. התיק: תיק הנייר אחרי הריצה היומית האחרונה.</p>"))
+
+    def run_li(self, r: dict) -> str:
+        cls, text = self.run_state(r)
+        kind = dict(self.KINDS).get(r["kind"], r["kind"])
+        resume = (f"<form method=post action='/runs/{_e(r['id'])}/resume'><button>▶️ המשך ריצה</button></form>"
+                  if r["status"] == "failed" else "")
+        err = f"<p class=note>{_e(str(r['error'])[:240])}</p>" if r.get("error") else ""
+        dur = ui.duration(r["started_at"], r["finished_at"])
+        return (f"<li class={cls}><span class=d>{ui.when(r['started_at'])} · as of {_e(r['as_of'])}</span>"
+                f"<b>{kind}</b> {ui.pill(text, cls)}"
+                + (f" <span class=note>· {dur}</span>" if dur else "")
+                + (f" <span class=note>· {r['resumes']} המשכים</span>" if r.get("resumes") else "")
+                + f" <a class=note href='/runs/{_e(r['id'])}'>פירוט</a>{err}{resume}</li>")
+
+    def schedule_table(self, st: dict | None = None) -> str:
+        from qt.schedule import _r
+        rt = _r()
+        texts = self.status_doc().get("runs", {})
+        ny_at = {"daily": rt.daily_at, "premarket": rt.premarket_at, "weekly": f"שבת {rt.weekly_at}",
+                 "monthly": f"שבת בימים {rt.monthly_days[0]}–{rt.monthly_days[1]}, {rt.weekly_at}"}
+        runs = (st or {}).get("runs") or {}
+        if not runs:
+            from qt.schedule import next_run
+            runs = {k: {"next": (lambda n: n.isoformat() if n else None)(next_run(k))} for k, _ in self.KINDS}
+        return ui.table(("ריצה", "ניו יורק", "הבאה (ישראל)", "מה קורה"),
+                        ([f"<b>{he}</b>", f"<td class=t>{_e(ny_at[k])}</td>",
+                          f"<td class=t>{ui.when(runs[k]['next'])}<br><span class=note>{ui.ago(runs[k]['next'])}</span></td>",
+                          _e(texts.get(k, ""))] for k, he in self.KINDS))
+
+    def overview_html(self) -> str:
+        st = self.status()
+        s, items, costs = st["book"], st["queue"], st["costs"]
+        equity = s.get("equity") if s else None
+        # the verdict: what needs Ilay, how the last daily run went, what runs next
+        daily = st["runs"]["daily"]
+        cls, text = daily["state"]
+        lines = [f"<strong>{len(items)} פריטים מחכים לך</strong>" if items else "אין כרגע פריטים שמחכים לך."]
+        if daily["last"]:
+            d = daily["last"]
+            lines.append(f"הריצה היומית האחרונה ({_e(d['as_of'])}) {ui.pill(text, cls)} "
+                         f"{ui.ago(d['finished_at'] or d['started_at'])}.")
+        upcoming = sorted(((v["next"], k) for k, v in st["runs"].items() if v["next"]))
+        if upcoming:
+            n, k = upcoming[0]
+            lines.append(f"הריצה הבאה: {dict(self.KINDS)[k]}, {ui.when(n)} ({ui.ago(n)}).")
+        body = "<div class=verdict>" + "".join(f"<p>{x}</p>" for x in lines) + "</div>"
+        # the status strip
+        gw_state, gw_text = st["gateway"]
+        cells = [ui.cell(f"ריצה {he}", f"{st['runs'][k]['state'][1]} {ui.ago((st['runs'][k]['last'] or {}).get('finished_at') or (st['runs'][k]['last'] or {}).get('started_at'))}"
+                         f" · הבאה {ui.when(st['runs'][k]['next'])}", st["runs"][k]["state"][0])
+                 for k, he in self.KINDS]
+        cells.append(ui.cell("IB Gateway", gw_text, gw_state or ""))
+        if s and s["has_portfolio"]:
+            cells.append(ui.cell(f"{_n(equity, 0)}$", f"שווי התיק · פתוח {_signed(s['unrealized'], 0)}", "ok"))
+        else:
+            cells.append(ui.cell("תיק", "לא הצלחתי לטעון את התיק" if s is None else "עוד אין תיק", "bad" if s is None else "warn"))
+        cells.append(ui.cell(f"Agents {costs['month']:.2f}$", f"30 יום · היום {costs['today']:.2f}$"))
+        body += "<div class=strip aria-label='מצב השירותים'>" + "".join(cells) + "</div>"
+        # what waits for Ilay
+        body += ui.section(f"מחכה לך ({len(items)})", "<div class=cards>" + "".join(
+            self.item_card(i, equity) for i in items) + "</div>" if items else ui.empty("אין כרגע פריטים בתור."))
+        # the book
+        if s is None:
+            body += ui.section("פוזיציות פתוחות", "<p class=failed>לא הצלחתי לטעון את התיק</p>")
+        elif not s["has_portfolio"]:
+            body += ui.section("פוזיציות פתוחות", ui.empty("עוד אין תיק: שלח לבוט קובץ portfolio.yaml."))
+        else:
+            body += ui.section(f"פוזיציות פתוחות ({len(s['positions'])})", self.book_strip(s) + self.book_table(s)
+                               + self.pending_table(s) + "<p class=note><a href='/positions'>למסך הפוזיציות</a></p>")
+        # runs
+        runs = self.db.all("SELECT * FROM runs ORDER BY started_at DESC LIMIT 8")
+        body += ui.section("ריצות", ("<ol class=timeline>" + "".join(self.run_li(r) for r in runs) + "</ol>"
+                                     if runs else ui.empty("עוד לא היו ריצות"))
+                           + "<p class=note><a href='/runs'>כל הריצות</a></p>")
+        # paper orders and warnings side by side
+        orders = self.db.all("SELECT * FROM paper_orders ORDER BY id DESC LIMIT 10")
+        otbl = ui.table(("מניה", "סוג", "כמות", "בפתיחת", "מצב", "מחיר"), (
+            [f"<b>{_e(o['symbol'])}</b>", _e(o["kind"]), f"<td class=num>{_e(o['qty'])}</td>", f"<td class=t>{_e(o['fill_on'])}</td>",
+             ui.pill({"filled": "בוצעה", "open": "ממתינה", "cancelled": "בוטלה"}.get(o["status"], o["status"]),
+                     {"filled": "ok", "open": "warn"}.get(o["status"], "mute")),
+             f"<td class=num>{_n(o['fill_price'])}</td>"] for o in orders)) if orders else ui.empty("עוד אין עסקאות נייר")
+        ev = self.db.all("SELECT * FROM run_events WHERE level IN ('warn', 'error') ORDER BY id DESC LIMIT 8")
+        etbl = ("<ol class=timeline>" + "".join(
+            f"<li class={'bad' if x['level'] == 'error' else 'warn'}><span class=d>{ui.when(x['at'])} · {_e(x['step'])}</span>"
+            f"{_e(x['message'])} <a class=note href='/runs/{_e(x['run_id'])}'>לריצה</a></li>" for x in ev) + "</ol>"
+                if ev else ui.empty("אין התראות"))
+        body += f"<div class=two>{ui.section('עסקאות נייר', otbl)}{ui.section('התראות מהריצות', etbl)}</div>"
+        # the decision journal
+        dec = self.db.all("SELECT * FROM decisions ORDER BY id DESC LIMIT 10", (), ["deviations"])
+        body += ui.section("החלטות אחרונות", ui.table(("מתי", "מי", "על מה", "פעולה", "החלטה", "ביטחון", "כרטיס"), (
+            [f"<td class=t>{ui.when(d['created_at'])}</td>", _e(d["decided_by"]), f"<b>{_e(d['subject'])}</b>",
+             _e(d["action"]), _e(str(d["choice"])[:160]), _e(d["confidence"]), _e(d["card_id"])] for d in dec))
+            + "<p class=note><a href='/journal'>ליומן המסחר המלא</a></p>" if dec else ui.empty("עוד אין החלטות ביומן"))
+        # reports and files, agent cost
+        reps = self.db.all("SELECT id, name, created_at FROM uploads WHERE kind = 'report' ORDER BY id DESC LIMIT 5")
+        files = []
+        for kind, he in (("portfolio", "תיק / ספר נייר"), ("watchlist", "רשימת מעקב"), ("manual_macro", "קובץ מקרו ידני")):
+            u = self.db.one("SELECT name, created_at FROM uploads WHERE kind = ? ORDER BY id DESC LIMIT 1", (kind,))
+            files.append(f"<li><b>{he}</b>: " + (f"{_e(u['name'])} <span class=note>{ui.when(u['created_at'])}</span>"
+                                                 if u else "<span class=note>עוד לא התקבל</span>") + "</li>")
+        rep = ("<ul>" + "".join(f"<li><a href='/report/{r['id']}'>{_e(r['name'])}</a> <span class=note>"
+                                f"{ui.when(r['created_at'])}</span></li>" for r in reps) + "</ul>"
+               if reps else ui.empty("הדוח השבועי הראשון יגיע אחרי הריצה השבועית"))
+        top = max((a["cost"] for a in costs["by_agent"]), default=0) or 1
+        bars = ("<div class=bars>" + "".join(
+            f"<div><span>{_e(a['agent'])}</span><i style='width:{max(a['cost'] / top * 100, 1):.0f}%'></i>"
+            f"<span class=num>{a['cost']:.2f}$</span></div>" for a in costs["by_agent"]) + "</div>"
+                if costs["by_agent"] else ui.empty("אין קריאות ל-Agents ב-30 הימים האחרונים"))
+        cost = (f"<p><b>{costs['month']:.2f}$</b> ב-30 יום, {costs['calls']} קריאות. היום {costs['today']:.2f}$.</p>"
+                + bars + "<p class=note>הערכה לפי מחיר API. בפועל רץ על המנוי.</p>")
+        files_html = rep + "<h3>הקבצים האחרונים</h3><ul>" + "".join(files) + "</ul>"
+        body += f"<div class=two>{ui.section('דוחות וקבצים', files_html)}{ui.section('עלות Agents', cost)}</div>"
+        body += ui.section("לוח זמנים", self.schedule_table(st)
+                           + "<p class=note>לפי שעון ניו יורק, בימי מסחר בלבד. כשהשעון בישראל ובארה\"ב זז בתאריכים שונים, השעה בישראל זזה בהתאם.</p>")
+        return body
+
+    def runs_html(self) -> str:
+        self._schemas()
+        runs = self.db.all("SELECT * FROM runs ORDER BY started_at DESC LIMIT 60")
+        if not runs:
+            return ui.empty("עוד לא היו ריצות")
+        rows = []
+        for r in runs:
+            cls, text = self.run_state(r)
+            rows.append([f"<a href='/runs/{_e(r['id'])}'><b>{dict(self.KINDS).get(r['kind'], _e(r['kind']))}</b></a>",
+                         f"<td class=t>{_e(r['as_of'])}</td>", ui.pill(text, cls),
+                         f"<td class=t>{ui.when(r['started_at'])}</td>", f"<td class=t>{ui.duration(r['started_at'], r['finished_at'])}</td>",
+                         _e(r["resumes"]), f"<span class=note>{_e(str(r['error'] or '')[:200])}</span>",
+                         f"<form method=post action='/runs/{_e(r['id'])}/resume'><button>▶️ המשך</button></form>"
+                         if r["status"] == "failed" else ""])
+        return ui.section(f"{len(runs)} הריצות האחרונות", ui.table(
+            ("ריצה", "as of", "מצב", "התחילה", "משך", "המשכים", "שגיאה", ""), rows))
+
+    def run_html(self, run_id: str) -> str:
+        self._schemas()
+        r = self.db.one("SELECT * FROM runs WHERE id = ?", (run_id,))
+        if r is None:
+            return ui.empty("אין ריצה כזאת")
+        cls, text = self.run_state(r)
+        body = "<div class=strip>" + "".join((
+            ui.cell(dict(self.KINDS).get(r["kind"], _e(r["kind"])), f"as of {_e(r['as_of'])}"),
+            ui.cell(text, f"{r['resumes']} המשכים", cls),
+            ui.cell(ui.when(r["started_at"]), "התחילה"),
+            ui.cell(ui.duration(r["started_at"], r["finished_at"]) or "…", "משך"))) + "</div>"
+        if r.get("error"):
+            body += f"<div class=verdict><p class=down>{_e(r['error'])}</p>" + (
+                f"<form method=post action='/runs/{_e(r['id'])}/resume'><button class=go>▶️ המשך ריצה</button></form>"
+                if r["status"] == "failed" else "") + "</div>"
+        steps = self.db.all("SELECT step, subject, seq, status, started_at, finished_at, attempts, error FROM run_steps "
+                            "WHERE run_id = ? ORDER BY seq, subject", (run_id,))
+        body += ui.section(f"שלבים ({len(steps)})", ui.table(("#", "שלב", "על", "מצב", "משך", "ניסיונות", "שגיאה"), (
+            [f"<td class=num>{x['seq']}</td>", f"<b>{_e(x['step'])}</b>", _e(x["subject"]),
+             ui.pill(*{"done": ("הושלם", "ok"), "failed": ("נכשל", "bad")}.get(x["status"], (x["status"], "warn"))),
+             f"<td class=t>{ui.duration(x['started_at'], x['finished_at'])}</td>", _e(x["attempts"]),
+             f"<span class=note>{_e(str(x['error'] or '')[:300])}</span>"] for x in steps)) if steps else ui.empty("אין שלבים"))
+        ev = self.db.all("SELECT * FROM run_events WHERE run_id = ? ORDER BY id", (run_id,))
+        body += ui.section(f"אירועים ({len(ev)})", ("<ol class=timeline>" + "".join(
+            f"<li class={ {'error': 'bad', 'warn': 'warn'}.get(x['level'], '') }><span class=d>{ui.when(x['at'])} · {_e(x['step'])}</span>"
+            f"{_e(x['message'])}</li>" for x in ev) + "</ol>") if ev else ui.empty("אין אירועים"))
+        calls = self.db.all("SELECT agent, model, step, subject, cost_usd, duration_ms, valid, critic, created_at "
+                            "FROM agent_calls WHERE run_id = ? ORDER BY id", (run_id,))
+        if calls:
+            body += ui.section(f"קריאות ל-Agents ({len(calls)})", ui.table(
+                ("Agent", "מודל", "שלב", "על", "עלות", "זמן", "תקין", "בודק"),
+                ([f"<b>{_e(c['agent'])}</b>", f"<span class=mono>{_e(c['model'])}</span>", _e(c["step"]), _e(c["subject"]),
+                  f"<td class=num>{(c['cost_usd'] or 0):.3f}$</td>", f"<td class=num>{(c['duration_ms'] or 0) / 1000:.0f}s</td>",
+                  ui.pill("כן", "ok") if c["valid"] else ui.pill("לא", "bad"), _e(str(c["critic"] or "")[:160])] for c in calls)))
+        return body
+
+    # ---- the system status page (status.yaml plus live checks)
+    @staticmethod
+    def status_doc() -> dict:
+        import yaml
+        from pathlib import Path
+        return yaml.safe_load((Path(__file__).parent / "status.yaml").read_text(encoding="utf-8")) or {}
+
+    def system_checks(self) -> dict[str, tuple[str, str]]:
+        """The waiting-for-Ilay lines the system can check itself: (state, what it found)."""
+        from qt.app import waiting_monthly
+        q = self._schemas()
+        out: dict[str, tuple[str, str]] = {}
+        pf = self.db.one("SELECT name, created_at FROM uploads WHERE kind = 'portfolio' AND name NOT LIKE ? "
+                         "ORDER BY id DESC LIMIT 1", ("book-%",))
+        start = os.environ.get("QT_START_EQUITY")
+        out["portfolio"] = (("ok", f"נשלח {ui.when(pf['created_at'])} ({_e(pf['name'])})") if pf else
+                            ("warn", "לא נשלח" + (f": הספר מתחיל ב-{float(start):,.0f}$ במזומן" if start else "")))
+        out["fred"] = ("ok", "מוגדר") if os.environ.get("FRED_API_KEY") else ("bad", "חסר")
+        mac = q.latest_upload("manual_macro")
+        this_month = datetime.now(ui.IL).strftime("%Y-%m")
+        if waiting_monthly(self.db):
+            out["macro"] = ("bad", "הריצה החודשית מחכה לו")
+        elif mac and ui.parse(mac["created_at"]) and ui.parse(mac["created_at"]).astimezone(ui.IL).strftime("%Y-%m") == this_month:
+            out["macro"] = ("ok", f"התקבל {ui.when(mac['created_at'])}")
+        else:
+            out["macro"] = ("warn", "עוד לא התקבל החודש")
         return out
 
+    def system_html(self) -> str:
+        doc = self.status_doc()
+        checks = self.system_checks()
+        body = (f"<div class=eyebrow>עודכן ביד ב-{_e(doc.get('updated'))} · החלקים החיים מתעדכנים לבד</div>"
+                f"<div class=verdict><p>{_e(doc.get('lead'))}</p></div>")
+        gw_state, gw_text = self.gateway()
+        st = {k: self.run_state(self.db.one("SELECT * FROM runs WHERE kind = ? ORDER BY started_at DESC LIMIT 1", (k,)))
+              for k, _ in self.KINDS}
+        body += "<div class=strip>" + "".join(
+            [ui.cell("qt-web", "הבוט, ה-webhook ולוח הבקרה", "ok"),
+             *(ui.cell(f"ריצה {he}", st[k][1], st[k][0]) for k, he in self.KINDS),
+             ui.cell("qt-db", "Postgres עם גיבוי יומי" if self.db.pg else "SQLite מקומי", "ok"),
+             ui.cell("qt-ibgateway", gw_text, gw_state or ""),
+             ui.cell("Agents", "על המנוי שלך דרך Claude Code", "ok")]) + "</div>"
+        body += ui.section("מה קרה עד עכשיו", "<ol class=timeline>" + "".join(
+            f"<li><span class=d>{_e(x['d'])}</span><b>{_e(x['t'])}.</b> {_e(x['x'])}</li>" for x in doc.get("timeline", []))
+            + "</ol>")
+        flow = "<i>←</i>".join(f"<span>{_e(x)}</span>" for x in doc.get("flow", []))
+        body += ui.section("איך זה עובד", self.schedule_table()
+                           + f"<h3>המסלול של פריט אחד</h3><div class=flow>{flow}</div><p class=note>{_e(doc.get('flow_note'))}</p>")
+        names = {"ok": "נבנה", "warn": "חלקי", "bad": "חסר"}
+        body += ui.section("מה נבנה", ui.table(("מה תכננו", "מצב", "הערה"), (
+            [_e(x["what"]), ui.pill(names[x["state"]], x["state"]), _e(x.get("note"))] for x in doc.get("built", [])))
+            + f"<p class=note>{_e(doc.get('out_of_scope'))}</p>")
+        wait = []
+        for x in doc.get("waiting", []):
+            state, found = checks.get(x.get("check"), (x.get("state", "warn"), ""))
+            wait.append(f"<li><span class='dot {state}'></span><b>{_e(x['t'])}</b>"
+                        + (f" {ui.pill(found, state)}" if found else "") + f" {_e(x['x'])}</li>")
+        body += ui.section("מחכה להחלטה או לפעולה שלך", "<ul>" + "".join(wait) + "</ul>")
+        body += ui.section("עוד לא נבדק על נתונים אמיתיים",
+                           "<ul>" + "".join(f"<li>{_e(x)}</li>" for x in doc.get("untested", [])) + "</ul>")
+        body += ui.section("סיכונים שכדאי לדעת", "<ul>" + "".join(
+            f"<li><b>{_e(x['t'])}.</b> {_e(x['x'])}</li>" for x in doc.get("risks", [])) + "</ul>")
+        body += ui.section("הצעדים הבאים", "<ol class=steps>" + "".join(
+            f"<li><div><b>{_e(x['t'])}</b><span class=who>{_e(x['who'])}</span><span class=note>{_e(x['x'])}</span></div></li>"
+            for x in doc.get("next", [])) + "</ol>")
+        return body
+
     def dashboard(self, env: dict, start: Start) -> list[bytes]:
-        from qt.runs import SCHEMA
-        self.db.ddl(SCHEMA)
-        q = Queue(self.db)
-        try:
-            body = self.positions_html()
-        except Exception as e:                                          # noqa: BLE001 - the rest of the page stands
-            print(json.dumps({"level": "error", "path": "/positions", "error": f"{type(e).__name__}: {e}"}), flush=True)
-            body = "<h2>פוזיציות פתוחות</h2><p class=failed>לא הצלחתי לטעון את התיק</p>"
-        runs = self.db.all("SELECT * FROM runs ORDER BY started_at DESC LIMIT 15")
-        rows = "".join(
-            f"<tr><td>{_e(r['id'])}</td><td class={_e(r['status'])}>{_e(r['status'])}</td><td>{_e(r['resumes'])}</td>"
-            f"<td>{_e(r['error'])}</td><td>" + (f"<form method=post action='/runs/{_e(r['id'])}/resume'>"
-                                              f"<button>המשך ריצה</button></form>" if r["status"] == "failed" else "")
-            + "</td></tr>" for r in runs)
-        body += f"<h2>ריצות</h2><table><tr><th>ריצה</th><th>מצב</th><th>המשכים</th><th>שגיאה</th><th></th></tr>{rows}</table>"
-        items = q.open_items()
-        irows = "".join(
-            f"<tr><td><a href='/item/{i['id']}'>#{i['id']}</a></td><td>{_e(i['as_of'])}</td><td>{_e(i['symbol'])}</td>"
-            f"<td>{_e(i['kind'])} · {_e(i['rule_id'])}</td><td>{_e(i['status'])}</td><td>{_e(i['payload'].get('detail'))}</td><td>"
-            + "".join(f"<form method=post action='/item/{i['id']}/{c}'><button>{t}</button></form>"
-                      for c, t in (("approve", "✅ אשר"), ("reject", "❌ דחה"), ("postpone", "⏸ מחר")))
-            + "</td></tr>" for i in items)
-        body += (f"<h2>תור פתוח ({len(items)})</h2><table><tr><th></th><th>יום</th><th>מניה</th><th>מה</th><th>מצב</th>"
-                 f"<th>פירוט</th><th></th></tr>{irows}</table>")
-        orders = self.db.all("SELECT * FROM paper_orders ORDER BY id DESC LIMIT 20")
-        orows = "".join(f"<tr><td>{_e(o['symbol'])}</td><td>{_e(o['kind'])}</td><td>{_e(o['qty'])}</td>"
-                        f"<td>{_e(o['fill_on'])}</td><td>{_e(o['status'])}</td><td>{_e(o['fill_price'])}</td></tr>"
-                        for o in orders)
-        body += (f"<h2>עסקאות נייר</h2><table><tr><th>מניה</th><th>סוג</th><th>כמות</th><th>בפתיחת</th><th>מצב</th>"
-                 f"<th>מחיר</th></tr>{orows}</table>")
-        month = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(timespec="seconds")
-        cost = self.db.one("SELECT COALESCE(SUM(cost_usd), 0) AS c FROM agent_calls WHERE created_at >= ?", (month,))
-        body += f"<p>עלות Agents ב-30 הימים האחרונים: {float(cost['c'] or 0):.2f}$</p>"
-        return self._live(env, start, "Quantum Trader · לוח בקרה", body)
+        return self._live(env, start, "לוח בקרה", self.overview_html, "/")
 
 
 _APP: App | None = None
