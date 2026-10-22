@@ -393,7 +393,7 @@ def _funnel(d: dict) -> str:
         sp = " · ".join(f"{E(COLOR_HE.get(k, BUCKET_HE.get(k, k)))} {v}" for k, v in split.items())
         rows.append(f'<li><b>{f["n"]:,}</b> {E(f["label"])}{f" <small>({sp})</small>" if sp else ""}</li>')
     return (f'<section id="funnel"><h2>המשפך</h2><div class="split"><div>{funnel_svg(d["funnel"])}</div>'
-            f'<ol class="funnel-list">{"".join(rows)}</ol></div></section>')
+            f'<ol class="funnel-list">{"".join(rows)}</ol></div>{_selection(d)}</section>')
 
 
 FED_STATE_HE = {
@@ -606,37 +606,46 @@ def _screen(d: dict) -> str:
                    f'<td class="n">{num(t["adr"], 1, True)}</td><td>{"נבחר" if t["sym"] in d["ideas"] else "לא נבחר"}</td></tr>')
     out.append('</tbody></table></div><p class="note">R:R לשיא מחושב עם k=4 מול השיא של 8 שנים. זה סינון ראשוני בלבד: '
                'היעד הסופי נבחר בניתוח העמוק מבין שלושת מקורות הקורס.</p>')
-    out.append(_selection(d))
-    out.append('</section>')
+    out.append('<p class="note">מי נותח לעומק ולמה אחרים דולגו: <a href="#funnel">בפרק המשפך</a>.</p></section>')
     return "".join(out)
 
 
 SELECT_HE = {"all": "כולם עברו, כי מספרם לא עובר את התקרה",
-             "ranked": "ה-Agent דירג לפי כרטיס DC-09 ועברו הראשונים עד התקרה",
-             "code_order": "ה-Agent לא הכריע, ועברו הראשונים לפי סדר הקוד (פרופיל, ירוק לפני כתום, R:R לשיא)"}
+             "ranked": "ה-Agent דירג לפי כרטיס DC-09",
+             "code_order": "ה-Agent לא הכריע, והסדר הוא של הקוד (פרופיל, ירוק לפני כתום, R:R לשיא)"}
 
 
 def _selection(d: dict) -> str:
-    """Who of the green and orange stocks went on to the deep dive, and the rule that chose them (DC-09)."""
-    ok = [t for t in d["timing"] if not t.get("error") and t.get("combined") in ("green", "orange")]
-    left = [t for t in ok if t["sym"] not in d["ideas"]]
+    """Who of the green and orange stocks went on to the deep dive, and why each one left out was (DC-09). A green
+    stock with neither is flagged: the run refuses it since 22.10, so it shows only on an older dossier."""
+    from qt.research.judge import MAX_DEEP, MIN_DEEP, candidates, unexplained_greens
+    ok = candidates(d["timing"])
     a3 = (d.get("judgments") or {}).get("A3") or {}
-    if a3:
-        rule = (f'הכלל (כרטיס DC-09): ירוק או כתום, ועד {a3["cap"]} מניות לניתוח עומק. '
-                f'בריצה הזו {a3["candidates"]} מועמדים: {SELECT_HE.get(a3.get("mode"), a3.get("mode", ""))}.')
-        if a3.get("why"):
-            rule += f' הנימוק: {a3["why"]}'
-        if a3.get("cut_by_budget"):
-            rule += f' נעצרו בגלל תקציב ה-Agents: {", ".join(a3["cut_by_budget"])}.'
-    else:
-        rule = (f'הכלל (כרטיס DC-09): ירוק או כתום, ועד תקרה של מניות לניתוח עומק. בריצה הזו הבחירה נעשתה ידנית '
-                f'({d["meta"].get("judged_by", "")}), והנימוק לבחירה לא נשמר.')
-    greens = [t["sym"] for t in left if t["combined"] == "green"]
+    skipped = a3.get("skipped") if isinstance(a3.get("skipped"), dict) else {}
+    n_in = sum(1 for t in ok if t["sym"] in d["ideas"])
+    rule = (f'הכלל (כרטיס DC-09): ירוק או כתום. עד {a3.get("cap", MAX_DEEP)} מועמדים כולם עוברים; מעבר לזה מדורגים ועוברים '
+            f'{MIN_DEEP} עד {a3.get("cap", MAX_DEEP)}. מניה ירוקה עוברת תמיד, אלא אם דולגה עם נימוק כתוב. אדום לא עובר.')
+    out = [(f'<h3>מי עבר לניתוח עומק</h3><p class="note">{E(rule)} בריצה הזו {n_in} מתוך {len(ok)} ירוקים וכתומים נותחו'
+            f'{"; " + E(SELECT_HE.get(a3["mode"], a3["mode"])) if a3.get("mode") else ""}.'
+            f'{" " + E(a3["why"]) if a3.get("why") else ""}</p>')]
+    if a3.get("cut_by_budget"):
+        out.append(f'<p class="note">נעצרו בגלל תקציב ה-Agents: {E(", ".join(a3["cut_by_budget"]))}.</p>')
+    rows = [t for t in ok if t["sym"] in skipped]
+    if rows:
+        rows.sort(key=lambda t: (t["combined"] != "green", t["sym"]))
+        out.append('<div class="tbl"><table><thead><tr><th>מניה</th><th>סקטור</th><th>משולב</th><th>למה לא נותחה</th>'
+                   '</tr></thead><tbody>')
+        out += [(f'<tr><td><b>{E(t["sym"])}</b></td><td>{E(t["etf"])}</td><td>{pill(t["combined"])}</td>'
+                 f'<td>{E(skipped[t["sym"]])}</td></tr>') for t in rows]
+        out.append('</tbody></table></div>')
+    missing = unexplained_greens(d["timing"], set(d["ideas"]), skipped)
+    if missing:
+        out.append(f'<p class="note"><b>חסר:</b> מניות ירוקות שלא נותחו ואין נימוק למה: {E(", ".join(missing))}. '
+                   'מאז 22.10 ריצה כזו נעצרת.</p>')
     reds = [t["sym"] for t in d["timing"] if t["sym"] in d["ideas"] and t.get("combined") not in ("green", "orange")]
-    tail = (f' ירוקים שלא נבחרו: {", ".join(greens)}.' if greens else '')
-    tail += (f' נותחו גם מחוץ לכלל (לא ירוק או כתום): {", ".join(reds)}.' if reds else '')
-    return (f'<p class="note"><b>מי עבר לניתוח עומק:</b> {E(rule)} {len(ok) - len(left)} מתוך {len(ok)} ירוקים וכתומים נבחרו.'
-            f'{E(tail)}</p>')
+    if reds:
+        out.append(f'<p class="note">נותחו גם מחוץ לכלל (לא ירוק או כתום): {E(", ".join(reds))}.</p>')
+    return "".join(out)
 
 
 def _idea(i: dict, checks: list[dict] | None = None) -> str:

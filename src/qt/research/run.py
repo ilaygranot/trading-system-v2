@@ -27,6 +27,7 @@ from qt.calc import trade as T
 from qt.calc.volatility import adr
 from qt.policy import load_policy
 from qt.research import idea, macro_stage, sector_screen, universe as U, verify
+from qt.research.judge import candidates, unexplained_greens
 from qt.research.yahoo import Yahoo, raw
 from qt.sectors import cycle_phase
 from qt.timing import candidate_levels, snapshot
@@ -268,6 +269,9 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
             y, u, screens, sym, etf, dr, j, bias, buckets, as_of)))
     else:
         J = yaml.safe_load(judgments_path.read_text()) if judgments_path and judgments_path.exists() else {}
+    missing = unexplained_greens(timing, set(J.get("ideas") or {}), (J.get("A3") or {}).get("skipped"))
+    if missing:                                         # Ilay 22.10: a green stock is analysed or skipped with a reason
+        raise ValueError(f"green stocks with no deep dive and no reason under A3.skipped: {', '.join(missing)}")
     ideas = {}
     for sym, j in (J.get("ideas") or {}).items():
         etf = j["etf"]
@@ -279,7 +283,7 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
 
     surv = sum(len(s["long"]) + len(s["short"]) for s in screens.values())
     in_sectors = sum(s["n"] for s in screens.values())
-    n_ok = sum(1 for t in timing if not t.get("error") and t.get("combined") in ("green", "orange"))
+    n_ok = len(candidates(timing))
     funnel = [
         dict(stage="universe", label="יקום: מניות ארה\"ב בבורסות NYSE/NASDAQ מעל רצפת השווי", n=len(u["quotes"])),
         dict(stage="sectors", label=f"בסקטורים שנבחרו ({', '.join(sectors['long'] + sectors['short'])})", n=in_sectors),

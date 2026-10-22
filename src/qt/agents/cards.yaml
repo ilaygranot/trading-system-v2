@@ -14,7 +14,9 @@ DC-06: {agent: A2, options: [sector_tag, override_defensive, override_cyclical],
 DC-07: {agent: A2, options: [priority, cyclical_hedge, avoid, no_tag], undecided: no_tag, approval: journal}
 DC-08: {agent: A3, options: ["no", long, short, watch_only], undecided: watch_only, approval: flag}
 DC-09: {agent: A3, options: [ranked], undecided: code_order, approval: journal,
-        extra: {ranked: {type: array, items: {type: string}}, skipped: {type: array, items: {type: string}}}}
+        extra: {ranked: {type: array, items: {type: string}},
+                skipped: {type: array, description: "Every candidate left out, with its own reason in Hebrew. A green stock left out without one goes on anyway (Ilay 22.10).",
+                          items: {type: object, properties: {sym: {type: string}, reason: {type: string}}, required: [sym, reason], additionalProperties: false}}}}
 DC-10: {agent: A4, options: [momentum_long, momentum_short, growth_to_profit, turnaround, value_trap, bubble, stagnation, unclear],
         undecided: closest_low_confidence, approval: journal}
 DC-11: {agent: A4, options: [justified, unjustified, unclear], undecided: unclear, approval: journal,
