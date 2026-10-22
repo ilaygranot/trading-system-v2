@@ -13,6 +13,7 @@ import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs
 
@@ -23,6 +24,13 @@ Start = Callable[[str, list[tuple[str, str]]], Any]
 
 from qt import webui as ui
 from qt.webui import REFRESH_S  # noqa: F401 - kept for callers
+
+# The files that make the dashboard an installable app (22.10), served without the login: no data in them.
+STATIC = {"/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+          "/sw.js": ("sw.js", "text/javascript; charset=utf-8"),
+          "/icon-192.png": ("icon-192.png", "image/png"), "/icon-512.png": ("icon-512.png", "image/png"),
+          "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"), "/favicon.png": ("favicon.png", "image/png"),
+          "/favicon.ico": ("favicon.png", "image/png")}
 
 
 def _n(v: Any, d: int = 2) -> str:
@@ -106,10 +114,10 @@ class App:
         return env["wsgi.input"].read(min(n, 2_000_000)) if n else b""
 
     @staticmethod
-    def _send(start: Start, status: str, body: str, ctype: str = "text/html; charset=utf-8",
+    def _send(start: Start, status: str, body: str | bytes, ctype: str = "text/html; charset=utf-8",
               headers: Iterable[tuple[str, str]] = ()) -> list[bytes]:
         start(status, [("Content-Type", ctype), *headers])
-        return [body.encode()]
+        return [body if isinstance(body, bytes) else body.encode()]
 
     def _page(self, start: Start, title: str, body: str, active: str = "", nav_q: str = "") -> list[bytes]:
         return self._send(start, "200 OK", ui.page(title, body, active, nav_q=nav_q))
@@ -132,6 +140,10 @@ class App:
         try:
             if path == "/health":
                 return self._send(start, "200 OK", "ok", "text/plain")
+            if path in STATIC and method == "GET":                     # the installed app's files: public, no data
+                return self.static(start, path)
+            if path == "/offline" and method == "GET":
+                return self._send(start, "200 OK", ui.offline())
             m = re.fullmatch(r"/telegram/([\w-]+)", path)
             if m and method == "POST":
                 return self.telegram(env, start, m.group(1))
@@ -178,6 +190,13 @@ class App:
             return self._send(start, "500 Internal Server Error", "error", "text/plain")
 
     # ------------------------------------------------------------ handlers
+    def static(self, start: Start, path: str) -> list[bytes]:
+        name, ctype = STATIC[path]
+        data = (Path(__file__).parent / "static" / name).read_bytes()
+        # the service worker must be re-checked on each visit, so a new version reaches the phone after a deploy
+        cache = "no-cache" if name == "sw.js" else "public, max-age=86400"
+        return self._send(start, "200 OK", data, ctype, [("Cache-Control", cache)])
+
     def telegram(self, env: dict, start: Start, secret: str) -> list[bytes]:
         header = env.get("HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN", "")
         if not self.webhook_secret or not (hmac.compare_digest(secret, self.webhook_secret)
@@ -618,7 +637,6 @@ class App:
     @staticmethod
     def status_doc() -> dict:
         import yaml
-        from pathlib import Path
         return yaml.safe_load((Path(__file__).parent / "status.yaml").read_text(encoding="utf-8")) or {}
 
     def system_checks(self) -> dict[str, tuple[str, str]]:

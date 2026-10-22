@@ -1,0 +1,23 @@
+{
+  "name": "Quantum Trader",
+  "short_name": "Quantum",
+  "description": "לוח הבקרה של מערכת המסחר: מה מחכה לך, פוזיציות, ריצות ומצב המערכת",
+  "lang": "he",
+  "dir": "rtl",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f7f8",
+  "theme_color": "#0f5f73",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "פוזיציות", "url": "/positions", "icons": [{"src": "/icon-192.png", "sizes": "192x192"}]},
+    {"name": "ריצות", "url": "/runs", "icons": [{"src": "/icon-192.png", "sizes": "192x192"}]}
+  ]
+}
