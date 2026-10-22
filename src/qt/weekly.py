@@ -204,6 +204,38 @@ def merge_watchlist(old: dict | None, new: dict) -> dict:
     return {**new, "entries": list(out.values())}
 
 
+# What the agents do not write in v1 (judge.py: A1 gives DC-01..DC-04, A2 is not in v1): the last research's text stays,
+# marked with its date, so the report never shows less than the one before it.
+CARRY = {"A1": ("story", "fed", "events"), "A2": None}
+
+
+def carry_forward(d: dict, prev_upload: dict | None) -> None:
+    import json
+    try:
+        prev = json.loads(prev_upload["content"]) if prev_upload else None
+    except ValueError:
+        prev = None
+    if not prev:
+        return
+    PJ, J = prev.get("judgments") or {}, d.setdefault("judgments", {})
+    when = (PJ.get("carried") or {}).get("from") or (prev.get("meta") or {}).get("as_of")
+    carried = []
+    for agent, keys in CARRY.items():
+        old = PJ.get(agent) or {}
+        if keys is None:
+            if old and not J.get(agent):
+                J[agent] = old
+                carried.append(agent)
+            continue
+        new = J.setdefault(agent, {})
+        for k in keys:
+            if old.get(k) and not new.get(k):
+                new[k] = old[k]
+                carried.append(f"{agent}.{k}")
+    if carried:
+        J["carried"] = {"from": when, "what": carried}
+
+
 def _run_research(as_of: date, judge, manual_text: str, fred) -> dict:
     from qt.research import run as R
     work = Path(os.environ.get("QT_WORK_DIR", "/tmp/qt-research")) / as_of.isoformat()
@@ -233,6 +265,7 @@ def research(ctx: RunContext, _: str) -> dict:
     finally:
         runner.limit_usd = prev
     d = json.loads(json.dumps(d, default=str))
+    carry_forward(d, q.latest_upload("dossier"))
     html = report.render(d)
     rid = q.upload("report", f"report-{ctx.as_of.isoformat()}.html", "<!doctype html><meta charset=utf-8>" + html)
     q.upload("dossier", f"dossier-{ctx.as_of.isoformat()}.json", json.dumps(d, ensure_ascii=False))  # the dashboard

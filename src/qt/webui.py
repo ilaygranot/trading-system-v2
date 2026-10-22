@@ -331,3 +331,52 @@ def duration(a: Any, b: Any) -> str:
         return ""
     s = int((tb - ta).total_seconds())
     return f"{s} שנ'" if s < 90 else f"{s // 60} דק'" if s < 5400 else f"{s // 3600} שע' {s % 3600 // 60} דק'"
+
+
+def sym(symbol: Any) -> str:
+    """A ticker that opens its stock page."""
+    return f"<a href='/stock/{e(symbol)}'>{e(symbol)}</a>" if symbol else ""
+
+
+def data(obj: Any, depth: int = 0) -> str:
+    """Any run output (dicts, lists of rows, scalars) as tables a person can read: a list of flat dicts is a table,
+    a dict is label / value rows, anything nested goes one level down."""
+    if isinstance(obj, dict):
+        if not obj:
+            return "<span class=note>ריק</span>"
+        rows = [[f"<b>{e(LABELS.get(k, k))}</b>", data(v, depth + 1) if isinstance(v, (dict, list)) and depth < 3 else e(_fmt(v))]
+                for k, v in obj.items()]
+        return table(("שדה", "ערך"), rows)
+    if isinstance(obj, list):
+        if obj and all(isinstance(x, dict) for x in obj):
+            cols = list(dict.fromkeys(k for x in obj for k in x))[:14]
+            return table((e(LABELS.get(c, c)) for c in cols), ([e(_fmt(x.get(c))) if not isinstance(x.get(c), (dict, list))
+                                                 else data(x.get(c), depth + 1) for c in cols] for x in obj[:200]))
+        return e(", ".join(_fmt(x) for x in obj))
+    return e(_fmt(obj))
+
+
+# Hebrew labels for the fields the runs put out (the watchlist and its daily check, most of all)
+LABELS = {"symbol": "מניה", "direction": "כיוון", "etf": "סקטור", "bucket": "סטטוס במחקר", "added": "נוסף", "trigger_kind": "סוג טריגר",
+          "trigger_level": "טריגר", "k": "k (רוחב עצירה ב-ADR)", "target": "יעד", "target_source": "מקור היעד",
+          "invalidate_level": "רמת ביטול", "time_stop": "עצירת זמן", "next_earnings": "דוח הבא", "first_size_pct": "גודל ראשון %",
+          "price_at_add": "מחיר בהוספה", "tldr": "בקצרה", "close": "סגירה", "change_1d_pct": "שינוי יומי %",
+          "dist_to_trigger_pct": "מרחק לטריגר %", "triggered": "הטריגר הופעל", "invalidated": "בוטל", "expired": "פג",
+          "stop": "עצירה", "rr": "יחס סיכוי-סיכון", "rr_ok": "יחס מעל המינימום", "potential_pct": "עד היעד %",
+          "potential_at_add_pct": "עד היעד בהוספה %", "days_on_list": "ימים ברשימה", "review_day60": "יום 60: לבדוק",
+          "earnings_in_days": "ימים לדוח", "boiling": "רותחת", "status": "מצב", "notes": "הערות", "held": "בתיק",
+          "trend_1y_pct": "מגמה שנה %", "trend_3m_pct": "מגמה 3 חודשים %", "since_add_pct": "מאז ההוספה %",
+          "sym": "מניה", "profile": "פרופיל", "stock": "רמזור מניה", "sector": "רמזור סקטור", "market": "רמזור שוק",
+          "combined": "רמזור משולב", "sources": "מקורות", "rr_extreme": "R:R לשיא", "adr": "ADR %"}
+
+
+def _fmt(v: Any) -> str:
+    if v is True:
+        return "כן"
+    if v is False:
+        return "לא"
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        return f"{v:,.2f}"
+    return str(v)

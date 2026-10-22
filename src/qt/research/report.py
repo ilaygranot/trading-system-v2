@@ -403,12 +403,18 @@ FED_STATE_HE = {
 }
 
 
-def _fed(f: dict, j: dict) -> str:
+def _was(d: dict, what: str) -> str:
+    """A part the agents did not write this time and that stays from an earlier research (weekly.carry_forward)."""
+    c = (d.get("judgments") or {}).get("carried") or {}
+    return f' · מהמחקר של {E(c.get("from") or "")}' if what in (c.get("what") or []) else ""
+
+
+def _fed(f: dict, j: dict, was: str = "") -> str:
     """The Fed scale (S02) in words: what the 10 points measure, and the judgment's reading of the stance."""
     comp_he = {"ffr_down": "הריבית נמוכה משנה שעברה", "m2_above_trend": "כמות הכסף (M2) מעל המגמה",
                "balance_sheet_up": "מאזן הפד גדל"}
     comps = " · ".join(f'{"✓" if v else "✗"} {comp_he.get(k, k)}' for k, v in (f.get("components") or {}).items())
-    out = ['<div class="fed-box"><h3>עמדת הפד</h3>']
+    out = [f'<div class="fed-box"><h3>עמדת הפד{f" <small>{was[3:]}</small>" if was and j.get("headline") else ""}</h3>']
     if j.get("headline"):
         out.append(f'<p class="big">{E(j["headline"])}</p>')
     out.append(f'<p><b>סולם הפד בקוד: {f.get("points")}/{f.get("max")}, {E(T(f.get("period")))}.</b> הסולם מודד את '
@@ -450,11 +456,11 @@ def _macro(d: dict) -> str:
     out.append("</div>")
     events = J.get("events") or []
     if J.get("story"):
-        out.append('<div class="judgment"><div class="j-tag">מה קורה, במילים פשוטות · A1</div>'
+        out.append('<div class="judgment"><div class="j-tag">מה קורה, במילים פשוטות · A1' + _was(d, "A1.story") + '</div>'
                    + "".join(f"<p>{E(x)}</p>" for x in J["story"]) + "</div>")
-    out.append(_fed(st["fed"], J.get("fed") or {}))
+    out.append(_fed(st["fed"], J.get("fed") or {}, _was(d, "A1.fed")))
     if events:
-        out.append('<h3>מה קרה: האירועים שהזיזו את הגרפים</h3><ol class="events">')
+        out.append('<h3>מה קרה: האירועים שהזיזו את הגרפים' + (f' <small>{_was(d, "A1.events")[3:]}</small>' if _was(d, "A1.events") else "") + '</h3><ol class="events">')
         for k, ev in enumerate(events, 1):
             srcs = " · ".join(src_link(x["url"], x["title"]) for x in ev.get("sources", []))
             out.append(f'<li><span class="ev-badge">{k}</span><div><time>{E(ev["date"])}</time> <b>{E(ev["title"])}</b>. '
@@ -466,7 +472,8 @@ def _macro(d: dict) -> str:
         c = J.get(card)
         if c:
             out.append(f'<p><b>{title} ({card}): {E(T(c.get("choice")))}</b>. {E(c.get("why", ""))}</p>')
-    for n in J.get("notes", []):
+    notes = J.get("notes") or []
+    for n in [notes] if isinstance(notes, str) else notes:
         out.append(f'<p class="muted">• {E(n)}</p>')
     out.append("</div>")
     # activity scale
@@ -563,7 +570,7 @@ def _sectors(d: dict) -> str:
         out.append(f'<li class="{st}"><b>{E(k)}</b> {E(T(v))} · {"מסכים" if st == "agree" else "סותר"} את השלב</li>')
     out.append("</ul>")
     if J:
-        out.append('<div class="judgment"><div class="j-tag">שיקול דעת · A2</div>')
+        out.append('<div class="judgment"><div class="j-tag">שיקול דעת · A2' + _was(d, "A2") + '</div>')
         for k, v in (J.get("notes") or {}).items():
             out.append(f'<p><b>{E(k)}</b>: {E(v)}</p>')
         if J.get("pairs"):
