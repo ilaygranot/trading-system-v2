@@ -57,3 +57,16 @@ def due(kind: str, now_utc: datetime | None = None) -> tuple[bool, date]:
         lo, hi = r.monthly_days
         return t.weekday() == 5 and lo <= t.day <= hi and _in_window(t, r.weekly_at), as_of
     raise ValueError(kind)
+
+
+def next_run(kind: str, now_utc: datetime | None = None) -> datetime | None:
+    """When `kind` is next due (New York time), for the dashboard's schedule. Walks the days ahead with due()."""
+    r = _r()
+    at = {"daily": r.daily_at, "premarket": r.premarket_at, "weekly": r.weekly_at, "monthly": r.weekly_at}[kind]
+    h, m = map(int, at.split(":"))
+    t = ny(now_utc)
+    for i in range(45):
+        cand = (t + timedelta(days=i)).replace(hour=h, minute=m, second=0, microsecond=0)
+        if cand > t and due(kind, cand.astimezone(timezone.utc))[0]:
+            return cand
+    return None
