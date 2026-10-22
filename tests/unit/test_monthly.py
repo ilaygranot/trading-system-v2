@@ -112,6 +112,15 @@ def test_daily_flags_a_cap_breach(db):
     assert len(flags) == 1 and flags[0]["payload"]["detail"].startswith("long exposure")
 
 
+def test_caps_default_to_policy():
+    """Ilay's caps (22.10) apply when the portfolio file has none, e.g. the all-cash start book."""
+    from qt.policy import load_policy
+    assert dict(load_policy().exposure.caps) == {"long_max": 1.0, "short_max": 0.3, "net_max": 0.9}
+    pf = {"cash": -2_000, "positions": [{"symbol": "A", "direction": "long", "qty": 100, "entry": 100.0}]}
+    ex = MO.exposure_now(pf, {"A": 100.0})
+    assert ex["caps"]["long_max"] == 1.0 and ex["over"] == ["long", "net"]
+
+
 # ------------------------------------------------------------------ the run
 
 def _manual():
@@ -146,7 +155,7 @@ def test_monthly_run_end_to_end(db):
     prep = bot.sent[-2]
     for s in ("הכנה חודשית", "A1 על המקרו: DC-01 hot", "XLK משתפרות", "נרות החודש", "XLK", "ISM: 2 תעשיות צומחות",
               "עונתיות החודש", "10-15 CPI", "10-28 החלטת ריבית (FOMC)", "10-29 דוח ABC", "11-06 תעסוקה",
-              "אין תקרות", "NAAIM"):
+              "נטו 0.00/0.9", "NAAIM"):
         assert s in prep, s
     assert len(prep) < 4096 and len(bot.sent[-2]) < 4096
 

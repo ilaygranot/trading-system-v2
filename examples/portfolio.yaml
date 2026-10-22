@@ -2,7 +2,7 @@
 cash: 108500                     # after buying MSFT (12,000) and shorting BA (+20,500) from 100,000
 peak_equity: 100000
 portfolio_stop_triggered: false
-# caps: {long_max: 1.0, short_max: 0.3, net_max: 0.9}   # D-S11-7: yours to set, as a share of equity
+# caps: {long_max: 1.0, short_max: 0.3, net_max: 0.9}   # D-S11-7, share of equity; without it, policy.yaml exposure.caps
 positions:
   - {symbol: BA, direction: short, sector: XLI, qty: 100, entry: 205.0, entry_stop: 220.0, stop: 220.0}
   - {symbol: MSFT, direction: long, sector: XLK, qty: 40, entry: 300.0, entry_stop: 280.0, stop: 280.0}

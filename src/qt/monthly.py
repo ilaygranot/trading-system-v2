@@ -9,7 +9,7 @@ ism:       the ISM industries table (S05-R6) and Short Supply (S05-R9) from the 
 calendar:  the events of the coming month: FOMC, CPI, jobs, GDP, PCE, PPI, retail sales, JOLTS (FRED's release
            schedule), the ISM reports, earnings and time stops of positions and watchlist (S13-R25).
 season:    the month's seasonality for SPY and each sector (S13-R25).
-exposure:  long, short and net exposure against Ilay's caps (D-S11-7: the caps are his to set in the portfolio file).
+exposure:  long, short and net exposure against Ilay's caps (D-S11-7: policy.yaml exposure.caps, 22.10; the portfolio file can override).
 sentiment: COT from the CFTC and NAAIM from the manual file (qt.sentiment).
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from qt import watch as W
+from qt.policy import load_policy
 from qt.runs import RunContext
 from qt.weekly import BENCH, SECTORS, _pf
 
@@ -292,7 +293,7 @@ def exposure_now(pf: dict, last: dict[str, float]) -> dict[str, Any]:
     equity = pf.get("cash", 0.0) + lng - sht
     if equity <= 0:
         return {"equity": equity}
-    caps = pf.get("caps") or {}
+    caps = pf.get("caps") or dict(load_policy().exposure.caps)
     out = dict(equity=round(equity, 2), long=round(lng / equity, 3), short=round(sht / equity, 3),
                net=round((lng - sht) / equity, 3), caps=caps, over=[])
     for k in ("long", "short", "net"):
