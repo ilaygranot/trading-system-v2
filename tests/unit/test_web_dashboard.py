@@ -36,7 +36,7 @@ def test_overview_has_every_part_and_refreshes(web, db):
     Queue(db).add("daily-2026-10-22", date.today(), dict(kind="tighten_stop", rule_id="S11-R7", symbol="MSFT",
                                                          stop=301.0, detail="הסטופ עולה"), 330.0)
     st, _, page = _call(web, "/")
-    assert st.startswith("200") and "setInterval" in page and "id=live" in page and "Rubik" in page
+    assert st.startswith("200") and "setInterval" in page and "data-live=top" in page and "Frank+Ruhl" in page
     for part in ("מחכה לך (1)", "פוזיציות פתוחות (2)", "ריצות", "עסקאות נייר", "התראות מהריצות", "COT חסר",
                  "החלטות אחרונות", "דוחות וקבצים", "report-2026-10-17.html", "עלות Agents", "0.50$", "לוח זמנים",
                  "IB Gateway", "/runs/daily-2026-10-21/resume", "הידוק סטופ"):
@@ -81,3 +81,30 @@ def test_next_run_follows_new_york_time():
     assert next_run("daily", now).isoformat() == "2026-10-22T18:30:00-04:00"
     assert next_run("weekly", now).isoformat() == "2026-10-24T10:00:00-04:00"
     assert next_run("monthly", now).isoformat() == "2026-11-14T10:00:00-05:00"
+
+
+def test_overview_is_the_research_report_with_the_live_parts_around_it(web, db):
+    from pathlib import Path
+    fix = (Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8")
+    page = _call(web, "/")[2]
+    assert "עוד אין דוח מחקר" in page
+    assert web.upload("dossier-2026-10-20.json", fix).startswith("דוח המחקר")
+    assert web.upload("dossier.json", "{}").startswith("הקובץ לא נקרא")
+    page = _call(web, "/")[2]
+    for part in ("class=rep", "id=\"macro\"", "id=\"sectors\"", "id=\"ideas\"", "href='#macro'", "href='#watch'",
+                 "data-live=book", "data-live=watch", "data-live=runs", "data-live=system", "רשימת מעקב"):
+        assert part in page, part
+    frag = _call(web, "/", query="fragment=1")[2]
+    assert "data-live=top" in frag and "id=\"macro\"" not in frag            # the report is not re-fetched
+
+
+def test_watchlist_shows_the_ideas_with_the_latest_daily_check(web, db):
+    Queue(db).upload("watchlist", "watchlist-2026-10-20.yaml", yaml.safe_dump({"source": "research 2026-10-20", "entries": [
+        {"symbol": "SHEL", "direction": "long", "etf": "XLE", "bucket": "enter", "trigger_level": 105.54,
+         "target": 129.52, "tldr": "הנפט יקר"}]}, allow_unicode=True))
+    _runs(db)
+    db.execute("UPDATE run_steps SET step = 'watch', output = ? WHERE run_id = 'daily-2026-10-22'", (json.dumps(
+        {"checks": [{"symbol": "SHEL", "close": 104.9, "status": "ready", "rr": 4.3, "stop": 99.0, "trend_1y_pct": 18.2,
+                     "dist_to_trigger_pct": 0.0, "triggered": True, "days_on_list": 2}]}),))
+    html = web.watch_html()
+    assert "SHEL" in html and "104.90" in html and "מוכנה לכניסה" in html and "+18.2%" in html and "הנפט יקר" in html

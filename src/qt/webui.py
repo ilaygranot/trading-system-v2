@@ -14,22 +14,23 @@ IL = ZoneInfo("Asia/Jerusalem")
 REFRESH_S = 30
 
 FONTS = ("<link rel=preconnect href='https://fonts.gstatic.com' crossorigin><link rel=stylesheet "
-         "href='https://fonts.googleapis.com/css2?family=Rubik:wght@500;700&family=Assistant:wght@400;600;700"
-         "&family=IBM+Plex+Mono:wght@400;500&display=swap'>")
+         "href='https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&family=Frank+Ruhl+Libre:wght@400;600;700"
+         "&family=IBM+Plex+Mono:wght@400;600;700&display=swap'>")
 
-_DARK = """--bg:#0f161c;--surface:#16212a;--fg:#e4ebf0;--muted:#94a5b2;--line:#26343f;--accent:#5fb7cc;--accent-soft:#16323b;
---ok:#6cc995;--ok-soft:#173326;--warn:#e2ad5c;--warn-soft:#3a2b14;--bad:#ec8b84;--bad-soft:#3d1e1c;color-scheme:dark"""
+_DARK = """--bg:#0f151b;--surface:#162029;--fg:#e4eaf0;--muted:#97a4b2;--line:#26333f;--accent:#4cc2c4;--accent-soft:#16363a;
+--ok:#4cc27e;--ok-soft:#173726;--warn:#f0a63a;--warn-soft:#3a2c13;--bad:#f07167;--bad-soft:#3d1d1b;color-scheme:dark"""
 
-CSS = """:root{--bg:#f5f7f8;--surface:#fff;--fg:#17212b;--muted:#5b6b78;--line:#dde3e8;--accent:#0f5f73;--accent-soft:#e3f0f3;
---ok:#1f7a46;--ok-soft:#e4f3ea;--warn:#9a5b00;--warn-soft:#fbf0dc;--bad:#a3302a;--bad-soft:#f8e4e2;color-scheme:light;
---display:"Rubik","Assistant",system-ui,sans-serif;--body:"Assistant",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,monospace}
+CSS = """:root{--bg:#f6f7f9;--surface:#fff;--fg:#15202b;--muted:#5b6876;--line:#dfe3e8;--accent:#0b6e75;--accent-soft:#e3f1f1;
+--ok:#1f8a4c;--ok-soft:#e2f3e8;--warn:#b86e00;--warn-soft:#fbefd9;--bad:#c23b32;--bad-soft:#f9e1df;color-scheme:light;
+--display:"Frank Ruhl Libre","David Libre",Georgia,serif;--body:"Assistant",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,monospace}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){%(dark)s}}
 :root[data-theme="dark"]{%(dark)s}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.6;direction:rtl}
 .wrap{max-width:1000px;margin:0 auto;padding:20px 16px 64px;display:flex;flex-direction:column;gap:36px}
 h1,h2,h3{font-family:var(--display);line-height:1.25;margin:0;text-wrap:balance}
-h1{font-size:1.85rem}h2{font-size:1.3rem;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+h1{font-size:2rem}h2{font-size:1.5rem;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;padding-top:.6rem;
+border-top:2px solid var(--fg)}
 h2 .q{font-family:var(--body);font-weight:600;font-size:.85rem;color:var(--accent)}h3{font-size:1.02rem}
 p{margin:0;max-width:72ch}a{color:var(--accent)}
 section{display:flex;flex-direction:column;gap:14px;min-width:0}
@@ -42,6 +43,12 @@ nav{display:flex;flex-wrap:wrap;gap:6px}
 nav a{text-decoration:none;color:var(--fg);padding:5px 12px;border-radius:999px;border:1px solid var(--line);
 background:var(--surface);font-size:.92rem}
 nav a.on{background:var(--accent);border-color:var(--accent);color:var(--surface)}
+.rail{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);display:flex;gap:4px;
+overflow-x:auto;padding:8px 0;margin-top:-20px}
+.rail a{white-space:nowrap;text-decoration:none;color:var(--muted);padding:4px 10px;border-radius:4px;font-size:.9rem}
+.rail a:hover{background:var(--accent-soft);color:var(--fg)}
+html{scroll-behavior:smooth;scroll-padding-top:56px}
+.sub{color:var(--muted);margin:0}
 .eyebrow{font-size:.82rem;color:var(--muted);letter-spacing:.03em;display:flex;align-items:center;gap:8px}
 .pulse{width:8px;height:8px;border-radius:50%%;background:var(--ok);animation:p 2.4s ease-in-out infinite}
 .pulse.off{background:var(--bad);animation:none}
@@ -137,15 +144,64 @@ table td:empty{display:none}
 """ % {"dark": _DARK}
 
 # Live refresh (runtime plan 7.1): the page re-reads its own fragment every REFRESH_S seconds while it is visible,
-# and swaps it in, so positions, the queue and the runs stay current without a reload.
-LIVE_JS = """<script>(function(){var el=document.getElementById('live'),st=document.getElementById('stamp'),
-pu=document.getElementById('pulse');
+# and swaps in each live part ([data-live]), so positions, the queue and the runs stay current without a reload.
+# The parts that change once a week (the research report) are not in the fragment and are not re-fetched.
+LIVE_JS = """<script>(function(){var st=document.getElementById('stamp'),pu=document.getElementById('pulse');
 function tick(){if(document.visibilityState!=='visible')return;
 var u=location.pathname+(location.search?location.search+'&':'?')+'fragment=1';
 fetch(u,{credentials:'same-origin',cache:'no-store'}).then(function(r){if(!r.ok)throw r.status;return r.text()})
-.then(function(t){el.innerHTML=t;st.textContent='עודכן '+new Date().toLocaleTimeString('he-IL');pu.className='pulse'})
+.then(function(t){var d=new DOMParser().parseFromString(t,'text/html'),parts=d.querySelectorAll('[data-live]');
+if(!parts.length){document.querySelector('[data-live=main]').innerHTML=t}
+parts.forEach(function(n){var el=document.querySelector('[data-live="'+n.getAttribute('data-live')+'"]');if(el)el.innerHTML=n.innerHTML});
+st.textContent='עודכן '+new Date().toLocaleTimeString('he-IL');pu.className='pulse'})
 .catch(function(){st.textContent='אין חיבור לשרת, מנסה שוב';pu.className='pulse off'})}
 setInterval(tick,%d*1000);document.addEventListener('visibilitychange',tick)})()</script>""" % REFRESH_S
+
+
+def scope(css: str, pre: str) -> str:
+    """Prefix every rule of a stylesheet with `pre`, so a page made for itself (the research report) can sit inside
+    the dashboard without restyling it: body becomes `pre`, :root (the tokens) stays, html and body::before go."""
+    out, i = [], 0
+    while True:
+        j = css.find("{", i)
+        if j < 0:
+            break
+        head = css[i:j].strip()
+        if head.startswith("@media") or head.startswith("@supports"):
+            depth, k = 1, j + 1
+            while depth:
+                depth += {"{": 1, "}": -1}.get(css[k], 0)
+                k += 1
+            out.append(f"{head}{{{scope(css[j + 1:k - 1], pre)}}}")
+            i = k
+            continue
+        k = css.index("}", j)
+        sels = []
+        for sel in head.split(","):
+            sel = sel.strip()
+            if sel.startswith(":root"):
+                sels.append(sel)
+            elif sel == "body":
+                sels.append(pre)
+            elif sel not in ("html", "body::before") and not sel.startswith("@"):
+                sels.append(f"{pre} {sel}")
+        if sels:
+            out.append(f"{','.join(sels)}{{{css[j + 1:k]}}}")
+        i = k + 1
+    return "".join(out)
+
+
+def report_css() -> str:
+    """The research report's stylesheet inside .rep, with its tables kept as tables on a phone (they scroll)."""
+    from qt.research.report import CSS as REPORT
+    return (scope(REPORT, ".rep") + ".rep{background:none;padding:0;font-size:15.5px}"
+            ".rep h2{border-top:2px solid var(--ink)}"
+            "@media (max-width:640px){.rep .tbl{overflow-x:auto}.rep table{display:table;width:100%}"
+            ".rep thead{display:table-header-group}.rep tbody{display:table-row-group}"
+            ".rep tr,.rep table tr:first-child{display:table-row;background:none;border:0;padding:0;margin:0}"
+            ".rep td,.rep th{display:table-cell;width:auto;border-bottom:1px solid var(--line);padding:6px 8px;"
+            "text-align:right;font-family:var(--body);font-size:inherit}.rep td::before{content:none}}")
+
 
 NAV = (("/", "סקירה"), ("/positions", "פוזיציות"), ("/runs", "ריצות"), ("/journal", "יומן"), ("/system", "מצב המערכת"))
 
@@ -171,19 +227,25 @@ def e(v: Any) -> str:
     return html.escape("" if v is None else str(v))
 
 
-def page(title: str, body: str, active: str = "", live: bool = False, nav_q: str = "") -> str:
-    """The whole document: brand and tabs, the title, then the body (inside #live when it refreshes). On a phone
-    the tabs move to a bar at the bottom, like an app."""
+def page(title: str, body: str, active: str = "", live: bool = False, nav_q: str = "", sub: str = "",
+         rail: Iterable[tuple[str, str]] = (), css: str = "") -> str:
+    """The whole document: brand and tabs, the title, the section rail, then the body. A live page refreshes the
+    parts marked [data-live] (the whole body when none is marked). On a phone the tabs move to a bar at the bottom,
+    like an app."""
     nav = "".join(f"<a href='{h}{nav_q if h == '/journal' else ''}'{' class=on aria-current=page' if h == active else ''}>"
                   f"<svg viewBox='0 0 24 24' aria-hidden=true>{_ICON[h]}</svg><span>{t}</span></a>" for h, t in NAV)
     stamp = (f"<div class=eyebrow><span id=pulse class=pulse></span><span id=stamp>מתעדכן כל {REFRESH_S} שניות</span>"
              f"</div>" if live else "")
-    main = f"<main id=live class=wrap style='padding:0;width:100%'>{body}</main>" if live else body
+    if live and "data-live=" not in body:
+        body = f"<main data-live=main class=wrap style='padding:0;width:100%'>{body}</main>"
+    links = "".join(f"<a href='#{k}'>{e(t)}</a>" for k, t in rail)
     return (f"<!doctype html><html lang=he dir=rtl><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1,viewport-fit=cover'><title>{e(title)}</title>"
-            f"{APP_HEAD}{FONTS}<style>{CSS}</style><body><div class=wrap><header class=top><div class=bar><span class=brand>"
-            f"Quantum Trader</span><nav>{nav}</nav></div>{stamp}<h1>{e(title)}</h1></header>{main}"
-            f"<footer>תיק נייר בלבד. שום פקודה לא נשלחת ל-IBKR. מחירים מ-Yahoo בעיכוב.</footer></div>"
+            f"{APP_HEAD}{FONTS}<style>{CSS}{css}</style><body><div class=wrap><header class=top><div class=bar><span class=brand>"
+            f"Quantum Trader</span><nav>{nav}</nav></div>{stamp}<h1>{e(title)}</h1>"
+            + (f"<p class=sub>{sub}</p>" if sub else "") + "</header>"
+            + (f"<div class=rail role=navigation aria-label='חלקי הדף'>{links}</div>" if links else "")
+            + f"{body}<footer>תיק נייר בלבד. שום פקודה לא נשלחת ל-IBKR. מחירים מ-Yahoo בעיכוב.</footer></div>"
             + (LIVE_JS if live else "") + SW_JS + "</body></html>")
 
 
@@ -197,8 +259,8 @@ def offline() -> str:
             f"<div class=acts><button class=go onclick='location.reload()'>נסה שוב</button></div></div></div></body></html>")
 
 
-def section(title: str, body: str, tag: str = "") -> str:
-    return f"<section><h2>{title}{f' <span class=q>{tag}</span>' if tag else ''}</h2>{body}</section>"
+def section(title: str, body: str, tag: str = "", id: str = "") -> str:
+    return f"<section{f' id={id}' if id else ''}><h2>{title}{f' <span class=q>{tag}</span>' if tag else ''}</h2>{body}</section>"
 
 
 def table(heads: Iterable[str], rows: Iterable[Iterable[Any]]) -> str:

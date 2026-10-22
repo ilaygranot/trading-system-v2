@@ -213,6 +213,7 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
     assert "KEEP" in by and len(by) == out["watchlist_n"]
     rep = Queue(db).latest_upload("report")
     assert rep["id"] == out["report_id"] and rep["content"].startswith("<!doctype html>")
+    assert Queue(db).latest_upload("dossier")["name"].startswith("dossier-")
     text = bot.sent[-2]
     link = f"https://qt.example/report/{rep['id']}?sig={sign_report(rep['id'], 'pw')}"
     assert f"מחקר שבועי: {len(fix['ideas'])} רעיונות נבדקו · עלות הסוכנים 0.75$ · הדוח: {link}" in text

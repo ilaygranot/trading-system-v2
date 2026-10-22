@@ -235,6 +235,7 @@ def research(ctx: RunContext, _: str) -> dict:
     d = json.loads(json.dumps(d, default=str))
     html = report.render(d)
     rid = q.upload("report", f"report-{ctx.as_of.isoformat()}.html", "<!doctype html><meta charset=utf-8>" + html)
+    q.upload("dossier", f"dossier-{ctx.as_of.isoformat()}.json", json.dumps(d, ensure_ascii=False))  # the dashboard
     old = ctx.services.get("watchlist")
     wl = merge_watchlist(old, W.from_dossier(d))
     q.upload("watchlist", f"watchlist-{ctx.as_of.isoformat()}.yaml", yaml.safe_dump(wl, allow_unicode=True, sort_keys=False))

@@ -1008,13 +1008,21 @@ html{scroll-behavior:smooth;scroll-padding-top:56px}
 """
 
 
-def render(d: dict[str, Any]) -> str:
-    m = d["meta"]
-    as_of = date.fromisoformat(m["as_of"])
+def sections(d: dict[str, Any]) -> tuple[list[tuple[str, str]], str]:
+    """The report's sections and its rail (anchor, title), without the page around them: render() wraps them for the
+    standalone report, and the dashboard (qt.web) shows them inside its own page."""
     nav = [("summary", "שורה תחתונה"), ("funnel", "משפך"), ("macro", "מקרו"), ("sectors", "סקטורים"),
            ("screen", "סינון ורמזור"), ("ideas", "רעיונות"), ("method", "שיטה")]
     if d.get("verification"):
         nav.insert(1, ("verify", "אימות"))
+    return nav, (f"{_summary(d)}{_verification(d)}{_funnel(d)}{_macro(d)}{_sectors(d)}{_screen(d)}{_ideas(d)}"
+                 f"{_method(d)}")
+
+
+def render(d: dict[str, Any]) -> str:
+    m = d["meta"]
+    as_of = date.fromisoformat(m["as_of"])
+    nav, body = sections(d)
     return f"""<title>מחקר שוק {as_of:%d.%m.%Y}</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1025,5 +1033,5 @@ def render(d: dict[str, Any]) -> str:
 <p>ריצה מלאה של שלבים 0–11 על נתונים חיים · פלייבוק {E(m["playbook_version"])} · סגירה של {E(m["as_of"])}</p></div>
 <p class="note">שיקול דעת: {E(m["judged_by"])}</p></div>
 <nav class="rail">{"".join(f'<a href="#{k}">{E(v)}</a>' for k, v in nav)}</nav>
-{_summary(d)}{_verification(d)}{_funnel(d)}{_macro(d)}{_sectors(d)}{_screen(d)}{_ideas(d)}{_method(d)}
+{body}
 </div>"""
