@@ -137,7 +137,7 @@ class App:
         """A page that refreshes itself; with ?fragment=1 only the refreshing part (what the script fetches)."""
         if "fragment" in parse_qs(env.get("QUERY_STRING", "")):
             return self._send(start, "200 OK", body, headers=[("Cache-Control", "no-store")])
-        nav = "<nav><a href='/'>לוח בקרה</a><a href='/positions'>פוזיציות</a></nav>"
+        nav = "<nav><a href='/'>לוח בקרה</a><a href='/positions'>פוזיציות</a><a href='/journal'>יומן</a></nav>"
         return self._page(start, title, f"{nav}<p id=stamp class=muted>מתעדכן כל {REFRESH_S} שניות</p>"
                                         f"<div id=live>{body}</div>" + LIVE_JS % REFRESH_S)
 
