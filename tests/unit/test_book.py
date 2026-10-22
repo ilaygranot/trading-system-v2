@@ -45,7 +45,23 @@ def test_exit_closes_and_records_the_result():
     pf, _ = B.apply_fill(PF, "enter", "XYZ", 50, 100.0, {"direction": "long", "stop": 92.0})
     pf, what = B.apply_fill(pf, "exit", "XYZ", 50, 90.0, {"rule_id": "S12-R2"})
     assert pf["positions"] == [] and pf["cash"] == 99_500.0
-    assert pf["closed"][0] == {"symbol": "XYZ", "qty": 50, "entry": 100.0, "exit": 90.0, "pnl": -500.0, "rule": "S12-R2"}
+    c = pf["closed"][0]
+    assert {k: c[k] for k in ("symbol", "qty", "entry", "exit", "pnl", "rule")} == \
+        {"symbol": "XYZ", "qty": 50, "entry": 100.0, "exit": 90.0, "pnl": -500.0, "rule": "S12-R2"}
+    assert (c["direction"], c["entry_stop"], c["max_qty"]) == ("long", 92.0, 50)
+
+
+def test_closed_trade_keeps_the_plan_dates_and_partial_sells():
+    """The trade journal (S13-R29) needs the plan, the initial risk and the whole trade's result."""
+    pf, _ = B.apply_fill(PF, "enter", "XYZ", 50, 100.5, {"direction": "long", "stop": 92.0, "target": 130.0,
+                                                         "as_of": "2024-05-01", "price": 100.0, "detail": "breakout",
+                                                         "size_pct": 6, "equity": 100_000, "decision_id": 7})
+    pf, _ = B.apply_fill(pf, "sell", "XYZ", 25, 131.0, {"rule_id": "S12-R13", "as_of": "2024-06-01"})
+    pf, _ = B.apply_fill(pf, "exit", "XYZ", 25, 120.0, {"rule_id": "S12-R11", "as_of": "2024-06-10"})
+    c = pf["closed"][0]
+    assert (c["opened"], c["closed"], c["max_qty"], c["target"]) == ("2024-05-01", "2024-06-10", 50, 130.0)
+    assert c["plan"] == {"price": 100.0, "detail": "breakout", "size_pct": 6, "equity": 100_000, "decision_id": 7}
+    assert c["trade_pnl"] == round(25 * 30.5 + 25 * 19.5, 2)
 
 
 def test_short_cash_and_result_have_the_right_sign():
@@ -199,3 +215,38 @@ def test_a_new_portfolio_file_replaces_the_book(db):
     Queue(db).upload("portfolio", "portfolio.yaml", "cash: 5\npositions: []\n")
     from qt.app import portfolio
     assert portfolio(db)["cash"] == 5
+
+
+def test_the_closed_trade_is_measured_reviewed_and_in_the_journal(db):
+    """The learning loop on the same trade (architecture 7, S13-R29, S08-J23): the close queues a review for
+    Ilay, the journal row has the plan and the result in R, and the entry idea is measured: target first."""
+    from qt import learning as L
+    from qt.runs import RunContext
+    for i, day in enumerate(DAYS[100:107]):
+        _run(db, day)
+        if i == 0:
+            _approve(db, day, "S10-R4")
+        if i == 3:
+            _approve(db, day, "S12-R13")
+    from qt.app import portfolio
+    pf = portfolio(db)
+    rev = [i for i in Queue(db).for_day(DAYS[106]) if i["kind"] == "review"]
+    assert len(rev) == 1 and rev[0]["status"] == "pending" and rev[0]["rule_id"] == "S13-R29"
+    assert datetime.fromisoformat(rev[0]["valid_until"]).date() > DAYS[107]          # a week, not one session
+    assert "רעיון טוב" in rev[0]["payload"]["detail"] and "ביצוע טוב" in rev[0]["payload"]["detail"]
+    trades, _ = L.tables(db, pf)["trades"]
+    t = trades[0]
+    assert (t["symbol"], t["exit_reason"], t["followed_plan"], t["target_hit"]) == ("XYZ", "סטופ", "כן", "כן")
+    assert t["r"] > 1 and t["planned_entry"] == 102.0 and t["thesis"].startswith("סגירה 102.00")
+    assert db.one("SELECT COUNT(*) AS n FROM equity_daily")["n"] == 7
+    ctx = RunContext(db, "w1", "weekly", DAYS[107], services={"prices": Path(), "portfolio": pf})
+    ideas = L.measure_ideas(ctx)
+    assert [(i["symbol"], i["first"], i["ilay"]) for i in ideas] == [("XYZ", "target", "approved")]
+    assert L.measure_ideas(ctx) == []                                                  # measured once
+    Queue(db).decide(rev[0]["id"], "approve", now=datetime.combine(DAYS[106], datetime.min.time(), timezone.utc)
+                     + timedelta(hours=21))
+    L.ilay_lesson(db, rev[0]["id"], "חיכיתי לטריגר ולא רדפתי")
+    rv = L.reviews(db)["XYZ|" + DAYS[101].isoformat()]
+    assert rv["status"] == "אושר" and rv["lesson"] == "חיכיתי לטריגר ולא רדפתי"
+    m = L.learn_monthly(RunContext(db, "m1", "monthly", DAYS[107], services={"portfolio": pf}), "")
+    assert m["all"]["n"] == 1 and m["all"]["win_rate"] == 100.0 and m["ideas"]["approved"]["hit_pct"] == 100.0

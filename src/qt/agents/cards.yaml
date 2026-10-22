@@ -1,4 +1,4 @@
-# The 23 decision cards (architecture/decision-cards.md, 19.10) as the code sees them: who decides, the closed
+# The 24 decision cards (architecture/decision-cards.md, 19.10) as the code sees them: who decides, the closed
 # options (the output schema's enum), what is chosen when the facts don't decide, and the card's own fields.
 # The full card text (questions to ask, what is forbidden, required input) is decision_cards.md, sent to the
 # agent as part 5 of its context. An agent decides only through a card (architecture 5).
@@ -41,3 +41,11 @@ DC-21: {agent: A7, options: [hold, reduce, exit, add], undecided: hold_or_reduce
 DC-22: {agent: A7, options: [stay, switch], undecided: stay, approval: required,
         extra: {cut_method: {enum: [order_084, rank_bottom, uniform_20, uniform_30, uniform_40, none]}, cut_order: {type: array, items: {type: string}}}}
 DC-23: {agent: A7, options: [none, half, all], undecided: none, approval: required}
+DC-24: {agent: L, options: [no_failure, idea, execution, playbook, data, unclear], undecided: unclear, approval: required,
+        extra: {stage: {enum: [none, "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"]},
+                idea_quality: {enum: [good, bad, unclear]}, execution_quality: {enum: [good, bad]},
+                loss_or_mistake: {enum: [loss, mistake, none]},
+                worked: {type: string, description: "Hebrew, one sentence: what worked in this trade"},
+                not_worked: {type: string, description: "Hebrew, one sentence: what did not work"},
+                lesson: {type: string, description: "Hebrew, one sentence: the lesson for the process, not for the market"},
+                proposal: {type: string, description: "Hebrew: a Playbook change proposal in the 7.4 structure, or empty. Only a not-from-course item, a rule's tier, a card's wording, or a Playbook text that strays from the course"}}}

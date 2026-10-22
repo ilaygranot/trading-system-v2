@@ -40,6 +40,7 @@ def test_blueprint_parses_and_every_cron_gets_the_secrets_from_qt_web():
         assert env["QT_PUBLIC_URL"]["fromService"]["envVarKey"] == "RENDER_EXTERNAL_URL"
         assert env["IBKR_HOST"]["fromService"] == {"type": "pserv", "name": "qt-ibgateway", "property": "host"}
         assert re.fullmatch(r"\S+ \S+ \S+ \S+ \S+", c["schedule"])
+        assert env["QT_START_EQUITY"]["value"] == web["QT_START_EQUITY"]["value"]
 
 
 def test_ib_gateway_is_private_pinned_paper_and_read_only():

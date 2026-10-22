@@ -17,6 +17,7 @@
 | `qt/rules/engine.py` | hard ⇒ block · default ⇒ needs override (J id + fact ids) · flags · Ilay approvals · exits never blocked | architecture 3.1–3.3 |
 | `qt/rules/checks.py` | The entry/add checks and the daily position review | 41 hard rules + defaults |
 | `qt/journal.py` | Append-only decision journal, Ilay reviews, outcomes, deviation hit-rate | architecture 7.1–7.3 |
+| `qt/tradelog.py`, `qt/learning.py` | The learning loop. The trade journal: one row per trade in the columns of Ilay's paper sheet and the course (plan, execution, R, MFE/MAE, target reached in the trade or within 20 sessions after the exit, followed the plan?, idea and execution quality apart, loss or mistake, failure stage 1–13, what worked, the lesson). Daily step `learn`: the day's equity, and each closed trade measured and drafted by code, classified by agent L on DC-24 when agents are on, and sent to Ilay as a review item (approve = confirmed, reject with a reason = his correction, then his own lesson by reply). Weekly: every entry proposal measured (target or stop first, 60 days) against what Ilay answered, ideas that ran away (S08-R32, S13-J8), stopped trades whose target came later, re-entries after stops (S13-R6). Monthly: win rate and R vs S13-R18, Sharpe / Sortino / drawdown (S13-J17), agreement per card, deviations per rule, calibration, Critic returns, failure stages, streak warnings, change-proposal candidates (7.4, 10 cases). The journal page `/journal` (signed link from `/journal` in Telegram) with CSV per table | architecture 7, S13-R29, S08-R32, S08-J23, S13-J4 |
 | `qt/facts.py` | Fact sheet with id/source/date; catches cited facts that don't exist | principle 4 |
 | `qt/data/` | Yahoo (primary), FMP, FRED/ALFRED vintages, SEC EDGAR, Zacks CSV import, cache + point-in-time snapshots | architecture 9 |
 | `qt/replay.py` | The lecturer's trades through the engine | research/audit-rerun.md |
@@ -52,7 +53,7 @@ writes the same judgments a person would (`qt/research/judge.py`); a run has its
 The scheduled weekly run ends with that research (`qt/weekly.py`, step `research`): the report is saved and linked in
 Telegram (`/report/<id>`, signed), and its ideas are merged into the watchlist the daily pass checks.
 
-Not yet: the course test set for the agents (Opus vs Sonnet), A2 / A5 / A8 / L, and the export of the journal to Drive.
+Not yet: the course test set for the agents (Opus vs Sonnet), A2 / A8, L drafting the monthly change proposals (code lists the candidates), the shadow run of a new Playbook version (7.4 step 6), the case library (7.5), and writing the journal into the Drive sheet itself (today: the `/journal` page and its CSV files).
 
 ## Run
 

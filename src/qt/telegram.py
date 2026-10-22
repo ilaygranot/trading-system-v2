@@ -23,7 +23,7 @@ API = "https://api.telegram.org"
 
 KIND = {"enter": ("🟢", "כניסה מוצעת"), "add": ("🟢", "הגדלה מוצעת"), "exit": ("🔴", "יציאה"),
         "reduce": ("🟠", "הקטנה"), "sell": ("🟠", "מכירת אופציה"), "tighten_stop": ("🟡", "הידוק סטופ"),
-        "block_new_risk": ("⛔", "חסימת סיכון חדש"), "flag": ("🔔", "דגל")}
+        "block_new_risk": ("⛔", "חסימת סיכון חדש"), "flag": ("🔔", "דגל"), "review": ("📝", "תחקיר עסקה")}
 STATUS = {"standing_order": "✔️ פקודה עומדת (אושרה עם העסקה): נרשמה כעסקת נייר",
           "info": "לידיעה בלבד", "approved": "✅ אושר", "rejected": "❌ נדחה", "postponed": "⏸ נדחה למחר",
           "changed": "🔄 השתנה מאז ההצעה: צריך החלטה מחדש", "expired": "⌛ פג תוקף: נרשם כ\"לא נבדק\""}
@@ -153,6 +153,25 @@ def report_link(upload_id: int) -> str | None:
     return f"{base.rstrip('/')}/report/{upload_id}?sig={sign_report(upload_id, secret)}"
 
 
+def sign_journal(secret: str) -> str:
+    return hmac.new(secret.encode(), b"journal", hashlib.sha256).hexdigest()[:24]
+
+
+def verify_journal(sig: str, secret: str) -> bool:
+    return bool(secret) and hmac.compare_digest(sign_journal(secret), sig or "")
+
+
+def journal_link() -> str | None:
+    """The signed link to the trade journal page (qt.web /journal): the tables and their CSV files."""
+    base = os.environ.get("QT_PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL")
+    secret = os.environ.get("DASHBOARD_PASSWORD")
+    if not base or not secret:
+        return None
+    if not base.startswith("http"):
+        base = "https://" + base
+    return f"{base.rstrip('/')}/journal?sig={sign_journal(secret)}"
+
+
 def public_link(item_id: int) -> str | None:
     base = os.environ.get("QT_PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL")
     secret = os.environ.get("DASHBOARD_PASSWORD")
@@ -201,6 +220,9 @@ def handle_update(update: dict, bot: Telegram, queue: Queue, on_resume: Callable
             bot.answer(cb["id"], "?")
             return "unknown button"
         choice, said = ANSWER[code]
+        is_review = (queue.get(int(sid)) or {}).get("kind") == "review"
+        if is_review:
+            said = {"approve": "התחקיר אושר", "reject": "התחקיר נדחה"}.get(choice, said)
         try:
             queue.decide(int(sid), choice)
         except NotOpen as e:
@@ -211,6 +233,9 @@ def handle_update(update: dict, bot: Telegram, queue: Queue, on_resume: Callable
         refresh_item(bot, queue, int(sid))
         if choice == "reject":
             bot.send(f"סיבה לדחיית #{sid}? מילה או שתיים, לא חובה (השב להודעה הזו)", force_reply=True)
+        elif choice == "approve" and is_review:
+            bot.send(f"מה למדת מהעסקה #{sid}? משפט אחד במילים שלך, לא חובה (השב להודעה הזו, S13-R29)",
+                     force_reply=True)
         return f"{choice} #{sid}"
     if msg is None:
         return "ignored"
@@ -220,6 +245,11 @@ def handle_update(update: dict, bot: Telegram, queue: Queue, on_resume: Callable
         queue.note(int(m.group(1)), msg["text"][:500])
         bot.send(f"נרשמה סיבה ל-#{m.group(1)}")
         return f"reason #{m.group(1)}"
+    if m and "מה למדת" in reply and msg.get("text"):
+        from qt.learning import ilay_lesson
+        key = ilay_lesson(queue.db, int(m.group(1)), msg["text"])
+        bot.send(f"הלקח נרשם ביומן ({key.split('|')[0]})" if key else "לא מצאתי את העסקה של הפריט הזה")
+        return f"lesson #{m.group(1)}"
     doc = msg.get("document")
     if doc:
         if on_upload is None or not doc.get("file_name", "").endswith((".yaml", ".yml")):
@@ -229,6 +259,10 @@ def handle_update(update: dict, bot: Telegram, queue: Queue, on_resume: Callable
         result = on_upload(doc["file_name"], text)
         bot.send(result)
         return f"upload {doc['file_name']}"
+    if (msg.get("text") or "").strip() == "/journal":
+        link = journal_link()
+        bot.send(f"יומן המסחר: {link}" if link else "אין כתובת ציבורית (QT_PUBLIC_URL) לקישור ליומן")
+        return "journal link"
     if (msg.get("text") or "").strip() == "/queue":
         items = queue.open_items()
         for it in items:

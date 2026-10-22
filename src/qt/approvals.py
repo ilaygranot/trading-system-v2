@@ -9,7 +9,7 @@ Exits on a stop or a hard block do not wait (7.3): they are standing orders, fil
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from qt.db import DB, dumps
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS approval_queue (
   as_of TEXT NOT NULL,
   item_key TEXT NOT NULL UNIQUE,         -- as_of + symbol + rule + kind: one item per day per action
   kind TEXT NOT NULL,                    -- enter | add | exit | reduce | sell | tighten_stop | block_new_risk | flag
+                                         -- | review (post-trade, qt.learning)
   rule_id TEXT NOT NULL,
   symbol TEXT,
   status TEXT NOT NULL,                  -- pending | postponed | changed | approved | rejected | expired
@@ -59,6 +60,7 @@ CREATE TABLE IF NOT EXISTS uploads (
 """
 
 ORDER_KINDS = {"enter", "add", "exit", "reduce", "sell"}     # a paper order; tighten_stop / flags are not orders
+REVIEW_DAYS = 7                  # a post-trade review waits a week for Ilay, not one session (not from course)
 OPEN_STATUSES = ("pending", "postponed", "changed")          # still waiting for Ilay
 CHOICES = {"approve": ("approved", "approved"), "reject": ("rejected", "rejected"), "postpone": ("postponed", None)}
 
@@ -89,10 +91,11 @@ class Queue:
         """One item per day, symbol, rule and kind; returns the new id, or None if it is already queued."""
         status = "standing_order" if action.get("preapproved") else "info" if action["kind"] in ("flag",) else "pending"
         key = f"{as_of.isoformat()}|{action.get('symbol') or '-'}|{action['rule_id']}|{action['kind']}"
+        valid = next_open(as_of + timedelta(days=REVIEW_DAYS - 1) if action["kind"] == "review" else as_of)
         new = self.db.insert_new("approval_queue", dict(
             run_id=run_id, as_of=as_of.isoformat(), item_key=key, kind=action["kind"], rule_id=action["rule_id"],
             symbol=action.get("symbol"), status=status, payload=dumps(action), ref_price=ref_price,
-            valid_until=_iso(next_open(as_of)), decision_id=decision_id, created_at=_iso(_now())), ["item_key"])
+            valid_until=_iso(valid), decision_id=decision_id, created_at=_iso(_now())), ["item_key"])
         if not new:
             return None
         item = self.db.one("SELECT id FROM approval_queue WHERE item_key = ?", (key,))

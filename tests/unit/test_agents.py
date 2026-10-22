@@ -43,7 +43,7 @@ PASS = {"verdict": "pass", "issues": []}
 
 def test_cards_and_schema():
     cards = load_cards()
-    assert len(cards) == 23 and all(c.text for c in cards.values())
+    assert len(cards) == 24 and all(c.text for c in cards.values())
     assert not {"True", "False"} & {o for c in cards.values() for o in c.options}     # YAML no/yes traps
     s = cards["DC-13"].schema()
     assert s["properties"]["option"]["enum"] == ["no", "cold", "hot"] and s["additionalProperties"] is False

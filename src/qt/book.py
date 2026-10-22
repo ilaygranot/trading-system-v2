@@ -12,6 +12,7 @@ import copy
 from typing import Any
 
 FLAG_ON_FILL = {"S12-R13": "partial_taken", "S12-R11": "profit_taken"}      # sells that close a one-time step
+PLAN_FIELDS = ("price", "detail", "size_pct", "equity", "rule_id", "item_id", "decision_id")   # the entry as planned
 
 
 def _find(pf: dict, symbol: str) -> dict | None:
@@ -31,14 +32,17 @@ def apply_fill(pf: dict, kind: str, symbol: str, qty: float | None, price: float
         pf["cash"] = pf.get("cash", 0.0) - sg * qty * price
         if pos is None:
             stop = payload.get("stop")
+            plan = {k: payload[k] for k in PLAN_FIELDS if payload.get(k) is not None} or None
             pf["positions"].append({k: v for k, v in dict(
                 symbol=symbol, direction=direction, sector=payload.get("sector") or "?", qty=qty, entry=price,
-                entry_stop=stop, stop=stop, target=payload.get("target"), opened=payload.get("as_of")).items()
+                entry_stop=stop, stop=stop, target=payload.get("target"), opened=payload.get("as_of"),
+                max_qty=qty, plan=plan).items()
                 if v is not None})
             return pf, f"{symbol}: opened {qty:g} @ {price:.2f}"
         total = pos["qty"] + qty
         pos["entry"] = (pos["entry"] * pos["qty"] + price * qty) / total
         pos["qty"] = total
+        pos["max_qty"] = max(pos.get("max_qty", 0), total)
         return pf, f"{symbol}: added {qty:g} @ {price:.2f}, average {pos['entry']:.2f}"
     if pos is None:
         return pf, f"{symbol}: {kind} but no open position, not applied"
@@ -50,8 +54,16 @@ def apply_fill(pf: dict, kind: str, symbol: str, qty: float | None, price: float
                                               rule=payload.get("rule_id"), on=payload.get("as_of")))
     if q >= pos["qty"]:
         pf["positions"].remove(pos)
-        pf.setdefault("closed", []).append(dict(symbol=symbol, qty=q, entry=pos["entry"], exit=price,
-                                                pnl=round(pnl, 2), rule=payload.get("rule_id")))
+        closed = dict(symbol=symbol, qty=q, entry=pos["entry"], exit=price, pnl=round(pnl, 2), rule=payload.get("rule_id"))
+        # what the trade journal needs (qt.tradelog): the plan, the dates, the initial risk and every partial sell
+        opened = pos.get("opened")
+        sells = [r for r in pf["realized"] if r["symbol"] == symbol and (r.get("on") or "") >= (opened or "")]
+        closed.update({k: v for k, v in dict(
+            direction=pos["direction"], sector=pos.get("sector"), opened=opened, closed=payload.get("as_of"),
+            entry_stop=pos.get("entry_stop"), target=pos.get("target"), max_qty=pos.get("max_qty"),
+            plan=pos.get("plan"), trade_pnl=round(sum(r["pnl"] for r in sells), 2) if opened else None).items()
+            if v is not None})
+        pf.setdefault("closed", []).append(closed)
         return pf, f"{symbol}: closed {q:g} @ {price:.2f}, P&L {pnl:+,.0f}$"
     pos["qty"] = pos["qty"] - q
     flag = FLAG_ON_FILL.get(payload.get("rule_id", ""))

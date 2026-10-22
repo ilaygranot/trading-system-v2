@@ -33,6 +33,12 @@ def portfolio(db: DB, path: str | None = None) -> dict | None:
     return yaml.safe_load(up["content"]) if up else None
 
 
+def start_book(equity: float) -> dict:
+    """The paper book before the first fill: all cash, no positions. Used only until a book or portfolio exists,
+    so the first daily run can propose entries from the watchlist (22.10)."""
+    return {"cash": equity, "peak_equity": equity, "portfolio_stop_triggered": False, "positions": []}
+
+
 def watchlist(db: DB, path: str | None = None) -> dict | None:
     """The watchlist from the last research run: QT_WATCHLIST for local runs, else the last upload to the bot."""
     path = path or os.environ.get("QT_WATCHLIST")
@@ -50,6 +56,8 @@ def services(db: DB, portfolio_path: str | None = None) -> dict[str, Any]:
     yahoo = Yahoo(store)
     s: dict[str, Any] = {"prices": yahoo, "prices_fallback": FMP(store), "quote": yahoo.quote, "cftc": CFTC()}
     pf = portfolio(db, portfolio_path)
+    if pf is None and os.environ.get("QT_START_EQUITY"):
+        pf = start_book(float(os.environ["QT_START_EQUITY"]))
     if pf is not None:
         s["portfolio"] = pf
     wl = watchlist(db)
