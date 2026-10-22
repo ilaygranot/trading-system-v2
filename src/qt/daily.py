@@ -20,6 +20,7 @@ from qt.approvals import Queue
 from qt.journal import Decision, Journal
 from qt.manage import Held, daily_review
 from qt.playbook import load_playbook
+from qt.policy import load_policy
 from qt.runs import RunContext, Step
 from qt import book as B
 from qt import watch as W
@@ -140,7 +141,7 @@ def rules(ctx: RunContext, _: str) -> dict:
                           VixReading(**c["vix"]) if c.get("vix") else None,
                           market_ret=c.get("market_ret_20d"))
     acts = [asdict(a) for a in review.actions]
-    caps = pf.get("caps") or {}
+    caps = pf.get("caps") or dict(load_policy().exposure.caps)
     if caps and equity > 0:                                           # D-S11-7: Ilay's caps, a flag only
         lng = sum(h.value for h in held if h.instrument == "stock" and h.direction == "long") / equity
         sht = sum(h.value for h in held if h.instrument == "stock" and h.direction == "short") / equity
