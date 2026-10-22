@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-SECRETS = {"ANTHROPIC_API_KEY", "FRED_API_KEY", "FMP_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
+SECRETS = {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FRED_API_KEY", "FMP_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
            "DASHBOARD_PASSWORD"}
 
 
@@ -41,3 +41,10 @@ def test_ib_gateway_is_private_pinned_paper_and_read_only():
     env = _env(gw)
     assert env["TRADING_MODE"]["value"] == "paper" and env["READ_ONLY_API"]["value"] == "yes"
     assert env["TWS_USERID"].get("sync") is False and env["TWS_PASSWORD"].get("sync") is False
+
+
+def test_every_service_that_runs_agents_installs_the_pinned_claude_cli():
+    for s in _services().values():
+        if s.get("runtime") == "python":
+            assert "install.sh | bash -s 2.1.308" in s["buildCommand"] and "bin/claude" in s["buildCommand"], s["name"]
+            assert _env(s)["DISABLE_AUTOUPDATER"]["value"] == "1"

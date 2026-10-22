@@ -217,7 +217,7 @@ def research(ctx: RunContext, _: str) -> dict:
     runner, fred = ctx.services.get("agents"), ctx.services.get("fred")
     q = Queue(ctx.db)
     manual = q.latest_upload("manual_macro")
-    missing = [n for n, v in (("ANTHROPIC_API_KEY", runner), ("FRED_API_KEY", fred), ("קובץ המקרו החודשי", manual))
+    missing = [n for n, v in (("Claude (ANTHROPIC_API_KEY או CLAUDE_CODE_OAUTH_TOKEN)", runner), ("FRED_API_KEY", fred), ("קובץ המקרו החודשי", manual))
                if v is None]
     if missing:
         return {"skipped": missing}

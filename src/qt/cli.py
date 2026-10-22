@@ -136,13 +136,14 @@ def _research(args: argparse.Namespace) -> int:
     work.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     judge = None
-    if args.agents:                                  # the cards instead of a judgments file (ANTHROPIC_API_KEY)
+    if args.agents:                                  # the cards instead of a judgments file (API key or OAuth token)
         from qt.agents import AgentRunner
+        from qt.agents.cli_client import agent_client
         from qt.agents.runner import config
         from qt.db import DB
         from qt.research.judge import Judge
         db = DB(f"sqlite:///{work / 'agents.sqlite'}")
-        judge = Judge(AgentRunner(db, limit_usd=config()["budget"]["weekly_research_usd"]), run_id=f"research-{as_of}")
+        judge = Judge(AgentRunner(db, agent_client(), limit_usd=config()["budget"]["weekly_research_usd"]), run_id=f"research-{as_of}")
     d = run.run(as_of, work, Path(args.manual), Path(args.judgments) if args.judgments else None, work / "yahoo",
                 FRED(Store(str(work / "fred.sqlite"))), judge=judge)
     (out / "dossier.json").write_text(json.dumps(d, default=str, ensure_ascii=False), encoding="utf-8")

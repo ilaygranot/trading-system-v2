@@ -4,6 +4,8 @@
 # Secrets are entered once, on qt-web (sync: false); the cron jobs copy them from qt-web (fromService envVarKey),
 # so Render asks for each secret one time. After changing a secret on qt-web, run "Manual Sync" on the Blueprint.
 # The IBKR login is entered on qt-ibgateway only. No secret is in this file.
+# The agents run on ANTHROPIC_API_KEY, or, when it is empty, on CLAUDE_CODE_OAUTH_TOKEN through the Claude Code CLI;
+# the build copies the CLI binary (pinned) into ./bin because Render keeps only the project directory at runtime.
 
 databases:
   - name: qt-db
@@ -17,7 +19,7 @@ services:
     runtime: python
     region: virginia
     plan: starter
-    buildCommand: pip install '.[postgres,agents,web]'
+    buildCommand: pip install '.[postgres,agents,web]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: gunicorn qt.web:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 60
     healthCheckPath: /health
     autoDeployTrigger: checksPass
@@ -27,7 +29,11 @@ services:
       - key: PYTHON_VERSION
         value: "3.12.7"
       - key: ANTHROPIC_API_KEY
-        sync: false
+        sync: false                       # leave empty to run the agents on the subscription token below
+      - key: CLAUDE_CODE_OAUTH_TOKEN
+        sync: false                       # Ilay's Claude subscription (22.10): the agents run through Claude Code
+      - key: DISABLE_AUTOUPDATER
+        value: "1"                        # the CLI stays at the pinned build
       - key: FRED_API_KEY
         sync: false
       - key: FMP_API_KEY
@@ -81,7 +87,7 @@ services:
     region: virginia
     plan: starter
     schedule: "30 22,23 * * 1-5"
-    buildCommand: pip install '.[postgres,agents]'
+    buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: qt run daily --scheduled
     envVars:
       - key: QT_PUBLIC_URL                # public https URL of qt-web, for the signed "details" links in Telegram
@@ -92,6 +98,10 @@ services:
         value: "3.12.7"
       - key: ANTHROPIC_API_KEY
         fromService: {type: web, name: qt-web, envVarKey: ANTHROPIC_API_KEY}
+      - key: CLAUDE_CODE_OAUTH_TOKEN
+        fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
+      - key: DISABLE_AUTOUPDATER
+        value: "1"
       - key: FRED_API_KEY
         fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
       - key: FMP_API_KEY
@@ -113,7 +123,7 @@ services:
     region: virginia
     plan: starter
     schedule: "30 12,13 * * 1-5"
-    buildCommand: pip install '.[postgres,agents]'
+    buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: qt run premarket --scheduled
     envVars:
       - key: QT_PUBLIC_URL
@@ -124,6 +134,10 @@ services:
         value: "3.12.7"
       - key: ANTHROPIC_API_KEY
         fromService: {type: web, name: qt-web, envVarKey: ANTHROPIC_API_KEY}
+      - key: CLAUDE_CODE_OAUTH_TOKEN
+        fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
+      - key: DISABLE_AUTOUPDATER
+        value: "1"
       - key: FRED_API_KEY
         fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
       - key: FMP_API_KEY
@@ -145,7 +159,7 @@ services:
     region: virginia
     plan: standard                        # 2 GB: the research run holds the whole universe (~100 MB pickled) in memory
     schedule: "0 14,15 * * 6"
-    buildCommand: pip install '.[postgres,agents]'
+    buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: qt run weekly --scheduled
     envVars:
       - key: QT_PUBLIC_URL
@@ -156,6 +170,10 @@ services:
         value: "3.12.7"
       - key: ANTHROPIC_API_KEY
         fromService: {type: web, name: qt-web, envVarKey: ANTHROPIC_API_KEY}
+      - key: CLAUDE_CODE_OAUTH_TOKEN
+        fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
+      - key: DISABLE_AUTOUPDATER
+        value: "1"
       - key: FRED_API_KEY
         fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
       - key: FMP_API_KEY
@@ -177,7 +195,7 @@ services:
     region: virginia
     plan: starter
     schedule: "0 14,15 * * 6"
-    buildCommand: pip install '.[postgres,agents]'
+    buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: qt run monthly --scheduled
     envVars:
       - key: QT_PUBLIC_URL
@@ -188,6 +206,10 @@ services:
         value: "3.12.7"
       - key: ANTHROPIC_API_KEY
         fromService: {type: web, name: qt-web, envVarKey: ANTHROPIC_API_KEY}
+      - key: CLAUDE_CODE_OAUTH_TOKEN
+        fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
+      - key: DISABLE_AUTOUPDATER
+        value: "1"
       - key: FRED_API_KEY
         fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
       - key: FMP_API_KEY

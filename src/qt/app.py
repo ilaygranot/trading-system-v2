@@ -57,9 +57,11 @@ def services(db: DB, portfolio_path: str | None = None) -> dict[str, Any]:
         s["watchlist"] = wl
     if os.environ.get("FRED_API_KEY"):
         s["fred"] = FRED(store)
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    from qt.agents.cli_client import agent_client
+    client = agent_client()
+    if client is not None:
         from qt.agents import AgentRunner
-        s["agents"] = AgentRunner(db)
+        s["agents"] = AgentRunner(db, client)
     bot = Telegram.from_env()
     if bot is not None:
         s["telegram"] = bot

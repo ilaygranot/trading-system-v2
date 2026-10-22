@@ -154,7 +154,7 @@ def test_weekly_run_end_to_end_and_rank_moves_from_last_week(db):
     text = bot.sent[-2] + bot.sent[-1]
     for s in ("זירת סקטורים", "XLK 11", "XLU 1", "פוזיציות:", "• XLE", "רשימת מעקב: 1 (1 לונג, 0 שורט)",
               "פחות מ-2 רעיונות חדשים", "שבועיים קדימה: 10-29 דוח ABC", "בהכנה החודשית", "תפעול", "לא נבדקו",
-              "מחקר שבועי לא רץ: חסר ANTHROPIC_API_KEY, FRED_API_KEY, קובץ המקרו החודשי"):
+              "מחקר שבועי לא רץ: חסר Claude (ANTHROPIC_API_KEY או CLAUDE_CODE_OAUTH_TOKEN), FRED_API_KEY, קובץ המקרו החודשי"):
         assert s in text, s
     arena = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='arena'", (rid,), ["output"])["output"]
     assert all(x["rank_change"] is not None for x in arena["rows"])   # last week's run is found
