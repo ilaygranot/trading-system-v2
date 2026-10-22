@@ -143,6 +143,14 @@ class ManualFileMissing(RuntimeError):
     """The monthly ISM / NFIB file is not in yet: the run waits for it (runtime plan 4)."""
 
 
+class FredKeyMissing(RuntimeError):
+    """FRED_API_KEY is not set on the cron: the stance has no CPI, labor, Fed or credit data, so the run stops."""
+
+
+FRED_KEY_HE = ("חסר FRED_API_KEY: בלי FRED אין עמדת מקרו (CPI, תעסוקה, פד, מרווח HY). המפתח חינם: "
+               "fredaccount.stlouisfed.org/apikeys. מכניסים אותו ב-qt-web ב-Render, ואז Manual Sync על ה-Blueprint.")
+
+
 def _prev_month(d: date) -> str:
     first = d.replace(day=1) - timedelta(days=1)
     return f"{first.year:04d}-{first.month:02d}"
@@ -158,12 +166,15 @@ def manual(ctx: RunContext, _: str) -> dict:
         if need in {str(k) for k in (raw.get("ism_pmi") or {})}:
             return {"upload_id": up["id"], "series": parse_manual(up["content"], ctx.as_of)}
     _send(ctx, f"חודשית {ctx.as_of.isoformat()} מחכה לקובץ המקרו הידני: ISM PMI/NMI ו-NFIB עד {need}. "
-               "שלח לי אותו כאן כקובץ YAML ({series: {YYYY-MM: value}}) והריצה תמשיך לבד.")
+               "שלח לי אותו כאן כקובץ YAML ({series: {YYYY-MM: value}}) והריצה תמשיך לבד."
+               + ("" if ctx.services.get("fred") is not None else "\n" + FRED_KEY_HE))
     raise ManualFileMissing(f"manual macro file with ism_pmi for {need}")
 
 
 def fred(ctx: RunContext, _: str) -> dict:
     from qt.data.macro_feed import fetch_fred
+    if ctx.services.get("fred") is None:
+        raise FredKeyMissing(FRED_KEY_HE)
     monthly, daily, src = fetch_fred(ctx.services["fred"], ctx.as_of)
     return {"monthly": monthly, "daily_last": {k: v[-1] for k, v in daily.items() if v}, "sources": src}
 

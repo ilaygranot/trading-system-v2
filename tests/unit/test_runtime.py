@@ -11,7 +11,7 @@ import pytest
 from qt import app as A
 from qt.approvals import NotOpen, Queue
 from qt.journal import Decision, Journal
-from qt.pipelines import PIPELINES, ManualFileMissing
+from qt.pipelines import PIPELINES, FredKeyMissing, ManualFileMissing
 from qt.runs import Runner
 from qt.schedule import due, is_trading_day, next_open
 from qt.telegram import handle_update, item_buttons, item_text, sign
@@ -255,6 +255,18 @@ def test_monthly_waits_for_the_manual_file_then_resumes(db):
     st = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='stance'", (rid,), ["output"])["output"]
     assert "ism_pmi" not in st["skipped_indicators"] and st["zone"]
     assert Queue(db).for_day(date(2026, 10, 9))[0]["rule_id"] == "S02-STANCE"
+
+
+def test_monthly_without_fred_says_so(db):
+    bot = Bot()
+    r = Runner(db, PIPELINES, {"telegram": bot})
+    with pytest.raises(ManualFileMissing):
+        r.start("monthly", date(2026, 10, 9))
+    assert "FRED_API_KEY" in bot.sent[-1][1]                    # the reminder names both things it waits for
+    months = [f"{2025 + (i + 8) // 12}-{(i + 8) % 12 + 1:02d}" for i in range(14)]
+    Queue(db).upload("manual_macro", "ism.yaml", "ism_pmi: {" + ", ".join(f"'{m}': 50" for m in months) + "}\n")
+    with pytest.raises(FredKeyMissing, match="FRED_API_KEY"):
+        r.resume(A.waiting_monthly(db))
 
 
 # ------------------------------------------------------------------ the cron entry point

@@ -4,8 +4,9 @@
 # Secrets are entered once, on qt-web (sync: false); the cron jobs copy them from qt-web (fromService envVarKey),
 # so Render asks for each secret one time. After changing a secret on qt-web, run "Manual Sync" on the Blueprint.
 # The IBKR login is entered on qt-ibgateway only. No secret is in this file.
-# Optional keys (ANTHROPIC_API_KEY, FRED_API_KEY, FMP_API_KEY) are not copied to the crons: a fromService copy of a
-# variable that qt-web does not have fails the whole sync. When one is added on qt-web, add its copy here too.
+# Optional keys (ANTHROPIC_API_KEY, FMP_API_KEY) are not copied to the crons: a fromService copy of a variable that
+# qt-web does not have fails the whole sync. When one is added on qt-web, add its copy here too. FRED_API_KEY is
+# copied to the weekly and monthly crons: it must be set on qt-web before this file syncs.
 # The agents run on ANTHROPIC_API_KEY, or, when it is empty, on CLAUDE_CODE_OAUTH_TOKEN through the Claude Code CLI;
 # the build copies the CLI binary (pinned) into ./bin because Render keeps only the project directory at runtime.
 
@@ -175,6 +176,8 @@ services:
         fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
       - key: DISABLE_AUTOUPDATER
         value: "1"
+      - key: FRED_API_KEY                 # the macro stance (monthly) and the weekly research
+        fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
       - key: QT_START_EQUITY
         value: "100000"                   # the paper book's cash until the first portfolio or fill exists
       - key: TELEGRAM_BOT_TOKEN
@@ -207,6 +210,8 @@ services:
         fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
       - key: DISABLE_AUTOUPDATER
         value: "1"
+      - key: FRED_API_KEY                 # the macro stance (monthly) and the weekly research
+        fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
       - key: QT_START_EQUITY
         value: "100000"                   # the paper book's cash until the first portfolio or fill exists
       - key: TELEGRAM_BOT_TOKEN
