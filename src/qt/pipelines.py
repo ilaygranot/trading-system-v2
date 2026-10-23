@@ -2,6 +2,8 @@
 
 premarket: expire -> quotes -> recheck -> notify. Items still open or approved are checked against the latest
            price; a move past the threshold, or a hard block now in force, sends the item back as "changed".
+open:      fetch -> fill -> book -> notify. Minutes after the open, the approved paper orders fill at today's open and
+           the book is saved, so a position shows from the open and not only after the evening run (Ilay 23.10).
 weekly:    expire -> report -> wfetch -> arena -> revisit -> week -> research -> learn -> notify. Runs that failed or resumed, agent cost
            per agent, queue discipline (approved / rejected / not reviewed / changed), agent decisions that were
            undecided or returned; then the end-of-week review (qt.weekly, S13-R21).
@@ -14,7 +16,7 @@ from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 
 from qt.approvals import Queue
-from qt.daily import DAILY, load_portfolio  # noqa: F401  (load_portfolio re-exported for the CLI)
+from qt.daily import DAILY, fill, load_portfolio  # noqa: F401  (load_portfolio re-exported for the CLI)
 from qt.runs import RunContext, Step
 from qt import learning as L
 from qt import monthly as MO
@@ -88,6 +90,64 @@ def premarket_notify(ctx: RunContext, _: str) -> dict:
         from qt.telegram import send_item
         for iid in changed:
             send_item(bot, q, q.get(iid))
+    return {"sent": True}
+
+
+# ---------------------------------------------------------------- open
+
+def open_fetch(ctx: RunContext, _: str) -> dict:
+    """Today's bar for each symbol with an open paper order, in the shape daily.fill reads. A short history
+    (not the daily run's 400 days) keeps the cached URL apart from the evening run's, so the evening never
+    reuses this morning's partial bar. A symbol without today's bar yet stays open for the evening run."""
+    pf = ctx.services.get("portfolio")
+    if pf is None:
+        raise RuntimeError("no portfolio: send portfolio.yaml to the bot (or set QT_PORTFOLIO)")
+    out: dict = {"bars": {}, "sources": {}, "missing": [], "portfolio": pf}
+    for s in sorted({o["symbol"] for o in Queue(ctx.db).open_orders()}):
+        for prov in (ctx.services.get("prices"), ctx.services.get("prices_fallback")):
+            if prov is None:
+                continue
+            try:
+                bars, src = prov.daily_bars(s, ctx.as_of - timedelta(days=7), ctx.as_of)
+            except Exception as e:                                   # noqa: BLE001 - next provider
+                ctx.event(f"{s}: {type(e).__name__}: {e}", "warn", "fetch")
+                continue
+            today = [b for b in bars if b.day == ctx.as_of and b.open]
+            if today:
+                b = today[-1]
+                out["bars"][s], out["sources"][s] = [[b.day.isoformat(), b.open, b.high, b.low, b.close]], src
+                break
+        else:
+            out["missing"].append(s)
+    return out
+
+
+def open_book(ctx: RunContext, _: str) -> dict:
+    """Save the book with the morning's fills; the evening run loads it and finds those orders already filled."""
+    f = ctx.out("fill")
+    if not f["filled"]:
+        return {"saved": False}
+    import yaml
+    Queue(ctx.db).upload("portfolio", f"book-{ctx.as_of.isoformat()}-open.yaml",
+                         yaml.safe_dump(f["portfolio"], allow_unicode=True, sort_keys=False))
+    return {"saved": True}
+
+
+def open_notify(ctx: RunContext, _: str) -> dict:
+    f = ctx.out("fill")
+    if not f["filled"]:
+        return {"sent": False}                                       # nothing filled: no message
+    pos = {p["symbol"]: p for p in f["portfolio"].get("positions", [])}
+    lines = [f"בוצע בפתיחה {ctx.as_of.isoformat()} (תיק נייר):"]
+    for o in f["filled"]:
+        verb = {"enter": "קנייה", "add": "הגדלה", "exit": "יציאה", "sell": "מכירה", "reduce": "הקטנה"}.get(o["kind"], o["kind"])
+        stop = (pos.get(o["symbol"]) or {}).get("stop") if o["kind"] in ("enter", "add") else None
+        lines.append(f"• {o['symbol']} {verb} {o['qty']:g} @ {o['fill_price']:.2f}"
+                     + (f" · סטופ {stop:g}" if stop else ""))
+    left = ctx.out("fetch")["missing"]
+    if left:
+        lines.append("עוד אין מחיר פתיחה ל-" + ", ".join(left) + ": יבוצע בריצה של הערב")
+    _send(ctx, "\n".join(lines))
     return {"sent": True}
 
 
@@ -234,6 +294,7 @@ def _journal_link() -> list[str]:
 
 
 PREMARKET = (Step("expire", expire), Step("quotes", quotes), Step("recheck", recheck), Step("notify", premarket_notify))
+OPEN = (Step("fetch", open_fetch), Step("fill", fill), Step("book", open_book), Step("notify", open_notify))
 WEEKLY = (Step("expire", expire), Step("report", report), Step("wfetch", W.wfetch), Step("arena", W.arena),
           Step("revisit", W.revisit), Step("week", W.week), Step("research", W.research), Step("learn", L.learn_weekly),
           Step("notify", weekly_notify))
@@ -242,4 +303,4 @@ MONTHLY = (Step("manual", manual), Step("fred", fred), Step("stance", stance), S
            Step("calendar", MO.calendar), Step("season", MO.season), Step("sentiment", MO.sentiment),
            Step("exposure", MO.exposure),
            Step("queue", monthly_queue), Step("learn", L.learn_monthly), Step("notify", monthly_notify))
-PIPELINES = {"daily": DAILY, "premarket": PREMARKET, "weekly": WEEKLY, "monthly": MONTHLY}
+PIPELINES = {"daily": DAILY, "premarket": PREMARKET, "open": OPEN, "weekly": WEEKLY, "monthly": MONTHLY}

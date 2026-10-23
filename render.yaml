@@ -157,6 +157,39 @@ services:
       - key: IBKR_PORT
         value: "4004"
 
+
+  - type: cron
+    name: qt-open                         # 09:35 New York, trading days: approved paper orders fill at the open
+    runtime: python
+    region: virginia
+    plan: starter
+    schedule: "35 13,14 * * 1-5"
+    buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
+    startCommand: qt run open --scheduled
+    envVars:
+      - key: QT_PUBLIC_URL
+        fromService: {type: web, name: qt-web, envVarKey: RENDER_EXTERNAL_URL}
+      - key: QT_DATABASE_URL
+        fromDatabase: {name: qt-db, property: connectionString}
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: CLAUDE_CODE_OAUTH_TOKEN
+        fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
+      - key: DISABLE_AUTOUPDATER
+        value: "1"
+      - key: QT_START_EQUITY
+        value: "10000"                    # the paper book's cash until the first portfolio or fill exists
+      - key: TELEGRAM_BOT_TOKEN
+        fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
+      - key: TELEGRAM_CHAT_ID
+        fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_CHAT_ID}
+      - key: DASHBOARD_PASSWORD
+        fromService: {type: web, name: qt-web, envVarKey: DASHBOARD_PASSWORD}
+      - key: IBKR_HOST
+        fromService: {type: pserv, name: qt-ibgateway, property: host}
+      - key: IBKR_PORT
+        value: "4004"
+
   - type: cron
     name: qt-weekly                       # Saturday 10:00 New York
     runtime: python

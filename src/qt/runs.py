@@ -22,7 +22,7 @@ from qt.db import DB, dumps
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,                    -- daily | weekly | monthly | premarket
+  kind TEXT NOT NULL,                    -- daily | weekly | monthly | premarket | open
   as_of TEXT NOT NULL,
   status TEXT NOT NULL,                  -- running | failed | done
   started_at {TS} NOT NULL,
