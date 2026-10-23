@@ -22,8 +22,8 @@ PMI_BODY = """<html><body><h1>Manufacturing PMI® at 52.1%; October 2026 ISM® M
 <p>The Manufacturing PMI® registered 52.1 percent in October, 2.4 percentage points below the September figure of
 54.5 percent.</p>
 <p>The nine manufacturing industries reporting growth in October — in the following order — are: Primary Metals;
-Machinery; Computer &amp; Electronic Products; and Chemical Products. The five industries reporting contraction in
-October — in the following order — are: Textile Mills; Wood Products; Apparel, Leather &amp; Allied Products; and Paper
+Machinery; Computer &amp; Electronic Products; and Chemical Products. The five industries reporting a contraction in
+October are: Textile Mills; Wood Products; Apparel, Leather &amp; Allied Products; and Paper
 Products.</p>
 <h3>Commodities in Short Supply</h3>
 <p>Aluminum (2); Electrical Components (11); and Steel Products (4).</p>
