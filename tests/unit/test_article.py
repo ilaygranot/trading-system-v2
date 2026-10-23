@@ -118,3 +118,16 @@ def test_the_article_sheet_adds_macro_sector_statements_chart_and_the_earlier_an
     assert "SHEL.business.competition[0] = The market" in text and "sec:10-K Item 1 Competition https" in text
     assert "SHEL.peers[0] = {'sym': 'XOM', 'name': 'Exxon'" in text and "'eg1': 12.35" in text
     assert text.count("macro.stance.zone") == 1
+
+
+def test_dates_must_be_dates_of_the_cited_facts_and_agent_text_is_no_source_for_numbers():
+    fs, f = _sheet()
+    ne = fs.add("SHEL.catalysts.next_earnings", "2026-10-29", "code:research", AS_OF).fact_id
+    ag = fs.add("SHEL.judgment.DC-11", "justified: הנחה של 68% מול הסקטור", "agent:DC-11", AS_OF).fact_id
+    assert AR.check_sentence(S("הדוח הבא ב-29.10.", [ne]), fs) is None
+    assert AR.check_sentence(S("הדוח הבא ב-29.10.2026, ב-2026-10-29.", [ne]), fs) is None
+    assert "30.10" in AR.check_sentence(S("הדוח הבא ב-30.10.", [ne]), fs)
+    assert AR.check_sentence(S("המכפיל 8.4.", [f["pe"]]), fs) is None                # a multiple, not 8 April
+    assert "68" in AR.check_sentence(S("הנחה של 68%.", [ag]), fs)                     # the agent's own number
+    assert AR.check_sentence(S("הנחה של 68% מול הסקטור.", [ag, fs.add("SHEL.valuation.premium.pct", -67.98,
+                                                                         "code:research", AS_OF).fact_id]), fs) is None

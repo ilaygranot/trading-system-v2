@@ -53,8 +53,10 @@ def _tip(n: dict) -> str:
 
 
 def _notes(nums: list[int], sym: str, notes: dict[int, dict]) -> str:
-    return "".join(f'<sup class="fn"><a href="#src-{E(sym)}-{n}" data-tip="{E(_tip(notes.get(n, {})))}">{n}</a></sup>'
-                   for n in nums)
+    if not nums:
+        return ""
+    links = ",".join(f'<a href="#src-{E(sym)}-{n}" data-tip="{E(_tip(notes.get(n, {})))}">{n}</a>' for n in nums)
+    return f'<sup class="fn" dir="ltr">{links}</sup>'                 # 1,2,3: one marker, not 123
 
 
 def _sentence(s: dict | None, sym: str, notes: dict[int, dict]) -> str:
@@ -245,7 +247,7 @@ h2.ch{font-family:var(--display);font-size:1.5rem;border-top:1px solid var(--ink
 .ans{font-family:var(--body);font-size:.72rem;font-weight:700;border-radius:3px;padding:1px 8px}
 .ans-yes{background:var(--g-bg);color:var(--g)} .ans-partial{background:var(--o-bg);color:var(--o)}
 .ans-no{background:var(--r-bg);color:var(--r)} .ans-no_source{background:var(--grid);color:var(--muted)}
-sup.fn{font-family:var(--mono);font-size:.62em;line-height:0} sup.fn a{text-decoration:none;padding:0 1px;position:relative}
+sup.fn{font-family:var(--mono);font-size:.62em;line-height:0;margin-inline-start:2px;unicode-bidi:isolate} sup.fn a{text-decoration:none;padding:0 1px;position:relative}
 sup.fn a::after{content:attr(data-tip);position:absolute;bottom:1.8em;inset-inline-start:-8px;width:min(320px,70vw);
   background:var(--ink);color:var(--panel);font:400 .74rem/1.45 var(--body);padding:8px 10px;border-radius:4px;
   opacity:0;pointer-events:none;transition:opacity .12s;z-index:20;white-space:normal;text-align:start}

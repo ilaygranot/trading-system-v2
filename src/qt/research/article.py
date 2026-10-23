@@ -4,7 +4,8 @@ standing on facts from the fact sheet.
 The agent writes; code decides what survives. A sentence is kept only when
   1. it cites at least one fact id, and every id is on the sheet;
   2. every number in it is a number in one of the facts it cites (at the precision it is written, in any scale:
-     units, thousands, millions, billions, or a fraction written as a percent). Counts up to 12 written as plain
+     units, thousands, millions, billions, or a fraction written as a percent), and every date is a date in them.
+     A fact an agent wrote (an earlier card) supports words, never a number. Counts up to 12 written as plain
      integers ("two segments", "3 of 4 quarters") and ids of rules, forms and indicator periods are not checked;
   3. every quote it carries appears, word for word, in the text of the fact it names (an ellipsis may join pieces
      that appear in that order).
@@ -110,13 +111,49 @@ def _walk(x: Any) -> Iterable[float]:
             yield from _walk(v)
 
 
+_ISO = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+_DM = re.compile(r"(?<![\d.,])(\d{1,2})[./](\d{1,2})(?:[./](\d{4}|\d{2}))?(?!\d|[.,]\d)")
+
+
 def fact_numbers(facts: FactSheet, ids: Iterable[str]) -> list[float]:
+    """The numbers in the cited facts. A fact the agent wrote (an earlier card's reasoning) is a source for words,
+    never for a number: its numbers are not in the pool, so a number reaches the article only from code or a
+    document."""
     out: list[float] = []
     for fid in ids:
         f = facts.get(fid)
-        out += list(_walk(f.value))
-        out += [float(f.as_of.year), float(f.as_of.month), float(f.as_of.day)]
+        if not str(f.source).startswith("agent:"):
+            out += list(_walk(f.value))
     return out
+
+
+def fact_dates(facts: FactSheet, ids: Iterable[str]) -> set[tuple[int, int, int]]:
+    """(year, month, day) of every date in the cited facts: their as-of dates and the ISO dates in their text."""
+    out: set[tuple[int, int, int]] = set()
+    for fid in ids:
+        f = facts.get(fid)
+        out.add((f.as_of.year, f.as_of.month, f.as_of.day))
+        for m in _ISO.finditer(str(f.value)):
+            out.add((int(m.group(1)), int(m.group(2)), int(m.group(3))))
+    return out
+
+
+def strip_dates(text: str, dates: set[tuple[int, int, int]]) -> str:
+    """Remove the dates the cited facts hold ("29.10", "29.10.2026", "2026-10-29", a year "2026") from the text. A
+    date-like token that matches none stays, and is then checked as a number ("8.4" is a multiple, not a date)."""
+    years = {y for y, _, _ in dates}
+    dm = {(d, m) for _, m, d in dates}
+
+    def iso(m: re.Match) -> str:
+        return " " if (int(m.group(1)), int(m.group(2)), int(m.group(3))) in dates else m.group(0)
+
+    def short(m: re.Match) -> str:
+        d, mo, y = int(m.group(1)), int(m.group(2)), m.group(3)
+        if (d, mo) in dm and (not y or int(y) % 100 in {x % 100 for x in years}):
+            return " "
+        return m.group(0)
+    t = _DM.sub(short, _ISO.sub(iso, text))
+    return re.sub(r"(?<!\d)(19|20)\d\d(?![\d%.,])", lambda m: " " if int(m.group(0)) in years else m.group(0), t)
 
 
 def number_ok(value: float, tol: float, pct: bool, pool: list[float]) -> bool:
@@ -161,7 +198,8 @@ def check_sentence(s: dict, facts: FactSheet) -> str | None:
     if missing:
         return f"facts not on the sheet: {', '.join(missing)}"
     pool = fact_numbers(facts, ids)
-    for v, tol, pct, tok in numbers_in_text(text):
+    rest = strip_dates(text, fact_dates(facts, ids))
+    for v, tol, pct, tok in numbers_in_text(rest):
         if not pct and v <= SMALL_COUNT and tok.strip().isdigit():
             continue
         if not number_ok(v, tol, pct, pool):
