@@ -3,7 +3,7 @@ name = "quantum-trader"
 version = "0.1.0"
 description = "Decision-support system for swing trading per the Quantum Trader course playbook (v1)"
 requires-python = ">=3.11"
-dependencies = ["pyyaml>=6", "requests>=2.31", "tzdata>=2024.1", "beautifulsoup4>=4.12", "lxml>=5"]
+dependencies = ["pyyaml>=6", "requests>=2.31", "tzdata>=2024.1", "beautifulsoup4>=4.12", "lxml>=5", "pypdf>=4"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -22,7 +22,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-qt = ["policy.yaml", "status.yaml", "agents/*.yaml", "agents/*.md", "static/*"]
+qt = ["data/macro_seed.yaml", "policy.yaml", "status.yaml", "agents/*.yaml", "agents/*.md", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

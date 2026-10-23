@@ -179,6 +179,22 @@ def _verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _macro_fetch(args: argparse.Namespace) -> int:
+    """Fetch ISM / NFIB / NAAIM now and print what would be added (--save writes the upload)."""
+    from datetime import date
+    from qt.data import macro_auto as MA
+    as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
+    if args.save:
+        from qt.db import DB
+        rep = MA.run(DB(args.db) if args.db else DB(), as_of)
+    else:
+        rep = MA.refresh(None, as_of)
+        rep.pop("content")
+    print(json.dumps(rep, ensure_ascii=False, indent=1, default=str))
+    print("\n".join(MA.lines(rep)))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="qt")
     sub = ap.add_subparsers(required=True)
@@ -219,6 +235,11 @@ def main(argv: list[str] | None = None) -> int:
     w = sub.add_parser("web", help="the dashboard and Telegram webhook (local; gunicorn qt.web:application in the cloud)")
     w.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
     w.set_defaults(fn=_web)
+    mf = sub.add_parser("macro-fetch", help="fetch ISM / NFIB / NAAIM from the public sources and print the result")
+    mf.add_argument("--as-of")
+    mf.add_argument("--save", action="store_true", help="write the merged file as the manual_macro upload")
+    mf.add_argument("--db")
+    mf.set_defaults(fn=_macro_fetch)
     sub.add_parser("set-webhook", help="point the Telegram bot at the web service").set_defaults(fn=_webhook)
     sub.choices["set-webhook"].add_argument("--url")
     args = ap.parse_args(argv)

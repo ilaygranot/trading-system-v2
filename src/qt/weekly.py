@@ -248,11 +248,15 @@ def research(ctx: RunContext, _: str) -> dict:
     summary says what is missing; the rest of the weekly review stands."""
     runner, fred = ctx.services.get("agents"), ctx.services.get("fred")
     q = Queue(ctx.db)
+    auto = None
+    if ctx.services.get("macro_auto") is not None:
+        from qt.pipelines import refresh_macro
+        auto = refresh_macro(ctx, ctx.services["macro_auto"])
     manual = q.latest_upload("manual_macro")
     missing = [n for n, v in (("Claude (ANTHROPIC_API_KEY או CLAUDE_CODE_OAUTH_TOKEN)", runner), ("FRED_API_KEY", fred), ("קובץ המקרו החודשי", manual))
                if v is None]
     if missing:
-        return {"skipped": missing}
+        return {"skipped": missing, "macro_auto": auto}
     import json
     import yaml
     from qt.agents.runner import config
@@ -281,7 +285,8 @@ def research(ctx: RunContext, _: str) -> dict:
     growth = {e: dict(v["growth"], total=v.get("total"), bucket=v.get("bucket")) for e, v in sc.items() if v.get("growth")}
     return {"report_id": rid, "ideas": ideas, "watchlist_n": len(wl["entries"]), "sector_growth": growth,
             "rejected_on_list": [x["symbol"] for x in ideas if x["bucket"] == "reject" and x["symbol"] in on_list],
-            "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {})}
+            "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {}),
+            "macro_auto": auto}
 
 
 # ---------------------------------------------------------------- the message
@@ -332,6 +337,8 @@ def summary(ctx: RunContext) -> str:
         lines.append("שבועיים קדימה: " + " · ".join(f"{a['date'][5:]} {KIND_HE[a['kind']]} {a['symbol']}"
                                                       for a in wk["ahead"]))
     rs = ctx.out("research") or {}
+    from qt.data.macro_auto import lines as macro_lines
+    lines += macro_lines(rs.get("macro_auto"))
     if rs.get("skipped"):
         lines.append("מחקר שבועי לא רץ: חסר " + ", ".join(rs["skipped"]))
     elif rs.get("ideas") is not None:
