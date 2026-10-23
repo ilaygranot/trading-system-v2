@@ -241,6 +241,7 @@ runtime:                           # runtime plan 4-7; not from course (operatio
   timezone: America/New_York
   daily_at: "18:30"                # after the close
   premarket_at: "08:30"
+  open_at: "09:35"                 # approved paper orders fill at the open (Ilay 23.10)
   weekly_at: "10:00"               # Saturday
   monthly_days: [8, 14]            # the Saturday after the first week of the month (S13)
   window_minutes: 30               # cron fires at both UTC hours (DST); the NY-time guard picks one

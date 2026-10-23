@@ -25,7 +25,7 @@ def test_blueprint_parses_and_every_cron_gets_the_secrets_from_qt_web():
     web = _env(services["qt-web"])
     assert all(web[k].get("sync") is False for k in SECRETS | OPTIONAL | {"FRED_API_KEY"})
     crons = [s for s in services.values() if s["type"] == "cron"]
-    assert {c["name"] for c in crons} == {"qt-daily", "qt-premarket", "qt-weekly", "qt-monthly"}
+    assert {c["name"] for c in crons} == {"qt-daily", "qt-premarket", "qt-open", "qt-weekly", "qt-monthly"}
     for c in crons:
         env = _env(c)
         for k in SECRETS:

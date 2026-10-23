@@ -58,6 +58,8 @@ def test_schedule_new_york_time_dst_and_holidays():
     assert due("daily", datetime(2026, 12, 1, 23, 35, tzinfo=UTC))[0]          # EST: the other UTC hour
     assert not due("daily", datetime(2026, 11, 26, 23, 35, tzinfo=UTC))[0]     # Thanksgiving
     assert due("premarket", datetime(2026, 10, 21, 12, 30, tzinfo=UTC))[0]
+    assert due("open", datetime(2026, 10, 23, 13, 40, tzinfo=UTC))[0]          # EDT: 09:40 NY
+    assert not due("open", datetime(2026, 10, 23, 14, 40, tzinfo=UTC))[0]
     ok, as_of = due("weekly", datetime(2026, 10, 24, 14, 5, tzinfo=UTC))
     assert ok and as_of == date(2026, 10, 23)                                 # Saturday, as of Friday
     assert due("monthly", datetime(2026, 10, 10, 14, 5, tzinfo=UTC))[0]
@@ -105,6 +107,42 @@ def test_standing_order_exit_is_paper_filled_without_waiting(db):
     q = Queue(db)
     iid = q.add("r1", date(2026, 10, 20), _action(kind="exit", pre=True), 100.0)
     assert q.get(iid)["status"] == "standing_order" and q.open_orders()[0]["kind"] == "exit"
+
+
+def test_open_run_fills_approved_orders_at_the_open_and_the_evening_does_not_fill_again(db):
+    from qt.calc.volatility import Bar
+    day = date(2026, 10, 23)
+    q = Queue(db)
+    a = dict(_action(kind="enter", symbol="SHEL", qty=5), stop=99.83, target=129.52, direction="long", sector="XLE")
+    iid = q.add("r1", date(2026, 10, 22), a, 105.8)
+    late = q.add("r1", date(2026, 10, 22), _action(kind="enter", symbol="XOM", qty=3), 100.0)
+    q.decide(iid, "approve", now=datetime(2026, 10, 23, 3, 0, tzinfo=UTC))
+    q.decide(late, "approve", now=datetime(2026, 10, 23, 3, 0, tzinfo=UTC))
+
+    class Open:
+        def daily_bars(self, s, start, end):
+            assert end - start < timedelta(days=30)                   # not the evening run's cached URL
+            last = Bar(day - timedelta(days=1), 105, 106, 104, 105.36)
+            return ([last, Bar(day, 106.86, 108, 106.5, 107.97)] if s == "SHEL" else [last]), "fake"
+
+    bot = Bot()
+    pf = {"cash": 10_000, "peak_equity": 10_000, "positions": []}
+    Runner(db, PIPELINES, {"prices": Open(), "telegram": bot, "portfolio": pf}).start("open", day)
+    book = A.portfolio(db)
+    shel = book["positions"][0]
+    assert (shel["symbol"], shel["qty"], shel["entry"], shel["stop"]) == ("SHEL", 5, 106.86, 99.83)
+    assert book["cash"] == pytest.approx(10_000 - 5 * 106.86)
+    text = bot.sent[-1][1]
+    assert "SHEL קנייה 5 @ 106.86 · סטופ 99.83" in text and "XOM" in text and "הערב" in text
+    assert [o["symbol"] for o in q.open_orders()] == ["XOM"]          # no open price yet: left for the evening
+    assert q.fill({("SHEL", "2026-10-23"): 107.0}) == []              # the evening finds SHEL already filled
+
+
+def test_open_run_without_orders_sends_nothing(db):
+    bot = Bot()
+    Runner(db, PIPELINES, {"prices": None, "telegram": bot, "portfolio": {"cash": 1, "positions": []}}).start(
+        "open", date(2026, 10, 23))
+    assert bot.sent == [] and Queue(db).latest_upload("portfolio") is None
 
 
 def test_premarket_recheck_sends_a_moved_item_back_as_changed(db):

@@ -360,7 +360,7 @@ class App:
         return snapshot(pf, self.prices(symbols), q.open_orders())
 
     # ------------------------------------------------------------ live pages
-    KINDS = (("daily", "יומית"), ("premarket", "לפני פתיחה"), ("weekly", "שבועית"), ("monthly", "חודשית"))
+    KINDS = (("daily", "יומית"), ("premarket", "לפני פתיחה"), ("open", "בפתיחה"), ("weekly", "שבועית"), ("monthly", "חודשית"))
 
     def _schemas(self) -> Queue:
         from qt.runs import SCHEMA
@@ -525,7 +525,7 @@ class App:
         from qt.schedule import _r
         rt = _r()
         texts = self.status_doc().get("runs", {})
-        ny_at = {"daily": rt.daily_at, "premarket": rt.premarket_at, "weekly": f"שבת {rt.weekly_at}",
+        ny_at = {"daily": rt.daily_at, "premarket": rt.premarket_at, "open": rt.open_at, "weekly": f"שבת {rt.weekly_at}",
                  "monthly": f"שבת בימים {rt.monthly_days[0]}–{rt.monthly_days[1]}, {rt.weekly_at}"}
         runs = (st or {}).get("runs") or {}
         if not runs:
