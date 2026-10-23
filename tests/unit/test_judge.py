@@ -10,6 +10,7 @@ from types import SimpleNamespace as NS
 
 from qt.agents import AgentRunner
 from qt.agents.runner import BudgetExceeded
+from qt.research import catalyst_chain as CC
 from qt.research import judge as JG
 from qt.research import report, run
 
@@ -33,6 +34,9 @@ DEFAULTS = {
     "DC-11": _answer("DC-11", "justified", target_price=129.5, target_method="hist_3y"),
     "DC-12": _answer("DC-12", "breakers", thesis_breakers=[{"kind": "kpi", "text": "ירידה בתפוקה", "check": "דוח רבעוני"}]),
     "DC-13": _answer("DC-13", "hot", tldr=TLDR),
+    "DC-14": _answer("DC-14", "B", priced_in=False, direction="for_idea", level="company", timing="expected",
+                     expected_date="2026-10-29", persistence="until_next_report", follow_on_expected=True,
+                     strength="בינונית", flow_technical=False, peers_affected=[], what="דוח רבעון"),
     "DC-17": _answer("DC-17", "level_break", level=106.7, return_condition="סגירה מעל 106.7"),
     "DC-19": _answer("DC-19", "k_mid"),
     "DC-20": _answer("DC-20", "2", first_size_pct=3, add_conditions=["סגירה מעל 110"]),
@@ -61,13 +65,27 @@ class CardClient:
                                                cache_creation_input_tokens=0))
 
 
-def _deep_dive(calls):
+def _deep_dive(calls, **inject):
     def dd(sym, etf, direction, j):
         calls.append((sym, dict(j)))
         d = copy.deepcopy(FIX["ideas"][SYM])
-        d.update(sym=sym, etf=etf, direction=direction, judgment=j)
+        d.update(sym=sym, etf=etf, direction=direction, judgment=j, **copy.deepcopy(inject))
         return d
     return dd
+
+
+def _n_events(**inject):
+    d = copy.deepcopy(FIX["ideas"][SYM])
+    d.update(inject)
+    return len(CC.select_for_agent(CC.events(d, AS_OF)))
+
+
+def _world(msg):
+    return json.loads(msg.split("<world_state>\n", 1)[1].split("\n</world_state>", 1)[0])
+
+
+def _dc(client, card):
+    return [r["messages"][0]["content"] for r in client.requests if f'<decision_card id="{card}"' in r["messages"][0]["content"]]
 
 
 def _timing(n):
@@ -96,8 +114,15 @@ def test_idea_facts_carry_the_code_numbers_with_ids():
 def test_hot_idea_runs_a4_then_a6_and_fills_the_judgment(db):
     client, calls = CardClient(), []
     j = _judge(db, client).idea(_timing(1)[0] | {"sym": SYM}, _deep_dive(calls), FIX["macro"], AS_OF)
-    assert client.cards == ["DC-10", "DC-11", "DC-12", "DC-13", "DC-17", "DC-19", "DC-20"]
+    n = _n_events()
+    assert n >= 1
+    assert client.cards[:3] == ["DC-10", "DC-11", "DC-12"] and client.cards[3:3 + n] == ["DC-14"] * n
+    assert client.cards[3 + n:] == ["DC-13", "DC-17", "DC-19", "DC-20"]
     assert calls == [(SYM, {"etf": "XLE", "direction": "long", "options": False})]
+    assert j["catalyst_expected"] is True and j["catalysts"] and j["heat"] == "hot" and "code_overrides" not in j
+    own = next(r for r in j["catalysts"] if r["kind"] == "own_report")
+    assert own["class"] == "B" and own["decided_by"] == "DC-14" and own["what"] == "דוח רבעון"
+    assert isinstance(j["news_adverse"], bool) and "catalyst_chain" in j and "catalyst_wait" in j
     assert j["decision"] == "long" and j["story_type"] == "momentum_long" and j["story"] == "נימוק DC-10"
     assert j["premium"]["choice"] == "justified" and j["target_source"] == "own_multiple_target"
     assert j["breakers"][0]["text"] == "ירידה בתפוקה" and j["tldr"] == TLDR
@@ -148,7 +173,8 @@ def test_full_judgment_and_budget_stop(db):
     J = _judge(db, client)({"as_of": AS_OF, "macro": FIX["macro"], "timing": _timing(2)}, _deep_dive(calls))
     assert J["A1"]["DC-01"]["choice"] == "hot" and J["A1"]["DC-02"]["in_six_months"] == "growth+_inflation+"
     assert set(J["ideas"]) == {"S0", "S1"} and J["judged_by"].startswith("Agents")
-    assert len(J["agent_log"]) == 4 + 2 * 7 and all(x["status"] == "decided" for x in J["agent_log"])
+    assert len(J["agent_log"]) == 4 + 2 * (7 + _n_events()) and all(x["status"] == "decided" for x in J["agent_log"])
+    assert "warnings" not in J
 
     class Broke(AgentRunner):
         def decide(self, agent, card_id, *a, **k):
@@ -159,6 +185,21 @@ def test_full_judgment_and_budget_stop(db):
     assert J["ideas"] == {} and list(J["errors"]) == ["S0"] and "budget" in J["errors"]["S0"]   # stops at the first
     assert J["A3"]["cut_by_budget"] == ["S1", "S2"] and set(J["A3"]["skipped"]) == {"S0", "S1", "S2"}
     assert JG.unexplained_greens(_timing(3), set(J["ideas"]), J["A3"]["skipped"]) == []   # each has a reason
+
+
+def test_budget_stop_inside_dc14_stops_the_run(db):
+    """BudgetExceeded in DC-14 is not one event's agent_error: the idea stops and the rest are cut by budget."""
+    n = []
+
+    class Broke(AgentRunner):
+        def decide(self, agent, card_id, *a, **k):
+            if card_id == "DC-14":
+                n.append(card_id)
+                raise BudgetExceeded("agent budget $25 reached")
+            return super().decide(agent, card_id, *a, **k)
+    J = JG.Judge(Broke(db, CardClient()))({"as_of": AS_OF, "macro": FIX["macro"], "timing": _timing(2)}, _deep_dive([]))
+    assert n == ["DC-14"] and J["ideas"] == {} and "budget" in J["errors"]["S0"]
+    assert J["A3"]["cut_by_budget"] == ["S1"]
 
 
 def test_runner_uses_the_run_cap_instead_of_the_daily_one(db):
@@ -245,3 +286,84 @@ def test_unexplained_greens_and_the_hand_written_run_refuses_them():
     assert JG.unexplained_greens(tm, {"S0"}, {"S1": "  "}) == ["S1"]          # a blank reason is no reason
     assert JG.unexplained_greens(tm, {"S0"}, {"S1": "סיבה"}) == []
     assert JG.unexplained_greens(tm, set(), ["S0", "S1"]) == ["S0", "S1"]     # the old list form has no reasons
+
+
+# ------------------------------------------------------------------ catalysts (DC-14 and the code's gate)
+
+def test_hot_without_counted_catalyst_becomes_watch_only(db):
+    for dc14 in ({**DEFAULTS["DC-14"], "option": "C"}, {**DEFAULTS["DC-14"], "priced_in": True}):
+        client = CardClient({"DC-14": dc14})
+        j = _judge(db, client).idea(_timing(1)[0] | {"sym": SYM}, _deep_dive([]), FIX["macro"], AS_OF)
+        assert j["decision"] == "watch_only" and j["heat"] == "cold" and j["catalyst_expected"] is False
+        assert j["why"].startswith("S08-R33/S07-R13") and j["code_overrides"][0]["from"] == "hot"
+        assert "DC-13" in client.cards and "DC-17" not in client.cards and j["direction"] == "long"   # same direction
+
+
+def test_dc14_failure_is_the_lower_class(db):
+    class Flaky(CardClient):
+        def _create(self, **req):
+            if '<decision_card id="DC-14"' in req["messages"][0]["content"]:
+                raise RuntimeError("api down")
+            return super()._create(**req)
+    j = _judge(db, Flaky()).idea(_timing(1)[0] | {"sym": SYM}, _deep_dive([]), FIX["macro"], AS_OF)
+    agent_rows = [r for r in j["catalysts"] if (r["code_reason"] or "").startswith("agent_error")]
+    assert agent_rows and all(r["class"] == "D" for r in agent_rows) and j["decision"] == "watch_only"
+
+
+DOCS = {"symbol": SYM, "cik": 1306965, "ciks": [1306965], "foreign": True, "as_of": "2026-10-20",
+        "current": [{"form": "8-K", "date": "2026-10-10", "accession": "0001-26-000123", "items": ["2.02", "9.01"],
+                     "item_names": ["Results of Operations and Financial Condition"], "kind": "results",
+                     "url": "https://www.sec.gov/a.htm", "index_url": "https://www.sec.gov/0001-26-000123-index.htm",
+                     "exhibits": [{"type": "EX-99.1", "url": "https://www.sec.gov/ex991.htm",
+                                   "title": "Third quarter update note", "lead": "Integrated Gas production 740-780 kboe/d"}]}],
+        "results": {"form": "8-K", "date": "2026-10-10", "url": "https://www.sec.gov/ex991.htm", "source": "sec:8-K EX-99.1",
+                    "title": "Third quarter update note", "lead": "Integrated Gas production 740-780 kboe/d",
+                    "outlook": ["Production expected to be 740-780 kboe/d in Q4"], "guidance": [], "commentary": None},
+        "results_prev": None,
+        "risk_factors": {"form": "20-F", "filed": "2026-03-12", "url": "https://www.sec.gov/20f.htm", "chars_total": 90000,
+                         "headlines": ["Rising climate change concerns could lead to lower demand",
+                                       "Our future hydrocarbon production depends on new resources"],
+                         "excerpt": "Risk factors text", "delta": None},
+        "transcript": None, "errors": []}
+
+
+def test_documents_become_facts_and_events(db):
+    d = copy.deepcopy(FIX["ideas"][SYM])
+    d["documents"] = DOCS
+    text = JG.idea_facts(d, FIX["macro"], AS_OF).render()
+    assert "SHEL.filing[0] = 2026-10-10 8-K 2.02 9.01" in text and "Third quarter update note" in text
+    assert "SHEL.risk_factors.headlines = Rising climate" in text and "sec:20-F Item 1A https://www.sec.gov/20f.htm" in text
+    assert "SHEL.results.outlook[0] = [8-K 2026-10-10] Production expected" in text  # dated: never a stale "latest"
+    assert "SHEL.results.date = 2026-10-10" in text
+    assert "SHEL.results.outlook[0]" in text and "SHEL.catalysts.analyst_actions[0] = 2026-09-28 TD Cowen" in text
+    client = CardClient()
+    j = _judge(db, client).idea(_timing(1)[0] | {"sym": SYM}, _deep_dive([], documents=DOCS), FIX["macro"], AS_OF)
+    assert client.cards.count("DC-14") == _n_events(documents=DOCS)
+    sent = [m for m in _dc(client, "DC-14") if "0001-26-000123" in m]
+    assert sent and "Integrated Gas production" in sent[0] and "SHEL.event.facts.pre_move_20d_pct" in sent[0]
+    assert "SHEL.chart" not in sent[0] and "SHEL.plan.rr" not in sent[0] and "SHEL.valuation" not in sent[0]
+    assert {s["url"] for s in j["sources"]} >= {"https://www.sec.gov/0001-26-000123-index.htm", "https://www.sec.gov/20f.htm"}
+    assert any(r.get("accession") == "0001-26-000123" and r["kind"] == "results" for r in j["catalysts"])
+
+
+def test_dc14_world_has_regime_and_profile(db):
+    client = CardClient()
+    _judge(db, client).idea(_timing(1)[0] | {"sym": SYM}, _deep_dive([]), FIX["macro"], AS_OF)
+    m = _dc(client, "DC-14")[0]
+    w = _world(m)
+    assert w["regime"] == {"zone": "hot", "bias": "bullish"} and w["profile"]["industry"] == "Oil & Gas Integrated"
+    assert w["event"]["kind"] == "own_report" and w["peers_on_list"] == [] and "macro.stance.zone = hot" in m
+    assert w["DC-12"]["thesis_breakers"] and "SHEL.thesis_breaker[0]" in m      # story and breakers (S08-R23)
+
+
+def test_dc17_world_has_catalyst_code(db):
+    client = CardClient()
+    _judge(db, client).idea(_timing(1)[0] | {"sym": SYM}, _deep_dive([]), FIX["macro"], AS_OF)
+    for card in ("DC-13", "DC-17"):
+        w = _world(_dc(client, card)[0])
+        assert w["catalyst_code"]["expected"] is True and w["DC-14"] and "wait" in w["catalyst_code"], card
+
+
+def test_more_than_four_hot_warns(db):
+    J = _judge(db, CardClient())({"as_of": AS_OF, "macro": FIX["macro"], "timing": _timing(5)}, _deep_dive([]))
+    assert sum(j["heat"] == "hot" for j in J["ideas"].values()) == 5 and J["warnings"] == ["hot_above_4"]

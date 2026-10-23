@@ -29,7 +29,16 @@ DC-13: {agent: A4, options: ["no", cold, hot], undecided: cold, approval: requir
                 properties: {line: {type: string}, macro: {type: string}, sector: {type: string}, company: {type: string}, why_now: {type: string}, wrong: {type: string}},
                 required: [line, macro, sector, company, why_now, wrong], additionalProperties: false}}}
 DC-14: {agent: A5, options: [macro_lead, macro_noise, A, B, C, D], undecided: lower_class, approval: flag,
-        extra: {priced_in: {type: boolean}, direction: {enum: [for_idea, against_idea]}}}
+        extra: {priced_in: {type: boolean}, direction: {enum: [for_idea, against_idea]},
+                level: {enum: [market_macro, industry, company]},
+                timing: {enum: [occurred, expected]},
+                expected_date: {type: string, description: "YYYY-MM-DD, the estimated date of an expected event; empty when occurred"},
+                persistence: {enum: [days_1_3, until_next_report, accumulating_2_6m, none]},
+                follow_on_expected: {type: boolean},
+                strength: {type: string, description: "Hebrew words; the course has no scale"},
+                flow_technical: {type: boolean},
+                peers_affected: {type: array, items: {type: string}},
+                what: {type: string, description: "Hebrew, one line: what happened or is expected"}}}
 DC-15: {agent: A5, options: [cold, hot, boiling, frozen], undecided: current_state, approval: required}
 DC-16: {agent: A5, options: [noise_continue, frozen_exit], undecided: noise_continue, approval: required}
 DC-17: {agent: A6, options: [color_change, level_break, retest, base_below_or_above, monthly_breakout_a_plus, short_from_above, wait],

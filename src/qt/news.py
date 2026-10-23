@@ -5,9 +5,14 @@ A class A or B headline against an open position, not priced in, is an event for
 against a watchlist idea it is a flag in the summary (a possible thesis breaker, S08-R30). The day's news diary
 (S13-R27: 3-5 events) is the strongest of the day's headlines. Without the agents the headlines are listed
 unclassified. A headline is classified once: news_seen keeps every link already handled.
+
+Peers (S08-J25, code only): a strong headline (A/B, or a C about results) on one stock is recorded as a class C note
+on every other watchlist entry of the same sector ETF, or that names it as a peer. A note, never an action
+(S08-R18: C is recorded only because the stock is on the list); no extra DC-14 call.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 from typing import Any
 
@@ -32,6 +37,7 @@ MAX_CLASSIFY = 12                        # DC-14 calls per day, positions first 
 DIARY = 5                                # S13-R27: 3-5 events a day
 RANK = {"A": 0, "macro_lead": 1, "B": 2, "C": 3, "D": 4, "macro_noise": 5, None: 6}
 STRONG = ("A", "B")
+RESULTS_WORDS = re.compile(r"result|earning|quarter|revenue|guidance|outlook|profit", re.IGNORECASE)
 
 
 def _facts(item: dict, ctx_info: dict, as_of: date) -> FactSheet:
@@ -96,8 +102,29 @@ def news(ctx: RunContext, _: str) -> dict:
     adverse = {it["symbol"]: f"{it['klass']}: {it['title']}" for it in against if it["held"]}
     flags = {it["symbol"]: f"{it['klass']}: {it['title']}" for it in against if not it["held"]}
     diary = sorted(fresh, key=lambda x: (RANK.get(x.get("klass"), 6), not x["held"]))[:DIARY]
+    etf_of = {s: e.etf for s, e in watch.items()} | {s: p.get("sector") for s, p in held.items()}
     return {"enabled": True, "classified": sum(1 for x in fresh if x.get("klass")), "items": fresh,
-            "adverse": adverse, "watch_flags": flags, "diary": diary}
+            "adverse": adverse, "watch_flags": flags, "diary": diary,
+            "peer_notes": peer_notes(fresh, list(watch.values()), etf_of)}
+
+
+def peer_notes(items: list[dict], entries: list, etf_of: dict[str, str | None]) -> dict[str, list[str]]:
+    """S08-J25: a strong event at a peer as a C note on each same-ETF (or named-peer) watchlist entry."""
+    from qt.watchlist import classify
+    cls = classify("competitor_results", on_list=True).cls             # C: recorded, never acted on (S08-R18)
+    out: dict[str, list[str]] = {}
+    for it in items:
+        k = it.get("klass")
+        if not (k in STRONG or (k == "C" and RESULTS_WORDS.search(it.get("title") or ""))):
+            continue
+        sym, etf = it["symbol"], etf_of.get(it["symbol"])
+        for e in entries:
+            if e.symbol == sym or not ((etf and e.etf == etf) or sym in (e.peers or [])):
+                continue
+            note = f"[{cls}] דיווח/אירוע אצל מתחרה: {sym} {it['title']}"
+            if note not in out.get(e.symbol, []):
+                out.setdefault(e.symbol, []).append(note)
+    return out
 
 
 DIR_HE = {"for_idea": "בעד", "against_idea": "נגד"}
@@ -118,4 +145,6 @@ def diary_lines(out: dict) -> list[str]:
         lines.append(f"⚠️ {sym}: ידיעה נגד הפוזיציה ({what}), עוברת ל-A7")
     for sym, what in out.get("watch_flags", {}).items():
         lines.append(f"⚠️ {sym} ברשימה: ידיעה נגד הרעיון ({what}), לבדוק שובר תזה")
+    for sym, notes in (out.get("peer_notes") or {}).items():
+        lines += [f"• {sym}: {n} (S08-J25)" for n in notes]
     return lines
