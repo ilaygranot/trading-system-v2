@@ -12,11 +12,13 @@ reuses what was already fetched (delete a file there to recompute that stage).
 from __future__ import annotations
 
 import json
+import os
 import pickle
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -27,12 +29,13 @@ from qt.calc import trade as T
 from qt.calc.volatility import adr
 from qt.policy import load_policy
 from qt.research import idea, macro_stage, sector_screen, universe as U, verify
-from qt.research.judge import candidates, unexplained_greens
+from qt.research.judge import MAX_DEEP, candidates, unexplained_greens
 from qt.research.yahoo import Yahoo, raw
 from qt.sectors import cycle_phase
 from qt.timing import candidate_levels, snapshot
 
 HISTORY_DAYS = 365 * 8
+MAX_PEERS = 6                                     # peers per deep-dive stock (S08-J25; not from course: cost)
 SRC_HE = {"hist_3y": "ממוצע 3 שנים", "sector": "מכפיל הסקטור", "hist_trimmed": "ממוצע ללא חריג, לא מהקורס"}
 
 
@@ -107,8 +110,52 @@ def _target_options(price: float, direction: str, ext: float, val: dict, levels:
     return [o for o in out if (o["price"] > price) == up]
 
 
+def peers_for(u: dict, screens: dict, sym: str, etf: str, on_list: set[str] | Callable[[], set[str]] = frozenset(),
+              as_of: date | None = None, n: int = MAX_PEERS) -> list[dict]:
+    """S08-J25: the stock's peers from the screen of its sector (long and short rows), same industry first, with the
+    next report from the summaries already fetched (no extra HTTP). on_list: the ideas and the watchlist."""
+    scr = screens.get(etf) or {}
+    summ = u.get("summaries") or {}
+    ind = ((summ.get(sym) or {}).get("assetProfile") or {}).get("industry")
+    rows = [c for c in (scr.get("long") or []) + (scr.get("short") or []) if c.get("ticker") and c["ticker"] != sym]
+    rows = list({c["ticker"]: c for c in rows}.values())
+    same = [c for c in rows if ind and ((summ.get(c["ticker"]) or {}).get("assetProfile") or {}).get("industry") == ind]
+    lst = on_list() if callable(on_list) else on_list
+    out = []
+    for c in (same + [c for c in rows if c not in same])[:n]:
+        p = c["ticker"]
+        ce = (summ.get(p) or {}).get("calendarEvents") or {}
+        ds = sorted(x for x in (raw_date(e) for e in ((ce.get("earnings") or {}).get("earningsDate") or [])) if x)
+        ds = [x for x in ds if as_of is None or x > as_of.isoformat()] or ds[-1:]
+        out.append({"sym": p, "etf": etf, "same": "industry" if c in same else "etf", "on_list": p in lst,
+                    "next_earnings": ds[0] if ds else None, "last_results_8k": None})
+    return out
+
+
+def raw_date(x: Any) -> str | None:
+    """A Yahoo date field ({raw: epoch, fmt: 'YYYY-MM-DD'} or an epoch or an ISO string) as YYYY-MM-DD."""
+    if isinstance(x, dict):
+        if x.get("fmt"):
+            return str(x["fmt"])[:10]
+        x = x.get("raw")
+    if isinstance(x, (int, float)):
+        return datetime.fromtimestamp(x, tz=UTC).date().isoformat()
+    if isinstance(x, str) and len(x) >= 10:
+        return x[:10]
+    return None
+
+
+def _rows_with_ids(rows: list | None) -> list[dict] | None:
+    """Catalyst rows for the horizon code; a hand-written row has no id or timing."""
+    if not rows:
+        return None
+    return [{"id": f"J{n:02d}", "timing": "expected", **r} for n, r in enumerate(rows, 1) if isinstance(r, dict)]
+
+
 def deep_dive(y: Yahoo, u: dict, screens: dict, sym: str, etf: str, direction: str, j: dict, macro_bias: str,
-              buckets: dict, as_of: date) -> dict[str, Any]:
+              buckets: dict, as_of: date, docs: Callable[[str], dict] | None = None,
+              peers: Callable[[str, str], list] | None = None) -> dict[str, Any]:
+    """docs: the SEC extracts for the stock (qt.data.filings, memoised per run); peers: its peers (S08-J25)."""
     start = as_of - timedelta(days=HISTORY_DAYS)
     scr = screens[etf]
     row = dict(next(c for c in scr["long"] + scr["short"] if c["ticker"] == sym))
@@ -145,7 +192,9 @@ def deep_dive(y: Yahoo, u: dict, screens: dict, sym: str, etf: str, direction: s
     unhealthy = (fv.get("health") or {}).get("state") == "unhealthy"
     plan = idea.trade_plan(sym, direction, bars, chosen["price"] if chosen else None,
                            chosen["source"] if chosen else None, k, etf, buckets, macro_bias, tl, row,
-                           j.get("catalyst_expected"), unhealthy, j.get("catalyst_chain", ""))
+                           j.get("catalyst_expected"), unhealthy, j.get("catalyst_chain", ""),
+                           catalysts=_rows_with_ids(j.get("catalysts")), as_of=as_of, next_earnings=cat.get("next_earnings"),
+                           heat=j.get("heat") or None, news_adverse=bool(j.get("news_adverse")))
     opts = []
     if chosen and j.get("options", True):
         opts = idea.option_candidates(y, sym, direction, price, chosen["price"], plan.get("horizon_months") or 3, as_of)
@@ -159,7 +208,8 @@ def deep_dive(y: Yahoo, u: dict, screens: dict, sym: str, etf: str, direction: s
             "grossMargins", "operatingMargins", "profitMargins", "revenueGrowth", "earningsGrowth", "returnOnEquity",
             "debtToEquity", "totalCash", "totalDebt", "currentRatio", "freeCashflow")},
         fundamentals=fv, valuation=val, timing=tl, catalysts=cat, extreme=ext, levels=levels, targets=targets,
-        plan=plan, options=opts, chart=idea.chart(bars), sector_avg=avg, judgment=j)
+        plan=plan, options=opts, chart=idea.chart(bars), sector_avg=avg, judgment=j,
+        documents=docs(sym) if docs else None, peers=peers(sym, etf) if peers else [])
 
 
 def classify(d: dict) -> tuple[str, str]:
@@ -242,11 +292,43 @@ def portfolio_fit(y: Yahoo, ideas: dict, as_of: date) -> dict[str, Any]:
                 total_size_pct=sum(x["allowed_pct"] for x in sz), total_risk_pct=sum(x["risk_pct_of_equity"] for x in sz))
 
 
+def documents_source(sec, as_of: date, memo: dict[str, dict]) -> Callable[[str], dict]:
+    """The SEC extracts per deep-dive stock, fetched once per symbol per run (both deep-dive passes share the memo).
+    Without SEC_CONTACT the stock gets {"errors": ["SEC_CONTACT not set"]} and the run goes on with Yahoo events."""
+    def get(sym: str) -> dict:
+        if sym not in memo:
+            try:
+                memo[sym] = sec.documents(sym, as_of)
+            except Exception as e:                                       # noqa: BLE001 - documents() should never raise
+                memo[sym] = {"symbol": sym, "transcript": None, "errors": [f"{type(e).__name__}: {e}"[:300]]}
+        return memo[sym]
+    return get
+
+
+def _watchlist_symbols(watchlist: dict | None) -> set[str]:
+    if watchlist is None and os.environ.get("QT_WATCHLIST") and Path(os.environ["QT_WATCHLIST"]).exists():
+        watchlist = yaml.safe_load(Path(os.environ["QT_WATCHLIST"]).read_text(encoding="utf-8"))
+    return {e.get("symbol") for e in (watchlist or {}).get("entries") or [] if isinstance(e, dict)}
+
+
 def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None, cache: Path, fred,
-        judge=None, manual_text: str | None = None) -> dict[str, Any]:
+        judge=None, manual_text: str | None = None, sec=None, watchlist: dict | None = None) -> dict[str, Any]:
     """judgments_path: a hand-written judgments file. judge: the agents instead (qt.research.judge.Judge); their
-    answers are saved under work/ like every other stage, so a resumed run does not ask again."""
+    answers are saved under work/ like every other stage, so a resumed run does not ask again. sec: the SEC filings
+    source (default qt.data.filings.SECFilings on SEC_CONTACT); watchlist: the current watchlist file (else
+    QT_WATCHLIST) for the peers' on_list."""
     y = Yahoo(cache)
+    run_events: list[dict] = []
+    if sec is None:
+        from qt.data.filings import SECFilings
+        from qt.data.store import Store
+        sec = SECFilings(Store(str(work / "sec.sqlite")), contact=os.environ.get("SEC_CONTACT"))
+    if hasattr(sec, "ok") and not sec.ok():
+        run_events.append({"level": "warn", "where": "documents", "text": "SEC_CONTACT not set: no SEC 8-K, results "
+                           "release or risk factors; catalysts from Yahoo only"})
+    docs_memo: dict[str, dict] = {}
+    docs = documents_source(sec, as_of, docs_memo)
+    on_wl = _watchlist_symbols(watchlist)
     u = _cached(work / "universe.pkl", lambda: U.fetch(y), binary=True)
     breadth = U.breadth_pct(u["quotes"])
     spx = y.bars("^GSPC", as_of - timedelta(days=3650), as_of)
@@ -263,22 +345,33 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     bias = st.get("bias") or "neutral"
     buckets = {e: ("long" if e in sectors["long"] else "short" if e in sectors["short"] else "neutral")
                for e in sectors["scorecard"]}
+    hand: dict = {}
+    if judge is None:
+        hand = yaml.safe_load(judgments_path.read_text()) if judgments_path and judgments_path.exists() else {}
+
+    def on_list() -> set[str]:                       # the ideas so far (the judge's picks, or the file) + the watchlist
+        picked = (getattr(judge, "selection", None) or {}).get("picked") or []
+        return set(picked) | set(hand.get("ideas") or {}) | on_wl
+
+    def peers(sym: str, etf: str) -> list[dict]:
+        return peers_for(u, screens, sym, etf, on_list, as_of)
     if judge is not None:
         stages = dict(as_of=as_of, macro=macro, sectors=sectors, screens=screens, timing=timing)
         J = _cached(work / "judgments.json", lambda: judge(stages, lambda sym, etf, dr, j: deep_dive(
-            y, u, screens, sym, etf, dr, j, bias, buckets, as_of)))
+            y, u, screens, sym, etf, dr, j, bias, buckets, as_of, docs=docs, peers=peers)))
     else:
-        J = yaml.safe_load(judgments_path.read_text()) if judgments_path and judgments_path.exists() else {}
+        J = hand
     missing = unexplained_greens(timing, set(J.get("ideas") or {}), (J.get("A3") or {}).get("skipped"))
     if missing:                                         # Ilay 22.10: a green stock is analysed or skipped with a reason
         raise ValueError(f"green stocks with no deep dive and no reason under A3.skipped: {', '.join(missing)}")
     ideas = {}
     for sym, j in (J.get("ideas") or {}).items():
         etf = j["etf"]
-        ideas[sym] = deep_dive(y, u, screens, sym, etf, j["direction"], j, bias, buckets, as_of)
+        ideas[sym] = deep_dive(y, u, screens, sym, etf, j["direction"], j, bias, buckets, as_of, docs=docs, peers=peers)
         ideas[sym]["bucket"], ideas[sym]["bucket_reason"] = classify(ideas[sym])
         ideas[sym]["exit"] = exit_plan(ideas[sym]["plan"], j["direction"], ideas[sym]["bucket"], as_of,
                                        ideas[sym]["catalysts"].get("next_earnings"), j)
+    assert len(docs_memo) <= MAX_DEEP + len(J.get("ideas") or {}), "SEC documents fetched beyond the deep-dive cap"
     fit = portfolio_fit(y, ideas, as_of)
 
     surv = sum(len(s["long"]) + len(s["short"]) for s in screens.values())
@@ -298,7 +391,9 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     d = dict(
         meta=dict(as_of=as_of.isoformat(), generated_at=datetime.now(timezone.utc).isoformat(timespec="minutes"),
                   equity=idea.EQUITY, playbook_version=load_policy().playbook_version, history_years=HISTORY_DAYS // 365,
-                  judged_by=J.get("judged_by", "missing"), breadth_pct=breadth),
+                  judged_by=J.get("judged_by", "missing"), breadth_pct=breadth, events=run_events,
+                  documents={"fetched": len(docs_memo),
+                             "with_errors": sorted(s for s, x in docs_memo.items() if x.get("errors"))}),
         macro=macro, sectors=sectors, screens=screens, timing=timing, ideas=ideas, funnel=funnel, portfolio=fit,
         judgments={k: v for k, v in J.items() if k != "ideas"})
     from qt.data.store import Store

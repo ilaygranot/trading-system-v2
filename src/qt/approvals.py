@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS uploads (
 
 ORDER_KINDS = {"enter", "add", "exit", "reduce", "sell"}     # a paper order; tighten_stop / flags are not orders
 REVIEW_DAYS = 7                  # a post-trade review waits a week for Ilay, not one session (not from course)
+LONG_KINDS = ("review", "heat")  # wait REVIEW_DAYS: a heat proposal (S08-R26) is not tied to one session's price
+NO_PRICE_KINDS = ("heat", "flag", "review")                  # no price: the premarket recheck never touches them
 OPEN_STATUSES = ("pending", "postponed", "changed")          # still waiting for Ilay
 CHOICES = {"approve": ("approved", "approved"), "reject": ("rejected", "rejected"), "postpone": ("postponed", None)}
 
@@ -91,7 +93,7 @@ class Queue:
         """One item per day, symbol, rule and kind; returns the new id, or None if it is already queued."""
         status = "standing_order" if action.get("preapproved") else "info" if action["kind"] in ("flag",) else "pending"
         key = f"{as_of.isoformat()}|{action.get('symbol') or '-'}|{action['rule_id']}|{action['kind']}"
-        valid = next_open(as_of + timedelta(days=REVIEW_DAYS - 1) if action["kind"] == "review" else as_of)
+        valid = next_open(as_of + timedelta(days=REVIEW_DAYS - 1) if action["kind"] in LONG_KINDS else as_of)
         new = self.db.insert_new("approval_queue", dict(
             run_id=run_id, as_of=as_of.isoformat(), item_key=key, kind=action["kind"], rule_id=action["rule_id"],
             symbol=action.get("symbol"), status=status, payload=dumps(action), ref_price=ref_price,
@@ -167,8 +169,10 @@ class Queue:
         now = now or _now()
         thr = load_policy().runtime.recheck_move_pct
         changed = []
+        kinds = ",".join("?" * len(NO_PRICE_KINDS))
         rows = self.db.all("SELECT * FROM approval_queue WHERE status IN ('pending','postponed','approved') "
-                           "AND valid_until > ?", (_iso(now),), ["payload"])
+                           f"AND valid_until > ? AND kind NOT IN ({kinds})", (_iso(now), *NO_PRICE_KINDS),
+                           ["payload"])
         for r in rows:
             p, ref = prices.get(r["symbol"]), r["ref_price"]
             moved = p is not None and ref and abs(p / ref - 1) * 100 > thr

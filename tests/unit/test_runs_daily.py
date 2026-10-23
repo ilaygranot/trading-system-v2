@@ -171,3 +171,178 @@ def test_news_without_agents_lists_raw_headlines(db):
     sent = []
     _runner(db, prices=NewsPrices(), notifier=sent.append).start("daily", AS_OF)
     assert "יומן חדשות" in sent[-1] and "• BA FAA halts" in sent[-1]
+
+
+# ---------------------------------------------------------------- heat (DC-15 / DC-16) and peers (S08-J25)
+
+class HeatAgents:
+    """DC-15 answers `hot`, DC-16 answers `frozen_exit`; DC-14 as FakeAgents. Records the cards asked."""
+    def __init__(self, dc15="hot"):
+        self.calls, self.dc15 = [], dc15
+
+    def decide(self, agent, card, fs, world, **kw):
+        from types import SimpleNamespace as NS
+        self.calls.append((card, kw.get("subject"), dict(world)))
+        opt = {"DC-14": "A", "DC-15": self.dc15, "DC-16": "frozen_exit"}.get(card, "hold")
+        out = {"direction": "against_idea", "priced_in": False, "reasoning": "x"} if card == "DC-14" else {"reasoning": "r"}
+        return NS(option=opt, output=out, status="decided", decision_id=None, critic=None, for_ilay="", cost_usd=0.0)
+
+
+def _watch_out(db, rid):
+    return db.one("SELECT output FROM run_steps WHERE run_id=? AND step='watch'", (rid,), ["output"])["output"]
+
+
+def test_dc15_proposal_needs_approval(db):
+    from datetime import UTC, datetime
+
+    from qt.approvals import Queue
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    added = (AS_OF - timedelta(days=61)).isoformat()                     # day 61 (S08-R29, D-S08-1)
+    wl = _wl(bucket="watch", trigger_kind="now", trigger_level=None, added=added, price_at_add=195.0, heat="cold")
+    ag = HeatAgents()
+    rid = Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": wl, "agents": ag}).start("daily", AS_OF)
+    assert [c[:2] for c in ag.calls] == [("DC-15", "BA")]
+    world = ag.calls[0][2]
+    assert world["current_state"] == "cold" and "day_61" in world["reasons"] and world["days_on_list"] == 61
+    items = db.all("SELECT id, kind, rule_id, status, payload FROM approval_queue WHERE rule_id='S08-R26'",
+                   json_cols=("payload",))
+    assert len(items) == 1 and items[0]["status"] == "pending" and items[0]["payload"]["heat"] == "hot"
+    assert db.one("SELECT ref_price FROM approval_queue WHERE id=?", (items[0]["id"],))["ref_price"] is None
+    check = next(c for c in _watch_out(db, rid)["checks"] if c["symbol"] == "BA")
+    assert check["heat"] == "cold"                                      # code never changes heat by itself
+    Queue(db).decide(items[0]["id"], "approve", now=datetime(2023, 5, 31, 22, tzinfo=UTC))
+    ag.calls.clear()
+    rid2 = Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": wl, "agents": ag}).start("daily", AS_OF)
+    check = next(c for c in _watch_out(db, rid2)["checks"] if c["symbol"] == "BA")
+    assert check["heat"] == "hot"
+    assert len(db.all("SELECT id FROM approval_queue WHERE rule_id='S08-R26'")) == 1   # hot -> hot: nothing new
+
+
+def test_dc16_only_without_position(db):
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    wl = _wl(direction="short", bucket="watch", trigger_kind="now", trigger_level=None, invalidate_level=None,
+             price_at_add=150.0)                                          # BA ~200: +33% against a short
+    ag = HeatAgents()
+    Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": wl, "agents": ag}).start("daily", AS_OF)
+    assert ("DC-16", "BA") in [c[:2] for c in ag.calls]
+    item = db.one("SELECT kind, status, payload FROM approval_queue WHERE rule_id='DC-16'", json_cols=("payload",))
+    assert item["kind"] == "heat" and item["status"] == "pending" and item["payload"]["heat"] == "frozen"
+    db.execute("DELETE FROM approval_queue")
+    ag2 = HeatAgents()
+    Runner(db, PIPELINES, {"prices": Prices(), "portfolio": PF, "watchlist": wl, "agents": ag2}).start("daily", AS_OF)
+    assert "DC-16" not in [c[0] for c in ag2.calls]                       # held: A7's territory, never DC-16
+
+
+def test_frozen_entry_makes_no_action(db):
+    from datetime import UTC, datetime
+
+    from qt.approvals import Queue
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    q = Queue(db)
+    iid = q.add("x", date(2023, 5, 30), {"kind": "heat", "rule_id": "DC-16", "symbol": "BA", "heat": "frozen",
+                                        "preapproved": False, "detail": "frozen"})
+    q.decide(iid, "approve", now=datetime(2023, 5, 30, 22, tzinfo=UTC))
+    rid = Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": _wl()}).start("daily", AS_OF)
+    check = next(c for c in _watch_out(db, rid)["checks"] if c["symbol"] == "BA")
+    assert check["status"] == "frozen" and check["heat"] == "frozen"
+    assert not db.all("SELECT id FROM approval_queue WHERE rule_id='S10-R4'")   # S08-R27: no entry
+
+
+def test_peer_note_on_same_etf_entry(db):
+    sent = []
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    wl = _wl(bucket="watch", trigger_kind="now", trigger_level=None)
+    wl["entries"].append(dict(wl["entries"][0], symbol="GE", peers=[]))       # same sector ETF (XLI)
+    wl["entries"].append(dict(wl["entries"][0], symbol="XOM", etf="XLE"))     # another sector: no note
+    rid = Runner(db, PIPELINES, {"prices": NewsPrices(), "portfolio": pf, "watchlist": wl, "agents": HeatAgents(),
+                                 "notifier": sent.append}).start("daily", AS_OF)
+    out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='news'", (rid,), ["output"])["output"]
+    assert list(out["peer_notes"]) == ["GE"]
+    assert "מתחרה: BA FAA halts" in out["peer_notes"]["GE"][0] and out["peer_notes"]["GE"][0].startswith("[C]")
+    assert "GE: [C] דיווח/אירוע אצל מתחרה" in sent[-1]
+
+
+# ---------------------------------------------------------------- the heat in force gates the entry (S08-R28, R33, R25)
+
+def _entry_items(db):
+    return db.all("SELECT id FROM approval_queue WHERE rule_id='S10-R4'")
+
+
+@pytest.mark.parametrize("heat,status", [("hot", "opportunity"), ("cold", "recheck"), ("boiling", "waiting")])
+def test_only_hot_heat_opens_the_entry(db, heat, status):
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    rid = Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": _wl(heat=heat)}).start("daily", AS_OF)
+    check = next(c for c in _watch_out(db, rid)["checks"] if c["symbol"] == "BA")
+    assert check["triggered"] and check["status"] == status and check["heat"] == heat
+    assert bool(_entry_items(db)) is (heat == "hot")
+
+
+def test_approved_cold_closes_the_entry(db):
+    """A DC-15 move hot -> cold that Ilay approved stops the trigger from becoming an S10-R4 entry."""
+    from datetime import UTC, datetime
+
+    from qt.approvals import Queue
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    q = Queue(db)
+    iid = q.add("x", date(2023, 5, 30), {"kind": "heat", "rule_id": "S08-R26", "symbol": "BA", "heat": "cold",
+                                        "preapproved": False, "detail": "hot -> cold"})
+    q.decide(iid, "approve", now=datetime(2023, 5, 30, 22, tzinfo=UTC))
+    rid = Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": _wl(heat="hot")}).start("daily", AS_OF)
+    check = next(c for c in _watch_out(db, rid)["checks"] if c["symbol"] == "BA")
+    assert check["heat"] == "cold" and check["status"] == "recheck" and not _entry_items(db)
+
+
+def test_approved_heat_survives_the_premarket_recheck(db):
+    """A heat has no price: a >2% premarket gap must not turn Ilay's approval into 'changed' -> 'expired'."""
+    from datetime import UTC, datetime
+
+    from qt.approvals import Queue
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    q = Queue(db)
+    iid = q.add("x", date(2023, 5, 30), {"kind": "heat", "rule_id": "S08-R26", "symbol": "BA", "heat": "cold",
+                                        "preapproved": False, "detail": "hot -> cold"}, ref_price=100.0)
+    q.decide(iid, "approve", now=datetime(2023, 5, 30, 22, tzinfo=UTC))
+    assert q.recheck({"BA": 103.0}, {"BA"}, now=datetime(2023, 5, 31, 12, tzinfo=UTC)) == []
+    q.expire(now=datetime(2023, 6, 9, 15, tzinfo=UTC))
+    assert q.get(iid)["status"] == "approved"
+    rid = Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": _wl(heat="hot")}).start("daily", AS_OF)
+    check = next(c for c in _watch_out(db, rid)["checks"] if c["symbol"] == "BA")
+    assert check["heat"] == "cold" and not _entry_items(db)
+
+
+def test_pending_heat_proposal_waits_review_days_and_has_no_price(db):
+    from datetime import UTC, datetime
+
+    from qt.approvals import REVIEW_DAYS, Queue
+    q = Queue(db)
+    iid = q.add("x", date(2023, 5, 30), {"kind": "heat", "rule_id": "S08-R26", "symbol": "BA", "heat": "hot",
+                                        "preapproved": False, "detail": "cold -> hot"})
+    q.expire(now=datetime(2023, 6, 1, 15, tzinfo=UTC))                  # the next open passed: still waiting
+    assert q.get(iid)["status"] == "pending"
+    q.expire(now=datetime(2023, 5, 30, 22, tzinfo=UTC) + timedelta(days=REVIEW_DAYS + 3))
+    assert q.get(iid)["status"] == "expired"
+
+
+def test_adverse_catalyst_closes_the_entry(db):
+    """S08-R28: hot but an A/B against the idea, not priced in and still active: no entry."""
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    row = {"date": "2023-05-25", "class": "A", "direction": "against_idea", "priced_in": False,
+           "persistence": "until_next_report", "timing": "occurred", "kind": "results", "what": "תחזית חלשה"}
+    rid = Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf,
+                                 "watchlist": _wl(heat="hot", catalysts=[row])}).start("daily", AS_OF)
+    check = next(c for c in _watch_out(db, rid)["checks"] if c["symbol"] == "BA")
+    assert check["status"] == "waiting" and not _entry_items(db)
+
+
+def test_day_61_review_runs_once_even_after_a_missed_day(db):
+    """S08-R29: more than 60 days, not exactly 61; once reviewed, not again."""
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    added = (AS_OF - timedelta(days=64)).isoformat()
+    wl = _wl(bucket="watch", trigger_kind="now", trigger_level=None, added=added, price_at_add=195.0, heat="cold")
+    ag = HeatAgents(dc15="cold")
+    Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": wl, "agents": ag}).start("daily", AS_OF)
+    assert [c[:2] for c in ag.calls] == [("DC-15", "BA")] and "day_61" in ag.calls[0][2]["reasons"]
+    ag.calls.clear()
+    rid = Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": wl, "agents": ag}).start("daily", AS_OF)
+    check = next(c for c in _watch_out(db, rid)["checks"] if c["symbol"] == "BA")
+    assert "day_61" not in check["dc15"] and not ag.calls
