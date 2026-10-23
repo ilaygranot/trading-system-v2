@@ -158,7 +158,7 @@ class Bot:
 
 
 def test_monthly_runs_without_an_uploaded_file(db, monkeypatch):
-    from tests.unit.test_monthly import Fred
+    from test_monthly import Fred
     monkeypatch.setattr(MA, "_pdf_text", lambda blob: NFIB_PDF_TEXT)
     bot = Bot()
     svc = {"telegram": bot, "fred": Fred(), "macro_auto": lambda: MA.Sources(FakeHttp({}))}
@@ -172,7 +172,7 @@ def test_monthly_runs_without_an_uploaded_file(db, monkeypatch):
 
 
 def test_monthly_fetches_the_new_month(db, monkeypatch):
-    from tests.unit.test_monthly import Fred
+    from test_monthly import Fred
     monkeypatch.setattr(MA, "_pdf_text", lambda blob: NFIB_PDF_TEXT)
     svc = {"telegram": Bot(), "fred": Fred(), "macro_auto": lambda: MA.Sources(FakeHttp(_pages()))}
     rid = Runner(db, PIPELINES, svc).start("monthly", date(2026, 11, 14))
@@ -183,7 +183,7 @@ def test_monthly_fetches_the_new_month(db, monkeypatch):
 
 
 def test_weekly_research_no_longer_waits_for_the_manual_file(db, monkeypatch):
-    from tests.unit.test_weekly import AS_OF as W_AS_OF, Bot as WBot, _svc
+    from test_weekly import AS_OF as W_AS_OF, Bot as WBot, _svc
     monkeypatch.setattr(MA, "_pdf_text", lambda blob: NFIB_PDF_TEXT)
     bot = WBot()
     svc = {**_svc(bot, None), "macro_auto": lambda: MA.Sources(FakeHttp(_pages()))}
