@@ -403,7 +403,15 @@ def default_sources(store: Any = None) -> dict[str, Any]:
     out["second_close"] = second_close if (os.environ.get("FMP_API_KEY") or os.environ.get("ALPHAVANTAGE_API_KEY")) else None
 
     def fetch(url: str) -> str:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (QuantumTrader verification)"}, timeout=20)
+        host = (urlparse(url).hostname or "").lower()
+        if host == "sec.gov" or host.endswith(".sec.gov"):       # SEC: a contact User-Agent, never a browser one
+            contact = os.environ.get("SEC_CONTACT", "").strip()
+            if not contact:
+                raise RuntimeError("SEC_CONTACT not set: SEC page not opened")
+            ua = f"QuantumTrader research {contact}"
+        else:
+            ua = "Mozilla/5.0 (QuantumTrader verification)"
+        r = requests.get(url, headers={"User-Agent": ua}, timeout=20)
         r.raise_for_status()
         if "pdf" in r.headers.get("content-type", "") or url.lower().endswith(".pdf"):
             raise RuntimeError("PDF: not read in code")

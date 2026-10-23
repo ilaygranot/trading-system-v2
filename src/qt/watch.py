@@ -7,6 +7,12 @@ the trigger's expiry (not from course), earnings within a week, and a run-up tha
 (S08-R25). A trigger that fired with reward:risk still >= the minimum, not expired and not invalidated is an
 opportunity: an `enter` item in the approval queue, sized at the first step (S11-R5). Nothing is sent to a
 broker; the full gate is Ilay's approval.
+
+Heat (S08-R25, S08-R26, D-S08-3): each entry carries its heat from the research (DC-13). The pass computes the code
+triggers for the agents step: dc16 (a move against the idea since it was added of more than 3 x ADR60, or a close
+beyond the invalidation level) and the dc15 reasons (boiling, day 61, an expected catalyst's date, a trigger crossed).
+A heat change is only a proposal (qt.daily.agents); the heat in force is the latest one Ilay approved, and a frozen
+entry never produces an entry action (S08-R27).
 """
 from __future__ import annotations
 
@@ -20,6 +26,9 @@ from qt.policy import load_policy
 from qt.watchlist import boiling_hint
 
 EARNINGS_SOON_DAYS = 7                      # not from course: how early the summary warns
+DC16_ADR_MULT = 3                           # DC-16 trigger: a move against the idea of more than 3 x ADR60 (card text)
+REVIEW_AFTER_DAYS = 60                      # S08-R29 / D-S08-1: the review once the entry is more than 60 days on the list
+HEATS = ("cold", "hot", "boiling", "frozen")
 TriggerKind = Literal["now", "close_above", "close_below"]
 
 
@@ -45,6 +54,11 @@ class WatchEntry:
     risk_pct_at_add: float | None = None    # the stop's width when the decision was made (k x ADR, % of price)
     green_at_add: bool = False              # Ilay 22.10: every green stock stays on the daily pass
     why_not: str = ""                       # why it was not entered then (the research's reason)
+    heat: str = ""                          # DC-13 at the research (S08-R25); changes only on Ilay's approval.
+                                            # "" = a file from before heat: inferred from the bucket (_heat_in_force)
+    catalyst_expected: bool | None = None   # S07-R13 from the research's catalyst code
+    catalysts: list = field(default_factory=list)   # the research's catalyst rows still active or expected
+    peers: list[str] = field(default_factory=list)  # S08-J25: the peers named in the deep dive
 
 
 @dataclass
@@ -74,6 +88,9 @@ class WatchCheck:
     trend_3m_pct: float | None = None       # year, the last 3 months and since the idea was added (S08-R4)
     since_add_pct: float | None = None
     hindsight: str | None = None            # missed (moved 3R our way without us) | saved (would have hit the stop)
+    heat: str = "cold"                      # the heat in force (the research's, or the latest Ilay approved)
+    dc16: bool = False                      # code trigger for DC-16: against move > 3 x ADR60 or invalidation broken
+    dc15: list[str] = field(default_factory=list)   # code reasons for DC-15: boiling | day_61 | catalyst_date | trigger_crossed
 
 
 def _change_since(bars: Sequence[Bar], start: date) -> float | None:
@@ -86,6 +103,30 @@ def _change_since(bars: Sequence[Bar], start: date) -> float | None:
 
 def _pct(a: float, b: float) -> float:
     return (a / b - 1) * 100
+
+
+def _active_rows(rows: list | None, as_of: str, next_earnings: str | None) -> list[dict]:
+    """The catalyst rows the daily pass follows: expected ones, and those still active at as_of (S08-R20)."""
+    from qt.research.catalyst_chain import active_until
+    keep = ("date", "what", "class", "direction", "priced_in", "timing", "expected_date", "kind", "persistence")
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        day = str(r.get("date") or r.get("expected_date") or "")[:10]
+        au = r.get("active_until")
+        if au is None:
+            x = active_until(r, next_earnings)
+            au = x.isoformat() if x else None
+        if day > as_of or (au and au >= as_of):
+            out.append({k: r.get(k) for k in keep if r.get(k) is not None} | {"active_until": au})
+    return out
+
+
+def _heat(j: dict) -> str:
+    if j.get("heat") in HEATS:
+        return j["heat"]
+    return "hot" if j.get("decision") in ("long", "short") else "cold"   # a hand-written trade is a hot idea
 
 
 def from_dossier(d: dict) -> dict[str, Any]:
@@ -119,7 +160,10 @@ def from_dossier(d: dict) -> dict[str, Any]:
             price_at_add=round(p["entry"], 2), tldr=(j.get("tldr") or {}).get("line", "") or j.get("why", ""),
             breakers=[b["text"] for b in j.get("breakers", [])],
             risk_pct_at_add=round(T.stop_distance_pct(p["entry"], p["stop"]), 2) if p.get("stop") else None,
-            green_at_add=green, why_not="" if bucket == "enter" else (i.get("bucket_reason") or j.get("why", "")))))
+            green_at_add=green, why_not="" if bucket == "enter" else (i.get("bucket_reason") or j.get("why", "")),
+            heat=_heat(j), catalyst_expected=j.get("catalyst_expected"),
+            catalysts=_active_rows(j.get("catalysts"), as_of, (i.get("catalysts") or {}).get("next_earnings")),
+            peers=[p["sym"] for p in i.get("peers") or [] if isinstance(p, dict) and p.get("sym")])))
     skipped = ((d.get("judgments") or {}).get("A3") or {}).get("skipped")
     k = load_policy().stop.k_default
     for t in d.get("timing") or []:                     # a green stock skipped before the deep dive, with its reason
@@ -149,7 +193,27 @@ def hindsight(e: WatchEntry, close: float) -> str | None:
     return None
 
 
-def check(e: WatchEntry, bars: Sequence[Bar], as_of: date) -> WatchCheck:
+def _heat_in_force(e: WatchEntry, approved: str | None) -> str:
+    """The latest heat Ilay approved, else the research's; an entry from a file written before heat existed keeps
+    the meaning it had then: on the trade list (enter / conditional) it was a hot idea, a watch entry is cold."""
+    if approved in HEATS:
+        return approved                                              # type: ignore[return-value]
+    if e.heat in HEATS:
+        return e.heat
+    return "hot" if e.bucket in ("enter", "conditional") else "cold"
+
+
+def _adverse(e: WatchEntry, as_of: date) -> bool:
+    """S08-R28: an A/B event against the idea, not priced in, still active (the research's catalyst rows)."""
+    from qt.research.catalyst_chain import adverse
+    return adverse([r for r in e.catalysts or [] if isinstance(r, dict)], as_of, e.next_earnings)
+
+
+def check(e: WatchEntry, bars: Sequence[Bar], as_of: date, heat: str | None = None, reviewed: bool = False) -> WatchCheck:
+    """heat: the latest heat Ilay approved for the entry (approval_queue S08-R26 / DC-16); else the research's.
+    reviewed: a DC-15 day-61 review already ran since the entry was added (S08-R29 asks for it once).
+    Only a hot entry with no adverse news may become an opportunity (S08-R28): cold has no active entry trigger
+    (S08-R33), so a fired trigger asks for a recheck; boiling is not chased (S08-R25); frozen never enters (S08-R27)."""
     close = bars[-1].close
     sg = 1 if e.direction == "long" else -1
     prev = bars[-2].close if len(bars) > 1 else None
@@ -185,14 +249,46 @@ def check(e: WatchEntry, bars: Sequence[Bar], as_of: date) -> WatchCheck:
         notes.append(f"זזה {sg * _pct(close, e.price_at_add):.0f}% מאז ההחלטה לא להיכנס, פי 3 מהסיכון: לבדוק אם טעינו")
     elif hs == "saved":
         notes.append("ההחלטה לא להיכנס הייתה נכונה עד עכשיו: המחיר עבר את העצירה שהייתה אז")
+    cur = _heat_in_force(e, heat)
+    adv = _adverse(e, as_of)
+    since = sg * _pct(close, e.price_at_add) if e.price_at_add else None
+    a = adr(bars)
+    dc16 = bool((since is not None and a and since < -DC16_ADR_MULT * a)
+                or (e.invalidate_level and sg * (close - e.invalidate_level) < 0))
+    dc15 = []
+    if boiling:
+        dc15.append("boiling")
+    if days > REVIEW_AFTER_DAYS and not reviewed:
+        dc15.append("day_61")
+    prev_day = bars[-2].day if len(bars) > 1 else as_of - timedelta(days=1)
+    for r in e.catalysts or []:
+        cd = str(r.get("expected_date") or r.get("date") or "")[:10]
+        if r.get("timing") == "expected" and prev_day.isoformat() < cd <= as_of.isoformat():
+            dc15.append("catalyst_date")
+            break
+    if e.trigger_kind != "now" and e.trigger_level is not None and triggered and prev is not None \
+            and not sg * (prev - e.trigger_level) > 0:
+        dc15.append("trigger_crossed")
+    if cur == "frozen":
+        notes.append("קפוא: לא נכנסים ולא הופכים כיוון (S08-R27)")
+    elif cur == "cold":
+        notes.append("קר: אין טריגר כניסה פעיל עד שהחום יאושר (S08-R33, S08-R28)")
+    elif cur == "boiling":
+        notes.append("רותח לפי החום שאושר: לא רודפים (S08-R25)")
+    if adv:
+        notes.append("אירוע נגד הרעיון שעוד לא בתמחור: השער סגור (S08-R28)")
     if invalidated:
         status = "invalidated"
+    elif cur == "frozen":
+        status = "frozen"
     elif expired:
         status = "expired"
     elif e.bucket == "watch":                # no trigger was set: a reward:risk back above the minimum asks for
-        status = "recheck" if rr_ok and not boiling else "waiting"      # a fresh traffic light, not an entry
-    elif triggered and rr_ok and not boiling:
+        status = "recheck" if rr_ok and not boiling and cur != "boiling" else "waiting"   # a fresh light, no entry
+    elif triggered and rr_ok and not boiling and cur == "hot" and not adv:
         status = "opportunity" if e.trigger_kind != "now" else "ready"
+    elif triggered and rr_ok and not boiling and cur == "cold":
+        status = "recheck"                   # S08-R33: cold has no active entry trigger; a heat review first
     else:
         status = "waiting"
     return WatchCheck(symbol=e.symbol, close=close, change_1d_pct=_pct(close, prev) if prev else None,
@@ -202,7 +298,8 @@ def check(e: WatchEntry, bars: Sequence[Bar], as_of: date) -> WatchCheck:
                       review_day60=days > 60, earnings_in_days=ne, boiling=boiling, status=status, notes=notes,
                       trend_1y_pct=_change_since(bars, as_of - timedelta(days=365)),
                       trend_3m_pct=_change_since(bars, as_of - timedelta(days=91)),
-                      since_add_pct=_pct(close, e.price_at_add) if e.price_at_add else None, hindsight=hs)
+                      since_add_pct=_pct(close, e.price_at_add) if e.price_at_add else None, hindsight=hs,
+                      heat=cur, dc16=dc16, dc15=dc15)
 
 
 def entry_action(e: WatchEntry, c: WatchCheck, equity: float) -> dict[str, Any]:

@@ -718,7 +718,7 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
                f'<dt>עצירה (k={num(p["k"], 0)})</dt><dd>{px(p["stop"])} <small>({num(-p["stop_pct"], 1, True)})</small></dd>'
                f'<dt>יעד</dt><dd>{px(p.get("target"))} <small>{E(TARGET_HE.get(p.get("target_source") or "", ""))} · {num(p.get("move_pct"), 1, True, True)}</small></dd>'
                f'<dt>R:R</dt><dd><b>{num(p.get("rr"), 2)}</b> <small>(מינימום 3)</small></dd>'
-               f'<dt>אופק</dt><dd>{num(p.get("horizon_months"), 1)} חודשים <small>(תזוזה ÷ סטיית תקן חודשית {num(p["monthly_sigma_pct"], 1, True)})</small></dd>'
+               f'<dt>אופק</dt><dd>{_horizon(p)}</dd>'
                f'<dt>גודל ראשון</dt><dd>{num(p["sizing"]["allowed_pct"], 0, True)} = {p["sizing"]["quantity"]:,} יח׳ · סיכון {num(p["sizing"]["risk_pct_of_equity"], 2, True)} מהתיק</dd>'
                f'</dl>{rr_bar(p["entry"], p["stop"], p.get("target"), i["direction"])}')
     if j.get("trigger"):
@@ -787,9 +787,16 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
     if full:
         out.append('<h4>קטליזטורים ואנליסטים (S08)</h4>')
         if j.get("catalysts"):
-            out.append('<ul class="timeline">' + "".join(
-                f'<li><time>{E(x["date"])}</time><span class="chip">{E(CAT_HE.get(x["class"], x["class"]))}</span> {E(x["what"])}'
-                f'{" · כבר מתומחר" if x.get("priced_in") else ""}</li>' for x in j["catalysts"]) + "</ul>")
+            out.append('<ul class="timeline">' + "".join(_catalyst_li(x) for x in j["catalysts"]) + "</ul>")
+        if j.get("catalyst_expected") is not None:
+            out.append(f'<p class="small"><b>קטליסט צפוי (S07-R13, קוד):</b> {"כן" if j["catalyst_expected"] else "לא"}'
+                       + (f' · <b>שרשרת:</b> {E(j["catalyst_chain"])}' if j.get("catalyst_chain") else "")
+                       + (f' · {E(j["catalyst_wait"])}' if j.get("catalyst_wait") else "")
+                       + (" · ידיעה נגד הרעיון בתוקף (S08-R28)" if j.get("news_adverse") else "") + "</p>")
+        for o in j.get("code_overrides") or []:
+            out.append(f'<p class="note">הקוד שינה את {E(o.get("card", ""))} מ-{E(o.get("from", ""))} ל-{E(o.get("to", ""))}: '
+                       f'{E(o.get("why", ""))}</p>')
+        out.append(_documents(i.get("documents")))
         rv = c["revisions"]
         out.append(f'<p class="small">דוח הבא: <b>{E(c.get("next_earnings") or "—")}</b> · רוויזיות 30 יום F1: '
                    f'{rv["F1"]["up30"] or 0}↑ {rv["F1"]["down30"] or 0}↓, F2: {rv["F2"]["up30"] or 0}↑ {rv["F2"]["down30"] or 0}↓ · '
@@ -976,6 +983,89 @@ def _tech_charts(i: dict) -> str:
 
 TLDR_PARTS = (("macro", "המאקרו"), ("sector", "הסקטור"), ("company", "החברה"), ("why_now", "למה עכשיו"),
               ("wrong", "מה יכול להשתבש"))
+
+
+DECIDED_HE = {"code": "קוד", "DC-14": "DC-14"}
+PERSIST_HE = {"days_1_3": "1-3 ימים", "until_next_report": "עד הדוח הבא", "accumulating_2_6m": "מצטבר 2-6 חודשים",
+              "none": "חד פעמי"}
+KIND_HE = {"results": "תוצאות", "agreement": "הסכם", "acquisition": "רכישה", "restructuring": "ארגון מחדש",
+           "impairment": "מחיקה", "officer": "נושאי משרה", "reg_fd": "Reg FD", "other_event": "אירוע אחר",
+           "governance": "ממשל תאגידי", "unknown": "לא ידוע"}
+
+
+def _horizon(p: dict) -> str:
+    """The horizon row: from the catalyst chain (S10-R9, D-S10-5) or from sigma, and the wait note (S10-R10)."""
+    sig = f'תזוזה ÷ סטיית תקן חודשית {num(p["monthly_sigma_pct"], 1, True)}'
+    if p.get("horizon_basis") == "catalyst":
+        out = (f'{num(p.get("horizon_months"), 1)} חודשים · <b>אופק לפי שרשרת קטליסטים</b>'
+               f'<br><small>{E(p.get("catalyst_chain") or "")}</small>'
+               f'<br><small>לפי סטיית התקן: {num(p.get("horizon_sigma_months"), 1)} חודשים ({sig})</small>')
+    else:
+        out = f'{num(p.get("horizon_months"), 1)} חודשים <small>({sig})</small>'
+    if p.get("catalyst_wait"):
+        out += f'<br><small>⏳ {E(p["catalyst_wait"])}</small>'
+    return out
+
+
+def _catalyst_li(x: dict) -> str:
+    cls = x.get("class")
+    meta = [DECIDED_HE.get(x.get("decided_by") or "", x.get("decided_by") or "")]
+    if x.get("persistence"):
+        meta.append(PERSIST_HE.get(x["persistence"], x["persistence"]))
+    if x.get("timing") == "expected" and x.get("expected_date"):
+        meta.append(f'צפוי {x["expected_date"]}')
+    if x.get("direction") == "against_idea":
+        meta.append("נגד הרעיון")
+    meta = [m for m in meta if m]
+    what = src_link(x["url"], x.get("what") or "") if x.get("url") else E(x.get("what") or "")
+    return (f'<li><time>{E(str(x.get("date") or x.get("expected_date") or ""))}</time>'
+            f'<span class="chip">{E(CAT_HE.get(cls, str(cls)))}</span> {what}'
+            f'{" · כבר מתומחר" if x.get("priced_in") else ""}'
+            + (f' <small>({E(" · ".join(meta))})</small>' if meta else "")
+            + (f' <small>{E(x["code_reason"])}</small>' if x.get("code_reason") and x.get("decided_by") == "code" else "")
+            + "</li>")
+
+
+def _documents(docs: dict | None) -> str:
+    """The SEC extracts behind the catalysts (S07-R30, S07-R32): 8-K/6-K list, results outlook, risk headlines."""
+    if not docs:
+        return ""
+    out = []
+    cur = docs.get("current") or []
+    if cur:
+        out.append('<p class="small"><b>דיווחים שוטפים ל-SEC (90 יום)</b></p><ul class="news">' + "".join(
+            f'<li><time>{E(f.get("date") or "")}</time> '
+            + src_link(f.get("index_url") or f.get("url"), f'{f.get("form", "")} {" ".join(f.get("items") or [])}'.strip())
+            + f' <small>{E(KIND_HE.get(f.get("kind") or "", f.get("kind") or ""))}'
+            + (f' · {E((f.get("exhibits") or [{}])[0].get("title") or f.get("title") or "")}'
+               if (f.get("exhibits") or f.get("title")) else "") + "</small></li>" for f in cur) + "</ul>")
+    res = docs.get("results")
+    if res:
+        bullets = list(res.get("outlook") or []) + list((res.get("commentary") or {}).get("outlook") or [])
+        out.append(f'<p class="small"><b>הודעת התוצאות:</b> {src_link(res.get("url"), res.get("title") or res.get("form") or "")} '
+                   f'<small>({E(res.get("date") or "")} · {E(res.get("source") or "")})</small></p>')
+        if bullets:
+            out.append('<ul class="small">' + "".join(f"<li>{E(b[:400])}</li>" for b in bullets[:5]) + "</ul>")
+        for g in res.get("guidance") or []:
+            out.append(f'<p class="small">תחזית {E(str(g.get("metric")))} ({E(str(g.get("period")))}): '
+                       f'{num(g.get("low"), 0)}–{num(g.get("high"), 0)} {E(str(g.get("unit") or ""))}</p>')
+    rf = docs.get("risk_factors")
+    if rf and rf.get("headlines"):
+        rf_title = f"{rf.get('form')} Item 1A ({rf.get('filed')})"
+        out.append(f'<p class="small"><b>גורמי סיכון (S07-R30):</b> {src_link(rf.get("url"), rf_title)}</p>'
+                   '<ul class="small">' + "".join(f"<li>{E(h)}</li>" for h in rf["headlines"][:8]) + "</ul>")
+        dl = rf.get("delta")
+        if dl:
+            dl_title = f"{dl.get('form')} ({dl.get('filed')})"
+            out.append(f'<p class="small">{src_link(dl.get("url"), dl_title)}: '
+                       + ("ללא שינוי מהותי" if dl.get("no_material_change") else "עדכון לגורמי הסיכון") + "</p>")
+    if docs.get("transcript") is None:
+        out.append('<p class="small">No transcript: Motley Fool terms forbid automated access; using SEC results '
+                   'releases (אין תמליל שיחת ועידה: תנאי השימוש של Motley Fool אוסרים גישה אוטומטית; '
+                   'משתמשים בהודעות התוצאות ב-SEC)</p>')
+    if docs.get("errors"):
+        out.append(f'<p class="small muted">שגיאות במסמכים: {E("; ".join(map(str, docs["errors"]))[:600])}</p>')
+    return "".join(out)
 
 
 def _tldr(i: dict) -> str:

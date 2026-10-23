@@ -1,7 +1,8 @@
 """The daily run without agents (runtime plan 10, step 3): data, code numbers and rules only.
 
 fetch -> fill -> calc -> rules -> watch -> news -> agents -> journal -> queue -> book -> learn -> notify. The agents step runs
-A7 on positions with an event against them (from the portfolio or from today's news, qt.news) when an agent runner is configured; A5 and A6 join it as their inputs arrive. The portfolio
+A7 on positions with an event against them (from the portfolio or from today's news, qt.news) when an agent runner is configured, and A5's
+heat cards on the watchlist (DC-16 on an against move, DC-15 on a heat trigger; proposals only, approved by Ilay). The portfolio
 comes from a YAML file (cash, peak equity, open positions); nothing here sends an order: the queue holds
 proposals and the standing orders approved with each trade, and approvals become paper orders (qt.approvals).
 """
@@ -27,6 +28,8 @@ from qt import watch as W
 
 INDEX, VIX = "^GSPC", "^VIX"
 HISTORY_DAYS = 400                     # enough for ATR60 and the VIX low window
+MAX_HEAT = 8                           # DC-15/DC-16 calls a day (not from course: cost)
+HEAT_RULES = ("S08-R26", "DC-16")      # approval-queue rule ids of a heat proposal
 
 def load_portfolio(path: str | Path) -> dict:
     return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
@@ -169,11 +172,12 @@ def watch(ctx: RunContext, _: str) -> dict:
         if not rows or e.symbol in snap["stale"]:
             checks.append({"symbol": e.symbol, "status": "stale", "notes": ["אין נתונים עדכניים"]})
             continue
-        c = W.check(e, _bars(rows), ctx.as_of)
+        c = W.check(e, _bars(rows), ctx.as_of, approved_heat(ctx, e.symbol, e.added),
+                    reviewed=day61_reviewed(ctx, e.symbol, e.added))
         d = asdict(c)
         d["held"] = e.symbol in held
         checks.append(d)
-        if c.status in ("opportunity", "ready") and not d["held"] and not snap["stale"]:
+        if c.status in ("opportunity", "ready") and c.heat == "hot" and not d["held"] and not snap["stale"]:
             seen = ctx.db.one("SELECT id FROM approval_queue WHERE symbol=? AND rule_id='S10-R4' AND as_of>=? "
                               "AND status IN ('approved','rejected')", (e.symbol, e.added))
             if not seen:
@@ -181,9 +185,88 @@ def watch(ctx: RunContext, _: str) -> dict:
     return {"checks": checks, "actions": actions, "n": len(entries)}
 
 
+def approved_heat(ctx: RunContext, symbol: str, since: str) -> str | None:
+    """The latest heat Ilay approved for a watchlist entry since it was added (S08-R26, D-S08-3); None = the research's."""
+    Queue(ctx.db)                                                    # the table exists
+    row = ctx.db.one("SELECT payload FROM approval_queue WHERE symbol=? AND rule_id IN (?, ?) AND status='approved' "
+                     "AND as_of>=? ORDER BY id DESC LIMIT 1", (symbol, *HEAT_RULES, since), ["payload"])
+    return (row["payload"] or {}).get("heat") if row else None
+
+
+REVIEW_EVENT = "{sym}: DC-15 day-61 review (S08-R29)"           # run_events marker: the review ran once since added
+
+
+def day61_reviewed(ctx: RunContext, symbol: str, since: str) -> bool:
+    """S08-R29 / D-S08-1: the review after 60 days runs once, even when the daily run missed day 61 itself."""
+    row = ctx.db.one("SELECT e.id FROM run_events e JOIN runs r ON r.id = e.run_id WHERE e.message=? AND r.as_of>=? "
+                     "AND e.run_id<>? LIMIT 1", (REVIEW_EVENT.format(sym=symbol), since, ctx.run_id))
+    return row is not None
+
+
+DC16_HEAT = {"frozen_exit": "frozen"}                                # noise_continue keeps the heat
+
+
+def heat_cards(ctx: RunContext, runner) -> dict:
+    """A5 on the watchlist (S08-R25, S08-R26, DC-15, DC-16): DC-16 when code saw an against move and the stock is not
+    held; otherwise DC-15 on a code reason or today's A/B news for the idea not priced in. A changed heat is a proposal
+    in the approval queue; the heat in force changes only once Ilay approves it (watch.check reads it back)."""
+    from qt.facts import FactSheet
+    w, nw = ctx.out("watch") or {}, ctx.out("news") or {}
+    entries = {e.symbol: e for e in W.load(ctx.services.get("watchlist"))}
+    news_for = {}
+    for it in nw.get("items") or []:
+        if it.get("klass") in ("A", "B") and it.get("direction") == "for_idea" and it.get("priced_in") is False:
+            news_for.setdefault(it["symbol"], []).append(f"{it['klass']}: {it['title']}")
+    q, out, n = Queue(ctx.db), {}, 0
+    waiting = {i["symbol"] for i in q.open_items() if i["kind"] == "heat"}   # one open proposal per symbol is enough
+    for c in w.get("checks") or []:
+        e = entries.get(c["symbol"])
+        if e is None or c.get("status") == "stale" or e.symbol in waiting:
+            continue
+        frozen = (c.get("heat") or e.heat) == "frozen"                # DC-16 can only say frozen again: no call
+        if c.get("dc16") and not c.get("held") and not frozen:
+            card = "DC-16"
+        elif c.get("dc15") or news_for.get(e.symbol):
+            card = "DC-15"
+        else:
+            continue
+        if n >= MAX_HEAT:
+            ctx.event(f"{e.symbol}: {card} skipped, {MAX_HEAT} heat calls today", "warn", "agents")
+            continue
+        n += 1
+        fs = FactSheet()
+        for k in ("close", "since_add_pct", "potential_pct", "rr", "days_on_list", "trend_3m_pct"):
+            if c.get(k) is not None:
+                fs.add(f"{e.symbol}.{k}", c[k], "code:watch", ctx.as_of)
+        world = {"symbol": e.symbol, "direction": e.direction, "current_state": c.get("heat") or e.heat,
+                 "since": e.added, "catalysts": e.catalysts, "news": news_for.get(e.symbol, []),
+                 "days_on_list": c.get("days_on_list"), "potential": c.get("potential_pct"),
+                 "reasons": (["against_move"] if card == "DC-16" else c.get("dc15") or ["news"]), "write_in": "Hebrew"}
+        try:
+            r = runner.decide("A5", card, fs, world, run_id=ctx.run_id, step="agents", subject=e.symbol)
+        except Exception as ex:                                      # noqa: BLE001 - budget or API: no change
+            ctx.event(f"{e.symbol}: {card} {type(ex).__name__}: {ex}", "warn", "agents")
+            continue
+        if card == "DC-15" and "day_61" in world["reasons"]:
+            ctx.event(REVIEW_EVENT.format(sym=e.symbol), "info", "agents")
+        new = DC16_HEAT.get(r.option) if card == "DC-16" else (r.option if r.option in W.HEATS else None)
+        rec = {"card": card, "option": r.option, "status": r.status, "from": world["current_state"], "to": new,
+               "reasoning": r.output.get("reasoning", ""), "item_id": None}
+        if new and new != world["current_state"]:
+            rule = "DC-16" if card == "DC-16" else "S08-R26"
+            item = {"kind": "heat", "rule_id": rule, "symbol": e.symbol, "qty": None, "price": None,
+                    "preapproved": False, "heat": new,
+                    "detail": f"{card}: {world['current_state']} → {new}. {rec['reasoning']}"[:600]}
+            # no ref_price: a heat has no price, the premarket recheck must not undo an approval
+            rec["item_id"] = q.add(ctx.run_id, ctx.as_of, item, None, getattr(r, "decision_id", None))
+        out[e.symbol] = rec
+    return out
+
+
 def agents(ctx: RunContext, _: str) -> dict:
-    """A7 on each open position with an event against it (DC-21). Without an agent runner (no API key yet),
-    the step records that agents are off and the code's proposals stand alone."""
+    """A7 on each open position with an event against it (DC-21), and A5's heat cards on the watchlist (DC-15,
+    DC-16). Without an agent runner (no API key yet), the step records that agents are off and the code's proposals
+    stand alone."""
     runner = ctx.services.get("agents")
     if runner is None:
         return {"enabled": False}
@@ -205,7 +288,7 @@ def agents(ctx: RunContext, _: str) -> dict:
                             "decision_id": res.decision_id, "confidence": res.output.get("confidence"),
                             "reasoning": res.output.get("reasoning", ""), "deviations": res.output.get("deviations", []),
                             "critic": res.critic, "for_ilay": res.for_ilay}
-    return {"enabled": True, "decisions": out}
+    return {"enabled": True, "decisions": out, "heat": heat_cards(ctx, runner)}
 
 
 def _actions(ctx: RunContext) -> list[dict]:
@@ -302,7 +385,7 @@ def notify(ctx: RunContext, _: str) -> dict:
 
 STATUS_HE = {"opportunity": "🟢 הזדמנות: הטריגר הופעל", "ready": "🟢 מוכנה לכניסה", "waiting": "⏳ ממתינה", "recheck": "🔎 היחס חזר מעל 3: לבדוק רמזור",
              "expired": "⌛ הטריגר פג: חוזרת למעקב", "invalidated": "✗ הטריגר בוטל (סגירה מעבר לרמת הביטול)",
-             "stale": "⚠️ אין נתונים"}
+             "stale": "⚠️ אין נתונים", "frozen": "🧊 קפואה: אין כניסה (S08-R27)"}
 
 
 def _trend(x: dict) -> str:
@@ -356,6 +439,9 @@ def day_summary(ctx: RunContext) -> str:
     elif ctx.services.get("watchlist") is None:
         lines.append("רשימת מעקב: לא נטענה (שלח watchlist.yaml לבוט)")
     lines += diary_lines(ctx.out("news") or {})
+    for sym, h in ((ctx.out("agents") or {}).get("heat") or {}).items():
+        if h.get("item_id"):
+            lines.append(f"🌡️ {sym}: {h['card']} מציע חום {h['from']} → {h['to']} (ממתין לאישורך, S08-R26)")
     bk = (ctx.out("book") or {}).get("log") or []
     if bk:
         lines.append("עדכוני תיק: " + " · ".join(bk))

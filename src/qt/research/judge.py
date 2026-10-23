@@ -7,11 +7,14 @@ change. Order:
   A3  DC-09 ranks the green and orange stocks when there are more than the deep-dive cap (12); otherwise all pass.
       Red never passes; green always does unless skipped with a reason. J["A3"] keeps who was skipped and why.
   A4  per idea: DC-10 story, DC-11 premium and target method, DC-12 thesis breakers, DC-13 watchlist and heat.
+  A5  per idea, before DC-13: DC-14 on each candidate event code could not decide (qt.research.catalyst_chain: the
+      next report, analyst actions in the judgment band, SEC 8-K/6-K and the results release; at most 5). Code then
+      derives catalyst_expected, the chain and the horizon; "hot" with no counted catalyst becomes cold (S08-R33).
   A6  only for a "hot" idea (DC-17's trigger): DC-17 trigger, DC-19 k, DC-20 tranches and first size.
 Every card gets a fact sheet built from the code's numbers for that idea (principle 4: no fact without an id), and
 the earlier cards' answers as the world state. The Critic checks each decision (qt.agents.runner).
-Not in v1: A2 (the sector scorecard keeps the code default), DC-14 catalysts (no news source yet), DC-18 (the
-instrument: stock only in the paper book).
+Not in v1: A2 (the sector scorecard keeps the code default), DC-18 (the instrument: stock only in the paper book).
+DC-14 in the daily news pass is qt.news; here it runs only on deep-dive events.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from typing import Any, Callable
 
 from qt.facts import FactSheet
 from qt.policy import load_policy
+from qt.research import catalyst_chain as CC
 
 MIN_DEEP, MAX_DEEP = 8, 12     # DC-09: up to 12 green and orange stocks all pass; above, the agent ranks and 8 to 12
                                 # go on (Ilay 22.10, to start; the card had 8-15 per direction; not from course)
@@ -27,7 +31,7 @@ K_OPTIONS = {"k_min": 3.0, "k_mid": 4.0, "k_max": 5.0}       # DC-19: 3 (20.10),
 TARGET_SOURCE = {"hist_3y": "own_multiple_target", "sector": "own_multiple_target", "other": None}
 SRC = "code:research"
 LANGUAGE = "Hebrew for every text field (reasoning, breakers, tldr); codes, ids and tickers as they are"
-JUDGED_BY = "Agents A1, A3, A4, A6 with the Critic (cards DC-01..04, 09..13, 17, 19, 20)"
+JUDGED_BY = "Agents A1, A3, A4, A5, A6 with the Critic (cards DC-01..04, 09..14, 17, 19, 20)"
 
 DeepDive = Callable[[str, str, str, dict], dict]               # (sym, etf, direction, judgment) -> idea
 
@@ -86,6 +90,11 @@ def idea_facts(d: dict, macro: dict, as_of: date) -> FactSheet:
     for i, n in enumerate((cat.get("news") or [])[:5]):
         fs.add(f"{sym}.news[{i}]", f"{n.get('date', '')} {n.get('publisher', '')}: {n.get('title', '')}",
                "yahoo:news", as_of)
+    for i, a in enumerate((cat.get("analyst_actions") or [])[:5]):
+        fs.add(f"{sym}.catalysts.analyst_actions[{i}]", f"{a.get('date')} {a.get('firm')} {a.get('action')} "
+               f"{a.get('from_')}->{a.get('to')} target {a.get('target')} ({a.get('prior_target')})",
+               "yahoo:upgradeDowngradeHistory", as_of)
+    document_facts(fs, sym, d.get("documents"), as_of)
     for i, t in enumerate(d.get("targets") or []):
         add_facts(fs, f"{sym}.target_option[{i}]", {k: t.get(k) for k in ("source", "price", "rr", "move_pct",
                                                                          "unreliable", "multiple_source")}, as_of, depth=1)
@@ -95,6 +104,88 @@ def idea_facts(d: dict, macro: dict, as_of: date) -> FactSheet:
         fs.add(f"{sym}.profile.summary", p["summary"][:600], "yahoo:assetProfile", as_of)
     st = macro["stage2"]["stance"]
     add_facts(fs, "macro.stance", {k: st.get(k) for k in ("zone", "bias")}, as_of, depth=1)
+    return fs
+
+
+def document_facts(fs: FactSheet, sym: str, docs: dict | None, as_of: date) -> None:
+    """SEC extracts as facts (S07-R30 risk factors for DC-12 risk_10k, S07-R32 announcements and reports)."""
+    if not docs:
+        return
+    for i, f in enumerate((docs.get("current") or [])[:8]):
+        ex = (f.get("exhibits") or [{}])[0]
+        fs.add(f"{sym}.filing[{i}]", f"{f.get('date')} {f.get('form')} {' '.join(f.get('items') or [])} "
+               f"{' / '.join(f.get('item_names') or [])} | {ex.get('title') or ''}".strip(),
+               f"sec:{f.get('form')} {f.get('index_url') or f.get('url') or ''}".strip(), as_of)
+    res = docs.get("results")
+    if res:
+        src = f"sec:{res.get('form')} {res.get('url') or ''}".strip()
+        rel = f"[{res.get('form')} {res.get('date')}] "               # the release date travels with every value
+        if res.get("date"):
+            fs.add(f"{sym}.results.date", res["date"], src, as_of)
+        if res.get("lead"):
+            fs.add(f"{sym}.results.lead", rel + res["lead"], src, as_of)
+        for i, o in enumerate((res.get("outlook") or [])[:6]):
+            fs.add(f"{sym}.results.outlook[{i}]", rel + o, src, as_of)
+        for i, g in enumerate((res.get("guidance") or [])[:4]):
+            fs.add(f"{sym}.results.guidance[{i}]", f"{rel}{g.get('metric')} {g.get('period')} {g.get('low')}-"
+                   f"{g.get('high')} {g.get('unit')}: {g.get('sentence', '')}", src, as_of)
+    rf = docs.get("risk_factors")
+    if rf:
+        src = f"sec:{rf.get('form')} Item 1A {rf.get('url') or ''}".strip()
+        if rf.get("headlines"):
+            fs.add(f"{sym}.risk_factors.headlines", " | ".join(rf["headlines"])[:3000], src, as_of)
+        if rf.get("excerpt"):
+            fs.add(f"{sym}.risk_factors.excerpt", rf["excerpt"], src, as_of)
+        dl = rf.get("delta")
+        if dl:
+            fs.add(f"{sym}.risk_factors.delta", ("no material change; " if dl.get("no_material_change") else "")
+                   + (dl.get("excerpt") or ""), f"sec:{dl.get('form')} Item 1A {dl.get('url') or ''}".strip(), as_of)
+    if docs.get("errors"):
+        fs.add(f"{sym}.documents.errors", list(docs["errors"])[:8], "code:filings", as_of)
+
+
+def _peers_on_list(d: dict) -> list[str]:
+    return [p["sym"] for p in d.get("peers") or [] if p.get("on_list")]
+
+
+def event_facts(d: dict, ev: dict, as_of: date, j: dict | None = None, macro: dict | None = None) -> FactSheet:
+    """A small sheet per DC-14 call: the event and its exhibit, its price facts, the profile, story and breakers,
+    the regime and the peers on the list. Not the whole idea sheet (LLM budget)."""
+    fs = FactSheet()
+    sym = d["sym"]
+    add_facts(fs, f"{sym}.event", {k: v for k, v in CC.public(ev).items() if k not in ("facts", "flags")}, as_of,
+              ev.get("source") or SRC, depth=1)
+    add_facts(fs, f"{sym}.event.facts", ev.get("facts") or {}, as_of, depth=1)
+    if ev.get("flags"):
+        fs.add(f"{sym}.event.flags", list(ev["flags"]), SRC, as_of)
+    docs = d.get("documents") or {}
+    f = next((x for x in docs.get("current") or [] if ev.get("accession") and x.get("accession") == ev["accession"]),
+             None)
+    for i, ex in enumerate((f or {}).get("exhibits") or []):
+        fs.add(f"{sym}.event.exhibit[{i}]", f"{ex.get('type')} {ex.get('title', '')}: {ex.get('lead', '')}",
+               f"sec:{ex.get('type')} {ex.get('url', '')}".strip(), as_of)
+    if ev.get("kind") in ("results", "guidance", "own_report"):
+        sub = FactSheet()
+        document_facts(sub, sym, {k: docs.get(k) for k in ("results",)}, as_of)
+        for x in sub.to_list():
+            fs.add(x["key"], x["value"], x["source"], as_of)
+    if ev.get("kind") == "guidance" and docs.get("results_prev"):
+        for i, g in enumerate((docs["results_prev"].get("guidance") or [])[:4]):
+            fs.add(f"{sym}.results_prev.guidance[{i}]", f"{g.get('metric')} {g.get('period')} {g.get('low')}-"
+                   f"{g.get('high')}", f"sec:{docs['results_prev'].get('form')} {docs['results_prev'].get('url', '')}",
+                   as_of)
+    p = d.get("profile") or {}
+    add_facts(fs, f"{sym}.profile", {k: p.get(k) for k in ("name", "industry")}, as_of, depth=1)
+    j = j or {}
+    if j.get("story"):
+        fs.add(f"{sym}.story", f"{j.get('story_type', '')}: {j['story']}"[:800], "agent:DC-10", as_of)
+    for i, b in enumerate((j.get("breakers") or [])[:5]):
+        fs.add(f"{sym}.thesis_breaker[{i}]", f"{b.get('kind')}: {b.get('text')}", "agent:DC-12", as_of)
+    if macro:
+        st = macro["stage2"]["stance"]
+        add_facts(fs, "macro.stance", {k: st.get(k) for k in ("zone", "bias")}, as_of, depth=1)
+    if _peers_on_list(d):
+        fs.add(f"{sym}.peers_on_list", _peers_on_list(d), "code:peers", as_of)
     return fs
 
 
@@ -218,18 +309,52 @@ class Judge:
         world["DC-11"] = {"option": prem["option"], "target_method": prem.get("target_method")}
         brk = self._decide("A4", "DC-12", fs, world, sym)
         world["DC-12"] = {"thesis_breakers": brk.get("thesis_breakers", [])}
-        heat = self._decide("A4", "DC-13", fs, world, sym)
-        world["DC-13"] = {"option": heat["option"]}
-
         j.update(story_type=story["option"], story=story.get("reasoning", ""), thesis=prem.get("reasoning", ""),
                  premium={"choice": prem["option"], "why": prem.get("reasoning", "")},
-                 breakers=[dict(b) for b in brk.get("thesis_breakers") or []],
-                 tldr=dict(heat.get("tldr") or {}), heat=heat["option"])
+                 breakers=[dict(b) for b in brk.get("thesis_breakers") or []])
+
+        # A5 DC-14 on the events code could not decide, then the code's catalyst gate (S07-R13, S08-R33, S10-R9)
+        cat = d.get("catalysts") or {}
+        ne = cat.get("next_earnings")
+        evs = CC.events(d, as_of)
+        st = macro["stage2"]["stance"]
+        regime = {k: st.get(k) for k in ("zone", "bias")}
+        prof = {k: (d.get("profile") or {}).get(k) for k in ("name", "industry")}
+        for ev in CC.select_for_agent(evs):
+            try:
+                o = self._decide("A5", "DC-14", event_facts(d, ev, as_of, j, macro),
+                                 world | {"event": CC.public(ev), "peers_on_list": _peers_on_list(d), "regime": regime,
+                                          "profile": prof}, sym)
+                CC.apply_answer(ev, o)
+            except Exception as e:                       # one event's failure is the lower class (S13-J7)
+                if type(e).__name__ == "BudgetExceeded":     # the run's budget is gone: stop, as __call__ expects
+                    raise
+                CC.agent_error(ev, e)
+        rows = CC.judgment_rows(evs, ne)
+        ch = CC.catalyst_horizon((d.get("plan") or {}).get("horizon_months"), evs, as_of, ne)
+        world["DC-14"] = rows
+        world["catalyst_code"] = {k: ch[k] for k in ("expected", "chain", "wait", "months", "basis")}
+
+        heat = self._decide("A4", "DC-13", fs, world, sym)
+        world["DC-13"] = {"option": heat["option"]}
+        j.update(tldr=dict(heat.get("tldr") or {}), heat=heat["option"], catalysts=rows,
+                 catalyst_expected=bool(ch["expected"]), catalyst_chain=ch["chain"], catalyst_wait=ch["wait"],
+                 news_adverse=CC.adverse(evs, as_of, ne))
+        src = CC.sources(d)
+        if src:
+            j["sources"] = src
         ts = TARGET_SOURCE.get(prem.get("target_method") or "")
         if ts:
             j["target_source"] = ts
         if heat["option"] == "no":
             j.update(decision="no", why=heat.get("reasoning", ""))
+            return j
+        if heat["option"] == "hot" and not ch["expected"]:          # S08-R33 / S07-R13: hot needs a counted catalyst
+            why = ("S08-R33/S07-R13: אין קטליסט צפוי שאושר בקוד (A או B בעד הרעיון, לא מתומחר, בתוקף בתוך "
+                   f"{ch['months'] or 3:.1f} חודשים)")
+            j.update(heat="cold", decision="watch_only", why=why)
+            j.setdefault("code_overrides", []).append({"card": "DC-13", "from": "hot", "to": "cold",
+                                                       "rule_id": "S08-R33", "why": why})
             return j
         if heat["option"] == "cold":
             j.update(decision="watch_only", why=heat.get("reasoning", ""))
@@ -269,4 +394,7 @@ class Judge:
                     break
         J["A3"] = self.selection
         J["agent_log"] = self.log
+        hot_max = load_policy().watchlist.hot_max                   # S07-R35: 3-4 hot per cycle, a flag
+        if sum(j.get("heat") == "hot" for j in J["ideas"].values()) > hot_max:
+            J.setdefault("warnings", []).append(f"hot_above_{hot_max}")
         return J

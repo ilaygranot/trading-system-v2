@@ -17,6 +17,7 @@ from qt.calc.portfolio import Portfolio
 from qt.calc.traffic_light import combine
 from qt.calc.volatility import adr, daily_range_pct
 from qt.policy import load_policy
+from qt.research import catalyst_chain as CC
 from qt.research.universe import trend
 from qt.research.yahoo import Yahoo, raw
 from qt.rules.checks import Context, TradeProposal, evaluate
@@ -290,7 +291,11 @@ def option_candidates(y: Yahoo, sym: str, direction: str, price: float, target: 
 
 def trade_plan(sym: str, direction: str, bars: list, target: float | None, target_source: str | None, k: float,
                etf: str, buckets: dict, macro_bias: str, tl: dict, row: dict, catalyst_expected: bool | None,
-               unhealthy: bool, catalyst_chain: str = "") -> dict[str, Any]:
+               unhealthy: bool, catalyst_chain: str = "", catalysts: list | None = None, as_of: date | None = None,
+               next_earnings: str | None = None, heat: str | None = "hot", news_adverse: bool = False) -> dict[str, Any]:
+    """catalysts and as_of: the judgment's catalyst rows set the horizon and chain (S10-R9, S10-R10, D-S10-5) and,
+    when the judgment has none, catalyst_expected (S07-R13). An explicit hand-written value wins. heat None (a
+    hand-written judgment without one): cold when catalyst_expected comes out False (S08-R33), else hot."""
     price = bars[-1].close
     a = adr(bars)
     stop = T.stop_price(price, a, k, direction)                              # type: ignore[arg-type]
@@ -305,6 +310,17 @@ def trade_plan(sym: str, direction: str, bars: list, target: float | None, targe
         except ValueError as e:
             out["rr"], out["rr_error"] = None, str(e)
         out["horizon_months"] = T.horizon_months(out["move_pct"], sig)
+    if catalysts is not None and as_of is not None:
+        ch = CC.catalyst_horizon(out.get("horizon_months"), catalysts, as_of, next_earnings)
+        if out.get("horizon_months") is not None:
+            out.update(horizon_months=ch["months"], horizon_basis=ch["basis"],
+                       horizon_sigma_months=out["horizon_months"])
+        catalyst_chain = catalyst_chain or ch["chain"]
+        out.update(catalyst_chain=catalyst_chain, catalyst_wait=ch["wait"])
+        if catalyst_expected is None:
+            catalyst_expected = ch["expected"]
+    if heat is None:
+        heat = "cold" if catalyst_expected is False else "hot"
     sz = T.size_position(EQUITY, price, sd, "initial")
     out["sizing"] = asdict(sz) | {"equity": EQUITY}
     p = TradeProposal(symbol=sym, direction=direction, stage="initial", sector=etf, entry=price, stop=stop,  # type: ignore[arg-type]
@@ -312,7 +328,8 @@ def trade_plan(sym: str, direction: str, bars: list, target: float | None, targe
                       catalyst_chain=catalyst_chain, adr_pct=a, monthly_sigma_pct=sig, requested_pct=sz.allowed_pct,
                       traffic_light=tl["combined"], market_cap=row.get("market_cap"), price=price,
                       revenue=row.get("sales"), price_behaviour_qm=tl["price_behaviour_qm"],
-                      unhealthy_finances=unhealthy, catalyst_expected=catalyst_expected, heat="hot",
+                      unhealthy_finances=unhealthy, catalyst_expected=catalyst_expected, heat=heat,  # type: ignore[arg-type]
+                      news_adverse=news_adverse,
                       reasons={"DC-19": f"k={k}"} if k < 4 else {})
     v = evaluate(p, Context(Portfolio(EQUITY, []), macro_bias=macro_bias, sector_buckets=buckets))
     out["verdict"] = dict(status=v.status.value,
