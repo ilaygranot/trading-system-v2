@@ -174,6 +174,40 @@ def test_risk_factors_caps():
     assert r["chars_total"] > 4000
 
 
+def test_business_section_paragraphs_verbatim():
+    b = F.business_extract(html_to_text(fx("tenk.htm")), "10-K")
+    assert b["overview"] == ["NVIDIA pioneered accelerated computing to help solve the most challenging computational "
+                             "problems. NVIDIA is now a data center scale AI infrastructure company reshaping all industries."]
+    assert b["segments"][0] == "We report our business results in two segments." and len(b["segments"]) == 3
+    comp = b["competition"]
+    assert comp[0].startswith("The market for our products is intensely competitive")
+    assert comp[0].endswith("at competitive prices.")             # the page break ("8", "Table of Contents") is skipped
+    assert comp[1].startswith("Our current competitors include: suppliers")   # the bullet stays with its opener
+    assert not any("Human Capital" in x or "36,000" in x for x in comp)      # the next heading ends the section
+    assert b["kpi"][0].startswith("We use the following key metrics") and "$115.2 billion" in b["kpi"][0]
+    assert F.business_extract("nothing here", "10-K") == {"chars_total": 0, "overview": [], "segments": [],
+                                                          "competition": [], "kpi": []}
+
+
+def test_annual_report_in_its_own_layout_gives_the_segments_by_heading():
+    html = ("<p>Our businesses</p><p>Reporting segments</p><p>Integrated Gas</p><p>Integrated Gas includes natural gas "
+            "and liquids exploration and extraction, and the production of liquefied natural gas.</p><p>See pages 45-51 for "
+            "a review of our performance.</p><p>Upstream</p><p>Upstream explores for and extracts crude oil, natural gas and "
+            "natural gas liquids, and markets and transports them.</p><p>Strategy</p><p>Our strategy is to deliver more "
+            "value with less emissions over the long run.</p>")
+    b = F.business_extract(html_to_text(html), "20-F")
+    assert [x.split()[0] for x in b["segments"]] == ["Integrated", "Upstream"]       # past the sub-headings,
+    assert not any("See pages" in x or "strategy" in x for x in b["segments"])        # not the cross-references or
+                                                                                      # the next section
+
+
+def test_shrink_drops_whole_business_paragraphs():
+    para = "word " * 200
+    b = {"overview": [para] * 3, "segments": [para], "competition": [para] * 2, "kpi": []}
+    F._trim_business(b, 1000)
+    assert b["overview"] == [para] and b["competition"] == [para] and b["segments"] == [para]
+
+
 # ---------------------------------------------------------------- predecessor CIK
 
 def test_predecessor_cik_from_accession_prefix():
@@ -231,7 +265,7 @@ def test_documents_contract_and_caps(store):
     d = f.documents("NVDA", AS_OF)
     assert d["errors"] == []
     assert set(d) == {"symbol", "cik", "ciks", "foreign", "as_of", "current", "results", "results_prev",
-                      "risk_factors", "transcript", "errors"}
+                      "risk_factors", "business", "transcript", "errors"}
     assert d["symbol"] == "NVDA" and d["cik"] == 1045810 and d["ciks"] == [1045810] and d["foreign"] is False
     assert d["as_of"] == "2026-10-23" and d["transcript"] is None
     assert len(d["current"]) <= 8 and d["current"][0]["date"] >= d["current"][-1]["date"]
@@ -244,6 +278,8 @@ def test_documents_contract_and_caps(store):
     rf = d["risk_factors"]
     assert rf["form"] == "10-K" and rf["delta"]["form"] == "10-Q" and rf["delta"]["no_material_change"] is True
     assert len(rf["delta"]["excerpt"]) <= 2500
+    b = d["business"]                                   # the same 10-K download as the risk factors
+    assert b["form"] == "10-K" and b["url"] == rf["url"] and b["overview"][0].startswith("NVIDIA pioneered")
     assert F.size(d) <= F.MAX_CHARS + 500
 
 

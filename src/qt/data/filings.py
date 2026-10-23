@@ -28,7 +28,7 @@ CURRENT_FORMS = ("8-K", "8-K/A", "6-K")
 ANNUAL_FORMS = ("10-K", "20-F", "40-F")
 YEAR_S = 365 * 86400  # filings never change once accepted
 SUBMISSIONS_MAX_AGE_S = 6 * 3600
-MAX_CHARS = 16_000  # total size of documents() output (not from course: LLM budget)
+MAX_CHARS = 22_000  # total size of documents() output, 6,000 of it the business section (not from course: LLM budget)
 MAX_RESULT_CANDIDATES = 6  # results filings opened per stock (not from course: request budget)
 MAX_RESULT_AGE_DAYS = 200  # "latest" results release: one half-year plus a margin (not from course; as results_prev)
 MAX_EXHIBIT_BYTES = 4_000_000  # skip larger EX-99 files in the current-report list (not from course)
@@ -340,6 +340,128 @@ def risk_extract(html: str, form: str) -> dict:
             "no_material_change": no_material_change(sec[:5000])}
 
 
+# ---- the business section (S07-R2, S07-R3 questions 3-4, S07-R27): what the company does, its segments, its
+# competition and the metrics it reports itself. Paragraphs are kept verbatim, so a quote can be checked against them.
+
+_BIZ_10K_START = re.compile(r"^\s*item\s*1\s*[.:\-–—]?\s*business\.?\s*$", re.IGNORECASE | re.MULTILINE)
+_BIZ_10K_END = re.compile(r"^\s*item\s*1a\s*[.:\-–—]?\s*risk\s+factors\.?\s*$", re.IGNORECASE | re.MULTILINE)
+_BIZ_20F_START = re.compile(r"^\s*(?:item\s*4\.?\s*)?B\.\s*business\s+overview\.?\s*$", re.IGNORECASE | re.MULTILINE)
+_BIZ_20F_END = re.compile(r"^\s*(?:item\s*4\.?\s*)?C\.\s*organi[sz]ational\s+structure\.?\s*$", re.IGNORECASE | re.MULTILINE)
+_NOISE = re.compile(r"^(table of contents|index|item\s*\d+[a-z]?\.?(\s.{0,60})?|part\s+[ivx]+\.?|page \d+|\d{1,3}|"
+                    r"[\u2022\u25aa\u25cf\u25a0\-–•▪]+)$", re.IGNORECASE)
+_H_COMPETITION = re.compile(r"(?:our\s+)?(?:competition|competitive\s+(?:environment|landscape|conditions|position)|"
+                            r"competitors)\.?", re.IGNORECASE)
+_H_SEGMENTS = re.compile(r"(?:our\s+)?(?:(?:operating|reportable|business)\s+)?segments?(?:\s+information|\s+overview)?\.?|"
+                         r"(?:our\s+)?(?:businesses|reportable\s+segments)\.?", re.IGNORECASE)
+_H_OVERVIEW = re.compile(r"(?:general|overview|our\s+company|company\s+overview|business\s+overview)\.?", re.IGNORECASE)
+_KPI = re.compile(r"\bkey\s+(?:business|operating|performance|financial)?\s*(?:metrics|indicators|measures)\b", re.IGNORECASE)
+_H_KPI = re.compile(r"(?:key\s+)?(?:(?:business|operating|performance|financial)\s+)?(?:metrics|statistics|indicators)"
+                    r"(?:\s+and\s+\w+)?\.?", re.IGNORECASE)
+_KPI_INTRO = re.compile(r"\bwe\b.{0,80}\b(?:use|discuss|monitor|review|track|believe)\b", re.IGNORECASE)
+
+
+_SEE = re.compile(r"^see (?:pages?|note|item)\b", re.IGNORECASE)
+_H_NEXT = re.compile(r"(?:our\s+)?(?:competition|competitors|human\s+capital|employees|properties|(?:government\s+)?regulation|"
+                     r"intellectual\s+property|seasonality|available\s+information|sustainability|research\s+and\s+development|"
+                     r"manufacturing|sales\s+and\s+marketing|customers|suppliers|strategy|risk\s+factors)\b.*", re.IGNORECASE)
+_H_20F_BUSINESS = re.compile(r"(?:our\s+businesses|business\s+overview|reporting\s+segments)\.?", re.IGNORECASE)
+
+
+def _lines(text: str) -> list[str]:
+    return [ln for ln in (x.strip() for x in text.split("\n")) if ln and not _NOISE.match(ln)]
+
+
+def _heading(ln: str) -> bool:
+    return len(ln) <= 70 and ln[-1] not in ".:;,)" and not _BULLET.match(ln) and len(ln.split()) <= 9
+
+
+def _take(lines: list[str], cap: int, max_n: int = 6, through: bool = False) -> list[str]:
+    """The paragraphs after a heading, verbatim, until the next heading (through: past sub-headings, for a list of
+    segments); at most `cap` characters in all. A line that starts in lower case continues the paragraph a page
+    break cut; a bullet list stays with the line that opened it; "See pages 45-51" cross-references are skipped."""
+    out: list[str] = []
+    for ln in lines:
+        if _SEE.match(ln):
+            continue
+        if _heading(ln) and not ln[0].islower():
+            if out and (not through or _H_NEXT.fullmatch(ln)):
+                break
+            continue                                          # a sub-heading right under the heading
+        if out and (ln[0].islower() or _BULLET.match(ln) or out[-1].endswith(":")):
+            out[-1] = f"{out[-1]} {_BULLET.sub('', ln)}"
+        else:
+            out.append(ln)
+        if sum(map(len, out)) >= cap or len(out) >= max_n:
+            break
+    return _cap_list([_cap(x, 1200) for x in out], cap)
+
+
+def _block(lines: list[str], cap: int) -> list[str]:
+    """A metrics block, tables included: short lines (a table's cells) join the chunk before them, verbatim."""
+    out: list[str] = []
+    for ln in lines:
+        if out and (len(ln) < 80 or ln[0].islower()):
+            out[-1] = f"{out[-1]} {ln}"
+        else:
+            out.append(ln)
+        if sum(map(len, out)) >= cap or len(out) >= 4:
+            break
+    return _cap_list([_cap(x, 1000) for x in out], cap)
+
+
+def _subsection(lines: list[str], head: re.Pattern, cap: int, through: bool = False) -> list[str]:
+    for i, ln in enumerate(lines):
+        if len(ln) <= 70 and head.fullmatch(ln):
+            got = _take(lines[i + 1:], cap, through=through)
+            if got and sum(map(len, got)) >= 150:
+                return got
+    return []
+
+
+def cut_business(text: str, form: str) -> str:
+    """The business section of an annual report's text (10-K Item 1, 20-F Item 4.B), or "" when it is not found."""
+    form = (form or "").upper()
+    if form.startswith("10-K"):
+        return _longest(text, _BIZ_10K_START, _BIZ_10K_END)
+    if form.startswith("20-F"):
+        return _longest(text, _BIZ_20F_START, _BIZ_20F_END)
+    return ""
+
+
+def business_extract(text: str, form: str) -> dict:
+    """overview, segments and competition from the business section, and the company's own key metrics from
+    anywhere after it (MD&A). Each value is a list of verbatim paragraphs; [] when not found (code never guesses)."""
+    biz = cut_business(text, form)
+    lines = _lines(biz)
+    overview = _subsection(lines, _H_OVERVIEW, 1500) or _take(lines[1:], 1500, 3)
+    segments = _subsection(lines, _H_SEGMENTS, 1500, through=True)
+    if not segments and (form or "").upper().startswith(("20-F", "40-F")):
+        # an annual report in the company's own layout (Shell): its "Our businesses" pages, by heading
+        segments = _subsection(_lines(text), _H_20F_BUSINESS, 1500, through=True)
+    kpi: list[str] = []
+    after = text[text.find(biz) + len(biz):] if biz else text
+    al = _lines(after)
+    for i, ln in enumerate(al):
+        if len(ln) <= 70 and _H_KPI.fullmatch(ln):
+            kpi = _block(al[i + 1:], 1500)
+        elif _KPI.search(ln) and (ln.endswith(":") or _KPI_INTRO.search(ln)):
+            kpi = _block(al[i:], 1500)
+        if sum(map(len, kpi)) >= 150 and sum(c.isalpha() for c in "".join(kpi)) >= 0.4 * len("".join(kpi)):
+            break
+        kpi = []
+    return {"chars_total": len(biz), "overview": overview, "segments": segments,
+            "competition": _subsection(lines, _H_COMPETITION, 1500), "kpi": kpi}
+
+
+def annual_extract(html: str, form: str) -> dict:
+    """One pass over an annual report: the risk factors and the business section."""
+    text = html_to_text(html)
+    sec = cut_risk_factors(text, form)
+    return {"risk": {"chars_total": len(sec), "headlines": risk_headlines(sec), "excerpt": _cap(sec, 4000),
+                     "no_material_change": no_material_change(sec[:5000])},
+            "business": business_extract(text, form)}
+
+
 def results_kind(*titles: str) -> str:
     """Kind of a 6-K from its exhibit and document titles."""
     t = " | ".join(x for x in titles if x)
@@ -598,28 +720,45 @@ class SECFilings:
     def _risk(self, url: str, form: str) -> dict:
         return self._text(url, transform=lambda h: risk_extract(h, form), key=f"rf:{form}")
 
+    def _annual(self, url: str, form: str) -> dict:
+        return self._text(url, transform=lambda h: annual_extract(h, form), key=f"annual:{form}")
+
     def risk_factors(self, ticker: str, as_of: date, ciks: list[int] | None = None,
                      errors: list[str] | None = None) -> dict | None:
+        return self.annual_report(ticker, as_of, ciks, errors)[0]
+
+    def annual_report(self, ticker: str, as_of: date, ciks: list[int] | None = None,
+                      errors: list[str] | None = None) -> tuple[dict | None, dict | None]:
+        """(risk factors, business section) of the latest annual report filed by as_of, from one download."""
         ciks = ciks or self.ciks(ticker)
         rows = [r for r in self._rows(ciks) if r.get("filingDate", "") <= as_of.isoformat()]
         annual = next((r for r in rows if r.get("form") in ANNUAL_FORMS), None)
         if annual is None:
             if errors is not None:
                 errors.append(f"no annual report (10-K / 20-F / 40-F) before {as_of.isoformat()}")
-            return None
+            return None, None
         base = _acc_path(annual["cik"], annual["accessionNumber"])
         url = f"{base}/{annual.get('primaryDocument', '')}"
-        rf = self._risk(url, annual["form"])
+        ax = self._annual(url, annual["form"])
+        rf, bz, burl = ax["risk"], ax["business"], url
         if not rf["chars_total"] and annual["form"] in ("40-F", "20-F"):
             for x in ex99(self._index(annual["cik"], annual["accessionNumber"]))[:2]:
-                alt = self._risk(x["url"], annual["form"])
-                if alt["chars_total"]:
-                    rf, url = alt, x["url"]
+                alt = self._annual(x["url"], annual["form"])
+                if alt["risk"]["chars_total"]:
+                    rf, url = alt["risk"], x["url"]
+                    if not bz["chars_total"]:
+                        bz, burl = alt["business"], x["url"]
                     break
+        business = None
+        if any(bz.get(k) for k in ("overview", "segments", "competition", "kpi")):
+            business = {"form": annual["form"], "filed": annual["filingDate"], "url": burl,
+                        **{k: bz.get(k) or [] for k in ("overview", "segments", "competition", "kpi")}}
+        elif errors is not None:
+            errors.append(f"business section not found in {annual['form']} {burl}")
         if not rf["chars_total"]:
             if errors is not None:
                 errors.append(f"risk factors not found in {annual['form']} {url}")
-            return None
+            return None, business
         out = {"form": annual["form"], "filed": annual["filingDate"], "url": url, "chars_total": rf["chars_total"],
                "headlines": [_cap(h, 200) for h in rf["headlines"][:25]], "excerpt": _cap(rf["excerpt"], 4000),
                "delta": None}
@@ -636,13 +775,13 @@ class SECFilings:
                 except ProviderError as e:
                     if errors is not None:
                         errors.append(f"10-Q {q['accessionNumber']}: {e}")
-        return out
+        return out, business
 
     def documents(self, ticker: str, as_of: date) -> dict:
         """The `documents` contract for one stock. Never raises: each failure is appended to "errors"."""
         out: dict[str, Any] = {"symbol": ticker.upper(), "cik": None, "ciks": [], "foreign": False,
                                "as_of": _iso(as_of), "current": [], "results": None, "results_prev": None,
-                               "risk_factors": None, "transcript": None, "errors": []}
+                               "risk_factors": None, "business": None, "transcript": None, "errors": []}
         errs: list[str] = out["errors"]
         if not self.ok():
             errs.append("SEC_CONTACT not set")
@@ -678,7 +817,7 @@ class SECFilings:
             return out
         for name, fn in (("current", lambda: self.current_reports(ticker, as_of, ciks=ciks, errors=errs)),
                          ("results", lambda: self.results(ticker, as_of, ciks=ciks, errors=errs)),
-                         ("risk_factors", lambda: self.risk_factors(ticker, as_of, ciks=ciks, errors=errs))):
+                         ("annual", lambda: self.annual_report(ticker, as_of, ciks=ciks, errors=errs))):
             try:
                 val = fn()
             except Exception as e:  # noqa: BLE001
@@ -686,6 +825,8 @@ class SECFilings:
                 continue
             if name == "results":
                 out["results"], out["results_prev"] = val
+            elif name == "annual":
+                out["risk_factors"], out["business"] = val
             else:
                 out[name] = val
         return shrink(out)
@@ -699,6 +840,7 @@ def shrink(out: dict, limit: int = MAX_CHARS) -> dict:
     """Trim the longest free-text fields until the dict is about `limit` characters."""
     steps = [
         lambda: _trim(out.get("results_prev"), lead=400, outlook=800),
+        lambda: _trim_business(out.get("business"), 1000),
         lambda: [x.update(lead=_cap(x["lead"], 500)) for c in out["current"] for x in c["exhibits"]],
         lambda: out["risk_factors"] and out["risk_factors"].update(excerpt=_cap(out["risk_factors"]["excerpt"], 2500)),
         lambda: _trim(out.get("results"), lead=1000, outlook=2500),
@@ -708,6 +850,7 @@ def shrink(out: dict, limit: int = MAX_CHARS) -> dict:
         lambda: _trim(out.get("results_prev"), lead=0, outlook=0),
         lambda: out["risk_factors"] and out["risk_factors"].update(excerpt=_cap(out["risk_factors"]["excerpt"], 1200)),
         lambda: _trim(out.get("results"), lead=600, outlook=1200),
+        lambda: _trim_business(out.get("business"), 600),
     ]
     for step in steps:
         if size(out) <= limit:
@@ -723,3 +866,10 @@ def _trim(r: dict | None, lead: int, outlook: int) -> None:
     r["outlook"] = _cap_list(r.get("outlook") or [], outlook)
     if r.get("commentary"):
         r["commentary"]["outlook"] = _cap_list(r["commentary"].get("outlook") or [], max(outlook // 2, 0))
+
+
+def _trim_business(b: dict | None, each: int) -> None:
+    """Fewer whole paragraphs, never a cut one: a quote is checked against the paragraph as filed."""
+    if b:
+        for k in ("overview", "segments", "competition", "kpi"):
+            b[k] = _cap_list(b.get(k) or [], each) or (b.get(k) or [])[:1]

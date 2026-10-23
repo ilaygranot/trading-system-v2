@@ -859,9 +859,15 @@ def _qlabel(d: str) -> str:
 
 def _fund_charts(i: dict) -> str:
     """S07 in pictures: quarters, margins, cash, surprises and the multiple against its own history and the sector."""
+    figs = [x for x in fund_figs(i).values() if x]
+    return ('<h4>הדוחות בתמונות (S07)</h4><div class="figs">' + "".join(figs) + "</div>") if figs else ""
+
+
+def fund_figs(i: dict) -> dict[str, str]:
+    """The fundamentals charts by name (quarters, margins, cash, eps, surprises, multiple), for the article's chapters."""
     f, v = i["fundamentals"], i["valuation"]
     ann, qtr = f.get("annual") or {}, f.get("quarterly") or {}
-    figs = []
+    figs: dict[str, str] = {}
     qr, qo = qtr.get("TotalRevenue") or [], dict(qtr.get("OperatingIncome") or [])
     if qr:
         cap = ""
@@ -871,7 +877,7 @@ def _fund_charts(i: dict) -> str:
             if o1 is not None and o0:
                 cap += f", רווח תפעולי {num((o1 / abs(o0) - (1 if o0 > 0 else -1)) * 100, 1, True, True)}"
             cap += " (S07-R5: השוואה שנתית)."
-        figs.append(_fig("הכנסות ורווח תפעולי לפי רבעון (מיליוני $)", grouped_bars(
+        figs["quarters"] = (_fig("הכנסות ורווח תפעולי לפי רבעון (מיליוני $)", grouped_bars(
             [_qlabel(d) for d, _ in qr], [("הכנסות", [x / 1e6 for _, x in qr], "pos"),
                                           ("רווח תפעולי", [(qo.get(d) / 1e6) if qo.get(d) is not None else None for d, _ in qr], "alt")],
             label="רבעונים"), cap))
@@ -886,23 +892,23 @@ def _fund_charts(i: dict) -> str:
         last = {n: x[-1] for n, x, _ in ser if x[-1] is not None}
         first = {n: x[0] for n, x, _ in ser if x[0] is not None}
         cap = " · ".join(f"{n} {num(first[n], 1, True)} → {num(last[n], 1, True)}" for n in last if n in first)
-        figs.append(_fig("מרווחים לפי שנה (% מההכנסות)", grouped_bars([d[:4] for d in yrs], ser, fmt=lambda v: f"{v:.0f}%",
+        figs["margins"] = (_fig("מרווחים לפי שנה (% מההכנסות)", grouped_bars([d[:4] for d in yrs], ser, fmt=lambda v: f"{v:.0f}%",
                                                                       label="מרווחים"),
                          (cap + " (S07-R5: מרווח גבוה ומשתפר).") if cap else ""))
         ocf, fcf = dict(ann.get("OperatingCashFlow") or []), dict(ann.get("FreeCashFlow") or [])
         if ocf or fcf:
-            figs.append(_fig("תזרים מפעילות ותזרים חופשי (מיליוני $)", grouped_bars(
+            figs["cash"] = (_fig("תזרים מפעילות ותזרים חופשי (מיליוני $)", grouped_bars(
                 [d[:4] for d in yrs], [("מפעילות", [ocf[d] / 1e6 if d in ocf else None for d in yrs], "pos"),
                                        ("חופשי", [fcf[d] / 1e6 if d in fcf else None for d in yrs], "alt")], label="תזרים"),
                 "תזרים מפעילות חיובי = מודל יעיל (S07-R8)."))
         eps = ann.get("DilutedEPS") or []
         if eps:
-            figs.append(_fig("EPS מדולל לפי שנה", bars_chart([d[:4] for d, _ in eps], [x for _, x in eps], w=640, h=180,
+            figs["eps"] = (_fig("EPS מדולל לפי שנה", bars_chart([d[:4] for d, _ in eps], [x for _, x in eps], w=640, h=180,
                                                             fmt=lambda v: f"{v:.2f}", label="EPS")))
     sq = [q for q in ((f.get("surprises") or {}).get("quarters") or []) if q.get("pct") is not None]
     if sq:
         beats = sum(q["pct"] > 0 for q in sq)
-        figs.append(_fig("הפתעות EPS מול התחזית (%)", bars_chart([_qlabel(q.get("q") or "") for q in sq], [q["pct"] for q in sq],
+        figs["surprises"] = (_fig("הפתעות EPS מול התחזית (%)", bars_chart([_qlabel(q.get("q") or "") for q in sq], [q["pct"] for q in sq],
                                                                  fmt=lambda v: f"{v:+.1f}%", label="הפתעות"),
                          f"הכתה את התחזית ב-{beats} מתוך {len(sq)} רבעונים (S07-R31)."))
     hm = v.get("hist_multiples") or []
@@ -920,21 +926,26 @@ def _fund_charts(i: dict) -> str:
             vals.append(sec)
         cls = ["pos"] * len(hm) + (["alt"] if cur else []) + (["third"] if sec else [])
         prem = (v.get("premium") or {}).get("pct")
-        figs.append(_fig(f"המכפיל ({'P/E' if pe else 'P/S'}): היסטוריה, עכשיו והסקטור",
+        figs["multiple"] = (_fig(f"המכפיל ({'P/E' if pe else 'P/S'}): היסטוריה, עכשיו והסקטור",
                          bars_chart(labs, vals, fmt=lambda x: f"{x:.1f}", classes=cls, label="מכפילים"),
                          (f"פרמיה מול הסקטור: {num(prem, 0, True, True)} (S07-R19). " if prem is not None else "")
                          + "מכפיל גבוה מהסקטור עם מגמה בכיוון = השוק מסכים (S07-R28)."))
-    figs = [x for x in figs if x]
-    return ('<h4>הדוחות בתמונות (S07)</h4><div class="figs">' + "".join(figs) + "</div>") if figs else ""
+    return figs
 
 
 def _tech_charts(i: dict) -> str:
     """S09 in pictures, from the run's series: weekly with the levels, RSI, MACD, ADR20/ADR60 and relative strength."""
+    figs = [x for x in tech_figs(i).values() if x]
+    return ('<h4>הגרף בתמונות (S09)</h4><div class="figs">' + "".join(figs) + "</div>") if figs else ""
+
+
+def tech_figs(i: dict) -> dict[str, str]:
+    """The technical charts by name (weekly, rsi, macd, adr, rs); {} for a dossier written before the series."""
     t, p, lv = i.get("tech"), i["plan"], i.get("levels") or {}
     if not t:
-        return ""
+        return {}
     pr = t.get("periods") or {}
-    figs = []
+    figs: dict[str, str] = {}
     w = t.get("weekly") or {}
     if w.get("close"):
         hl = [(p["entry"], f"כניסה {px(p['entry'])}", "entry"), (p["stop"], f"עצירה {px(p['stop'])}", "stop")]
@@ -945,26 +956,26 @@ def _tech_charts(i: dict) -> str:
                 hl.append((lv[k], f"{lab} {px(lv[k])}", "level"))
         room = [f"{lab} {num(lv.get(k), 1, True)}" for k, lab in (("room_up_pct", "מרווח עד ההתנגדות"),
                                                                   ("room_down_pct", "עד התמיכה")) if lv.get(k) is not None]
-        figs.append(_fig("שלוש שנים, נר שבועי: הרמות וקווי התוכנית", line_chart(
+        figs["weekly"] = (_fig("שלוש שנים, נר שבועי: הרמות וקווי התוכנית", line_chart(
             w["dates"], [("סגירה שבועית", w["close"], "main")], hlines=hl, fmt=px, label="שבועי", h=240),
             (" · ".join(room) + " (S09-R29). ") if room else ""))
     d = t["dates"]
     r = [x for x in t.get("rsi") or [] if x is not None]
     if r:
-        figs.append(_fig(f"RSI({pr.get('rsi', 20)}) יומי", line_chart(d, [("RSI", t["rsi"], "main")],
+        figs["rsi"] = (_fig(f"RSI({pr.get('rsi', 20)}) יומי", line_chart(d, [("RSI", t["rsi"], "main")],
                                                                      hlines=[(50, "50", "ref")], fmt=lambda v: f"{v:.0f}",
                                                                      label="RSI", h=150),
                          f"עכשיו {num(r[-1], 1)}, {'מעל' if r[-1] > 50 else 'מתחת ל'}-50 (S09-R19)."))
     hs = [x for x in t.get("hist") or [] if x is not None]
     if hs:
         mp = pr.get("macd") or [20, 60, 10]
-        figs.append(_fig(f"MACD ({mp[0]}/{mp[1]}/{mp[2]}) יומי", _legend((("MACD", "pos"), ("סיגנל", "alt"))) + line_chart(
+        figs["macd"] = (_fig(f"MACD ({mp[0]}/{mp[1]}/{mp[2]}) יומי", _legend((("MACD", "pos"), ("סיגנל", "alt"))) + line_chart(
             d, [("MACD", t["macd"], "main"), ("סיגנל", t["signal"], "sig")], zero=True, fmt=lambda v: f"{v:.2f}",
             label="MACD", h=150), f"היסטוגרמה {num(hs[-1], 2, sign=True)}: הקו {'מעל' if hs[-1] > 0 else 'מתחת ל'}סיגנל (S09-R21)."))
     ar = [x for x in t.get("adr_ratio") or [] if x is not None]
     if ar:
         wt = pr.get("adr_wait", 1.5)
-        figs.append(_fig("תנודתיות: ADR20 חלקי ADR60", line_chart(d, [("ADR20/60", t["adr_ratio"], "main")],
+        figs["adr"] = (_fig("תנודתיות: ADR20 חלקי ADR60", line_chart(d, [("ADR20/60", t["adr_ratio"], "main")],
                                                                  hlines=[(1, "1", "ref"), (wt, f"{wt:g}", "stop")],
                                                                  fmt=lambda v: f"{v:.2f}", label="ADR", h=150),
                          f"עכשיו {num(ar[-1], 2)}. מעל {wt:g} = להמתין שבוע-שבועיים (S09-R52; הסף D-S09-10)."))
@@ -974,11 +985,10 @@ def _tech_charts(i: dict) -> str:
         lm = next((x for x in reversed(rm) if x is not None), None)
         cap = " · ".join(x for x in (f"מול {E(i['etf'])}: {num(ls - 100, 1, True, True)}" if ls else "",
                                     f"מול SPY: {num(lm - 100, 1, True, True)}" if lm else "") if x)
-        figs.append(_fig("חוזק יחסי, שנה (100 = תחילת התקופה)", _legend(((f"מול {i['etf']}", "pos"), ("מול SPY", "alt"))) + line_chart(
+        figs["rs"] = (_fig("חוזק יחסי, שנה (100 = תחילת התקופה)", _legend(((f"מול {i['etf']}", "pos"), ("מול SPY", "alt"))) + line_chart(
             d, [(f"מול {i['etf']}", rs, "main"), ("מול SPY", rm, "sig")], hlines=[(100, "100", "ref")],
             fmt=lambda v: f"{v:.0f}", label="חוזק יחסי", h=170), cap + " (S09-R10: המניה, הסקטור והשוק)." if cap else ""))
-    figs = [x for x in figs if x]
-    return ('<h4>הגרף בתמונות (S09)</h4><div class="figs">' + "".join(figs) + "</div>") if figs else ""
+    return figs
 
 
 TLDR_PARTS = (("macro", "המאקרו"), ("sector", "הסקטור"), ("company", "החברה"), ("why_now", "למה עכשיו"),
@@ -1128,6 +1138,12 @@ def _portfolio(d: dict) -> str:
     return "".join(out)
 
 
+def article_html(i: dict, checks: list[dict] | None = None, as_of: str = "") -> str:
+    """The idea as a magazine article when the run wrote one (qt.research.magazine), else the trade card."""
+    from qt.research import magazine
+    return magazine.article_html(i, checks, as_of)
+
+
 def _ideas(d: dict) -> str:
     order = {"enter": 0, "conditional": 1, "watch": 2, "reject": 3}
     ideas = sorted(d["ideas"].values(), key=lambda i: (order.get(i["bucket"], 9), -(i["plan"].get("rr") or 0)))
@@ -1137,7 +1153,8 @@ def _ideas(d: dict) -> str:
         if i["bucket"] != cur:
             cur = i["bucket"]
             out.append(f'<h3 class="group">{E(BUCKET_HE[cur])}</h3>')
-        out.append(_idea(i, [r for r in (d.get("verification") or {}).get("checks", []) if r["subject"] == i["sym"]]))
+        out.append(article_html(i, [r for r in (d.get("verification") or {}).get("checks", []) if r["subject"] == i["sym"]],
+                                d["meta"]["as_of"]))
     out.append("</section>")
     return "".join(out)
 
@@ -1334,11 +1351,12 @@ def render(d: dict[str, Any]) -> str:
     m = d["meta"]
     as_of = date.fromisoformat(m["as_of"])
     nav, body = sections(d)
+    from qt.research.magazine import CSS as MAG_CSS
     return f"""<title>מחקר שוק {as_of:%d.%m.%Y}</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700&family=Frank+Ruhl+Libre:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600;700&display=swap">
-<style>{CSS}</style>
+<style>{CSS}{MAG_CSS}</style>
 <div class="wrap" dir="rtl" lang="he">
 <div class="masthead"><div><h1>מחקר שוק · {as_of:%d.%m.%Y}</h1>
 <p>ריצה מלאה של שלבים 0–11 על נתונים חיים · פלייבוק {E(m["playbook_version"])} · סגירה של {E(m["as_of"])}</p></div>

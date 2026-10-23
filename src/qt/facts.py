@@ -14,6 +14,7 @@ class Fact:
     source: str         # provider + endpoint, e.g. "yahoo:quoteSummary/earningsTrend"
     as_of: date         # the date the value describes / was known
     fetched_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    url: str = ""       # the document a text fact is quoted from (the article's footnote links to it)
 
     def line(self) -> str:
         return f"{self.fact_id}: {self.key} = {self.value}, {self.source}, {self.as_of.isoformat()}"
@@ -23,11 +24,14 @@ class FactSheet:
     def __init__(self) -> None:
         self._facts: dict[str, Fact] = {}
 
-    def add(self, key: str, value: Any, source: str, as_of: date) -> Fact:
+    def add(self, key: str, value: Any, source: str, as_of: date, url: str = "") -> Fact:
         fid = f"F-{len(self._facts) + 1:03d}"
-        fact = Fact(fid, key, value, source, as_of)
+        fact = Fact(fid, key, value, source, as_of, url=url)
         self._facts[fid] = fact
         return fact
+
+    def __len__(self) -> int:
+        return len(self._facts)
 
     def get(self, fact_id: str) -> Fact:
         return self._facts[fact_id]

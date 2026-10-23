@@ -957,7 +957,8 @@ class App:
         if idea:
             checks = [r for r in (d.get("verification") or {}).get("checks", []) if r["subject"] == sym]
             out += ui.section(f"מה המחקר מצא ({_e(d['meta']['as_of'])})",
-                              "<div class=rep>" + self.rep_links(report._idea(idea, checks)) + "</div>")
+                              "<div class=rep>" + self.rep_links(report.article_html(idea, checks, d["meta"]["as_of"]))
+                              + "</div>")
             if sym in ((d.get("portfolio") or {}).get("syms") or []):      # S11: how it sits with the other trades
                 out += f"<div class=rep>{self.rep_links(report._portfolio(d))}</div>"
         elif timing:

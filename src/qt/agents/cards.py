@@ -1,6 +1,7 @@
 """Decision cards: the closed options per card and the output schema built from them."""
 from __future__ import annotations
 
+import importlib
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -57,5 +58,12 @@ def load_cards() -> dict[str, Card]:
     spec = yaml.safe_load((HERE / "cards.yaml").read_text(encoding="utf-8"))
     texts = _full_texts((HERE / "decision_cards.md").read_text(encoding="utf-8"))
     return {cid: Card(cid, c["agent"], tuple(str(o) for o in c["options"]), str(c["undecided"]), c["approval"],
-                      c.get("extra", {}), texts.get(cid, ""))
+                      _extra(c), texts.get(cid, ""))
             for cid, c in spec.items()}
+
+
+def _extra(c: dict) -> dict:
+    """The card's own fields; extra_from names a module whose schema_extra() holds a schema too long for yaml."""
+    if c.get("extra_from"):
+        return importlib.import_module(c["extra_from"]).schema_extra()
+    return c.get("extra", {})
