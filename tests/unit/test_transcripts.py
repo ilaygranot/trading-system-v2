@@ -5,7 +5,7 @@ from datetime import date
 from qt.data import transcripts
 from qt.data.textfetch import RateLimiter
 from qt.data.transcripts import FOOL_ALLOWED, SECResultsCommentary, TranscriptSource
-from tests.unit.test_filings import FakeSession, nvda_routes
+from test_filings import FakeSession, nvda_routes
 
 
 def test_sec_commentary_is_returned_as_outlook():
