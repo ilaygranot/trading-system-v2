@@ -15,7 +15,7 @@ from qt.calc import indicators as I
 from qt.calc import trade as T
 from qt.calc.portfolio import Portfolio
 from qt.calc.traffic_light import combine
-from qt.calc.volatility import adr
+from qt.calc.volatility import adr, daily_range_pct
 from qt.policy import load_policy
 from qt.research.universe import trend
 from qt.research.yahoo import Yahoo, raw
@@ -154,12 +154,13 @@ def valuation(bars: list, f: dict, row: dict, sector_avg: dict) -> dict[str, Any
         ks = [k for k in closes if k <= d]
         return closes[ks[-1]] if ks else None
     profitable = (row.get("f1") or 0) > 0 and (row.get("f2") or 0) > 0
-    hist = []
+    hist, years = [], []
     if profitable:
         for d, e in eps[-3:]:
             p = px(d)
             if p and e > 0:
                 hist.append(p / e)
+                years.append(d[:4])
         fwd = row.get("f2")
     else:
         sm = dict(shares)
@@ -167,8 +168,10 @@ def valuation(bars: list, f: dict, row: dict, sector_avg: dict) -> dict[str, Any
             p = px(d)
             if p and r > 0 and d in sm:
                 hist.append(p * sm[d] / r)
+                years.append(d[:4])
         fwd = row.get("sales_f2") or row.get("sales_f1")
     out["hist_multiples"] = hist
+    out["hist_years"], out["method"] = years, "pe" if profitable else "ps"
     # not from the course: the statements' EPS and the consensus must be on one basis (an ADR holds several
     # shares in another currency; GAAP vs adjusted). Last fiscal year's EPS against the consensus F0 for it:
     # off by more than half, and the own-multiple target is marked unreliable and is not chosen automatically.
@@ -324,3 +327,30 @@ def chart(bars: list, n: int = 260) -> dict:
     return dict(dates=[b.day.isoformat() for b in bars][-n:], close=closes[-n:],
                 high=[b.high for b in bars][-n:], low=[b.low for b in bars][-n:], open=[b.open for b in bars][-n:],
                 ma={str(p): v[-n:] for p, v in ma.items()})
+
+
+def tech(bars: list, sector_bars: list, spy_bars: list, n: int = 260, weeks: int = 156) -> dict:
+    """The series behind the article's technical charts (S09), at the course's periods: three years of weekly closes,
+    daily RSI and MACD, ADR20/ADR60 (D-S09-10) and the relative strength against the sector ETF and SPY. Code only."""
+    t = load_policy().timing
+    closes = [b.close for b in bars]
+    wk = I.resample(bars, "week")[-weeks:]
+    r = I.rsi(closes, t.rsi_period)
+    line, sig, hist = I.macd(closes, *t.macd)
+    rng = [daily_range_pct(b) for b in bars]
+    ratio: list[float | None] = [None] * len(bars)
+    for i in range(59, len(bars)):
+        ratio[i] = (sum(rng[i - 19:i + 1]) / 20) / (sum(rng[i - 59:i + 1]) / 60)
+    days = [b.day.isoformat() for b in bars][-n:]
+
+    def rel(other: list) -> list[float | None]:
+        oc = {b.day.isoformat(): b.close for b in other}
+        base = next(((c, oc[d]) for d, c in zip(days, closes[-n:]) if d in oc), None)
+        if not base:
+            return [None] * len(days)
+        return [round(c / base[0] / (oc[d] / base[1]) * 100, 2) if d in oc else None for d, c in zip(days, closes[-n:])]
+    rnd = lambda xs: [None if x is None else round(x, 4) for x in xs[-n:]]
+    return dict(dates=days, rsi=rnd(r), macd=rnd(line), signal=rnd(sig), hist=rnd(hist), adr_ratio=rnd(ratio),
+                rs_sector=rel(sector_bars), rs_spy=rel(spy_bars),
+                weekly=dict(dates=[b.day.isoformat() for b in wk], close=[b.close for b in wk]),
+                periods=dict(rsi=t.rsi_period, macd=list(t.macd), adr_wait=t.atr_ratio_wait))
