@@ -131,7 +131,7 @@ def ism_tables(text: str) -> dict[str, Any]:
     t = _clean(text).replace("\n", " ")
     out: dict[str, Any] = {}
     for key, word in (("growing", "growth"), ("contracting", "contraction")):
-        m = re.search(rf"industries reporting {word} in {_MON}[^:]{{0,80}}?(?:are|is)\s*:\s*(.+?)\.(?=\s+[A-Z]|\s*$)", t)
+        m = re.search(rf"industries reporting (?:an? )?{word} in {_MON}[^:]{{0,80}}?(?:are|is)\s*:\s*(.+?)\.(?=\s+[A-Z]|\s*$)", t)
         if m:
             out[key] = _names(m.group(2))
     m = re.search(r"Commodities in Short Supply\s*(.+?)(?:Note\s*:|Buying Policy|The number of consecutive months|$)", t)
