@@ -123,3 +123,36 @@ def test_report_shows_events_fed_exit_and_fit():
     h = report.render(d)
     for s in ('class="events"', "הפד העלה", 'class="tldr"', "שורה לחבר", 'class="fed-box"', 'class="exit"', 'class="fit"', 'class="ev"'):
         assert s in h
+
+
+def _wave(n: int, base: float, amp: float, period: int) -> list[Bar]:
+    import math
+    out, d = [], date(2023, 1, 2)
+    for k in range(n):
+        p = base + amp * math.sin(k / period)
+        out.append(Bar(d, p, p * 1.012, p * 0.988, p * (1.002 if k % 3 else 0.998), 1))
+        d += timedelta(days=1)
+    return out
+
+
+def test_tech_series_follow_the_course_periods_and_relative_strength():
+    st, sec, spy = _wave(900, 100, 20, 40), _wave(900, 50, 5, 60), _wave(900, 400, 10, 90)
+    t = idea.tech(st, sec, spy)
+    assert len(t["dates"]) == len(t["rsi"]) == len(t["rs_sector"]) == 260
+    assert t["periods"]["rsi"] == 20 and t["periods"]["macd"] == [20, 60, 10]
+    assert t["rs_sector"][0] == 100.0 and t["rs_spy"][0] == 100.0           # both rebased to the first day
+    assert 0.5 < t["adr_ratio"][-1] < 2
+    assert len(t["weekly"]["close"]) == 129                                  # 900 days: every week held, up to 156
+
+
+def test_idea_renders_the_charts_with_their_computed_captions():
+    d = json.loads(FIX.read_text(encoding="utf-8"))
+    i = next(iter(d["ideas"].values()))
+    h0 = report._idea(i)
+    assert "הגרף בתמונות" not in h0                                         # an older dossier without the series
+    i["tech"] = idea.tech(_wave(900, 100, 20, 40), _wave(900, 50, 5, 60), _wave(900, 400, 10, 90))
+    h = report._idea(i)
+    assert "הגרף בתמונות (S09)" in h and "הדוחות בתמונות (S07)" in h
+    for t in ("RSI(20)", "MACD (20/60/10)", "ADR20 חלקי ADR60", "חוזק יחסי", "שלוש שנים, נר שבועי"):
+        assert t in h
+    assert "(S09-R19)" in h and "(S09-R21)" in h

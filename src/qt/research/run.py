@@ -208,7 +208,7 @@ def deep_dive(y: Yahoo, u: dict, screens: dict, sym: str, etf: str, direction: s
             "grossMargins", "operatingMargins", "profitMargins", "revenueGrowth", "earningsGrowth", "returnOnEquity",
             "debtToEquity", "totalCash", "totalDebt", "currentRatio", "freeCashflow")},
         fundamentals=fv, valuation=val, timing=tl, catalysts=cat, extreme=ext, levels=levels, targets=targets,
-        plan=plan, options=opts, chart=idea.chart(bars), sector_avg=avg, judgment=j,
+        plan=plan, options=opts, chart=idea.chart(bars), tech=idea.tech(bars, eb, spy), sector_avg=avg, judgment=j,
         documents=docs(sym) if docs else None, peers=peers(sym, etf) if peers else [])
 
 
