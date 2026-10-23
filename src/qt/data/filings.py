@@ -360,6 +360,13 @@ _H_KPI = re.compile(r"(?:key\s+)?(?:(?:business|operating|performance|financial)
 _KPI_INTRO = re.compile(r"\bwe\b.{0,80}\b(?:use|discuss|monitor|review|track|believe)\b", re.IGNORECASE)
 
 
+_SEE = re.compile(r"^see (?:pages?|note|item)\b", re.IGNORECASE)
+_H_NEXT = re.compile(r"(?:our\s+)?(?:competition|competitors|human\s+capital|employees|properties|(?:government\s+)?regulation|"
+                     r"intellectual\s+property|seasonality|available\s+information|sustainability|research\s+and\s+development|"
+                     r"manufacturing|sales\s+and\s+marketing|customers|suppliers|strategy|risk\s+factors)\b.*", re.IGNORECASE)
+_H_20F_BUSINESS = re.compile(r"(?:our\s+businesses|business\s+overview|reporting\s+segments)\.?", re.IGNORECASE)
+
+
 def _lines(text: str) -> list[str]:
     return [ln for ln in (x.strip() for x in text.split("\n")) if ln and not _NOISE.match(ln)]
 
@@ -368,13 +375,16 @@ def _heading(ln: str) -> bool:
     return len(ln) <= 70 and ln[-1] not in ".:;,)" and not _BULLET.match(ln) and len(ln.split()) <= 9
 
 
-def _take(lines: list[str], cap: int, max_n: int = 6) -> list[str]:
-    """The paragraphs after a heading, verbatim, until the next heading; at most `cap` characters in all. A line that
-    starts in lower case continues the paragraph a page break cut; a bullet list stays with the line that opened it."""
+def _take(lines: list[str], cap: int, max_n: int = 6, through: bool = False) -> list[str]:
+    """The paragraphs after a heading, verbatim, until the next heading (through: past sub-headings, for a list of
+    segments); at most `cap` characters in all. A line that starts in lower case continues the paragraph a page
+    break cut; a bullet list stays with the line that opened it; "See pages 45-51" cross-references are skipped."""
     out: list[str] = []
     for ln in lines:
+        if _SEE.match(ln):
+            continue
         if _heading(ln) and not ln[0].islower():
-            if out:
+            if out and (not through or _H_NEXT.fullmatch(ln)):
                 break
             continue                                          # a sub-heading right under the heading
         if out and (ln[0].islower() or _BULLET.match(ln) or out[-1].endswith(":")):
@@ -399,10 +409,10 @@ def _block(lines: list[str], cap: int) -> list[str]:
     return _cap_list([_cap(x, 1000) for x in out], cap)
 
 
-def _subsection(lines: list[str], head: re.Pattern, cap: int) -> list[str]:
+def _subsection(lines: list[str], head: re.Pattern, cap: int, through: bool = False) -> list[str]:
     for i, ln in enumerate(lines):
         if len(ln) <= 70 and head.fullmatch(ln):
-            got = _take(lines[i + 1:], cap)
+            got = _take(lines[i + 1:], cap, through=through)
             if got and sum(map(len, got)) >= 150:
                 return got
     return []
@@ -424,6 +434,10 @@ def business_extract(text: str, form: str) -> dict:
     biz = cut_business(text, form)
     lines = _lines(biz)
     overview = _subsection(lines, _H_OVERVIEW, 1500) or _take(lines[1:], 1500, 3)
+    segments = _subsection(lines, _H_SEGMENTS, 1500, through=True)
+    if not segments and (form or "").upper().startswith(("20-F", "40-F")):
+        # an annual report in the company's own layout (Shell): its "Our businesses" pages, by heading
+        segments = _subsection(_lines(text), _H_20F_BUSINESS, 1500, through=True)
     kpi: list[str] = []
     after = text[text.find(biz) + len(biz):] if biz else text
     al = _lines(after)
@@ -435,7 +449,7 @@ def business_extract(text: str, form: str) -> dict:
         if sum(map(len, kpi)) >= 150 and sum(c.isalpha() for c in "".join(kpi)) >= 0.4 * len("".join(kpi)):
             break
         kpi = []
-    return {"chars_total": len(biz), "overview": overview, "segments": _subsection(lines, _H_SEGMENTS, 1500),
+    return {"chars_total": len(biz), "overview": overview, "segments": segments,
             "competition": _subsection(lines, _H_COMPETITION, 1500), "kpi": kpi}
 
 

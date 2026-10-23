@@ -189,6 +189,18 @@ def test_business_section_paragraphs_verbatim():
                                                           "competition": [], "kpi": []}
 
 
+def test_annual_report_in_its_own_layout_gives_the_segments_by_heading():
+    html = ("<p>Our businesses</p><p>Reporting segments</p><p>Integrated Gas</p><p>Integrated Gas includes natural gas "
+            "and liquids exploration and extraction, and the production of liquefied natural gas.</p><p>See pages 45-51 for "
+            "a review of our performance.</p><p>Upstream</p><p>Upstream explores for and extracts crude oil, natural gas and "
+            "natural gas liquids, and markets and transports them.</p><p>Strategy</p><p>Our strategy is to deliver more "
+            "value with less emissions over the long run.</p>")
+    b = F.business_extract(html_to_text(html), "20-F")
+    assert [x.split()[0] for x in b["segments"]] == ["Integrated", "Upstream"]       # past the sub-headings,
+    assert not any("See pages" in x or "strategy" in x for x in b["segments"])        # not the cross-references or
+                                                                                      # the next section
+
+
 def test_shrink_drops_whole_business_paragraphs():
     para = "word " * 200
     b = {"overview": [para] * 3, "segments": [para], "competition": [para] * 2, "kpi": []}

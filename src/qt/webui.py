@@ -193,8 +193,9 @@ def scope(css: str, pre: str) -> str:
 
 def report_css() -> str:
     """The research report's stylesheet inside .rep, with its tables kept as tables on a phone (they scroll)."""
+    from qt.research.magazine import CSS as MAG
     from qt.research.report import CSS as REPORT
-    return (scope(REPORT, ".rep") + ".rep{background:none;padding:0;font-size:15.5px}"
+    return (scope(REPORT + MAG, ".rep") + ".rep{background:none;padding:0;font-size:15.5px}"
             ".rep h2{border-top:2px solid var(--ink)}"
             "@media (max-width:640px){.rep .tbl{overflow-x:auto}.rep table{display:table;width:100%}"
             ".rep thead{display:table-header-group}.rep tbody{display:table-row-group}"
