@@ -324,7 +324,7 @@ def sentiment(ctx: RunContext, _: str) -> dict:
     up = Queue(ctx.db).latest_upload("manual_macro")
     naaim = SE.naaim_reading((yaml.safe_load(up["content"]) or {}).get("naaim") if up else None, ctx.as_of)
     if naaim is None:
-        missing.append("NAAIM (בקובץ הידני: naaim)")
+        missing.append("NAAIM (לא נמצא אוטומטית ולא בקובץ: naaim)")
     return {"cot": SE.cot_reading(rows) if rows else None, "naaim": naaim, "missing": missing}
 
 
@@ -348,7 +348,8 @@ def _candle_line(s: str, c: dict) -> str:
 
 def summary(ctx: RunContext) -> str:
     """The monthly preparation in the order of S13-R25 (the macro line goes in its own message)."""
-    lines = [f"הכנה חודשית {ctx.as_of.isoformat()}"]
+    from qt.data.macro_auto import lines as macro_lines
+    lines = [f"הכנה חודשית {ctx.as_of.isoformat()}"] + macro_lines((ctx.out("manual") or {}).get("auto"))
     a = ctx.out("a1") or {}
     if a.get("enabled") and not a.get("error"):
         lines.append("A1 על המקרו: " + " · ".join(f"{k} {a[k]['choice']}" for k in ("DC-01", "DC-02", "DC-03", "DC-04")

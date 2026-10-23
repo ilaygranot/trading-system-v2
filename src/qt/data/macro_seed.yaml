@@ -1,0 +1,31 @@
+# Seed history for the monthly series not on FRED (architecture 9): ISM PMI / NMI and NFIB optimism.
+# Collected 21.10.2026 by web search; each value's source is listed in `sources`. qt.data.macro_auto starts from
+# this file and adds every new month it fetches; a value already here is never overwritten.
+ism_pmi: {'2025-01': 50.9, '2025-02': 50.3, '2025-03': 49.0, '2025-04': 48.7, '2025-05': 48.5, '2025-06': 49.0,
+          '2025-07': 48.0, '2025-08': 48.7, '2025-09': 49.1, '2025-10': 48.7, '2025-11': 48.2, '2025-12': 47.9,
+          '2026-01': 52.6, '2026-02': 52.4, '2026-03': 52.7, '2026-04': 52.7, '2026-05': 54.0, '2026-06': 53.3,
+          '2026-07': 55.6, '2026-08': 54.6, '2026-09': 54.5}
+ism_nmi: {'2025-09': 50.0, '2025-10': 52.0, '2025-11': 52.4, '2025-12': 53.8, '2026-01': 53.8, '2026-02': 56.1,
+          '2026-03': 54.0, '2026-04': 53.6, '2026-05': 54.5, '2026-06': 54.0, '2026-07': 54.1, '2026-08': 55.4,
+          '2026-09': 54.9}
+small_business: {'2025-01': 102.8, '2025-02': 100.7, '2025-03': 97.4, '2025-04': 95.8, '2025-05': 98.8,
+                 '2025-06': 98.6, '2025-07': 100.3, '2025-08': 100.8, '2025-09': 98.8, '2025-10': 98.2,
+                 '2025-11': 99.0, '2025-12': 99.5, '2026-01': 99.3, '2026-02': 98.8, '2026-03': 95.8,
+                 '2026-04': 95.9, '2026-05': 95.3, '2026-06': 97.4, '2026-07': 99.8, '2026-08': 98.7,
+                 '2026-09': 97.9}
+sources:
+  ism_pmi:
+    - {months: "2025-01..2026-07", url: "https://ycharts.com/indicators/us_pmi", note: "YCharts monthly series"}
+    - {months: "2025-10", url: "https://www.calculatedriskblog.com/2025/11/ism-manufacturing-index-decreased-to.html", note: "48.7, down from 49.1"}
+    - {months: "2025-11", url: "https://www.prnewswire.com/news-releases/manufacturing-pmi-at-48-2-november-2025-ism-manufacturing-pmi-report-302626979.html"}
+    - {months: "2025-12", url: "https://www.prnewswire.com/news-releases/manufacturing-pmi-at-47-9-december-2025-ism-manufacturing-pmi-report-302649307.html"}
+    - {months: "2026-08..2026-09", url: "https://www.prnewswire.com/news-releases/manufacturing-pmi-at-54-5-september-2026-ism-manufacturing-pmi-report-302894520.html", quote: "The Manufacturing PMI registered 54.5 percent in September, 0.1 percentage point below the August figure of 54.6 percent"}
+    - {months: "revisions", note: "ISM's later releases revise 2025 slightly (Sep-25 48.9, Aug-25 48.9, Jul-25 48.4); originals kept"}
+  ism_nmi:
+    - {months: "2025-10..2026-09", url: "https://www.morningstar.com/news/pr-newswire/20261005la62389/services-pmi-at-549-september-2026-ism-services-pmi-report", note: "ISM September 2026 history table; 54.9 is 0.8 above the 12-month average 54.1"}
+    - {months: "2025-09", url: "https://www.calculatedriskblog.com/2025/10/ism-services-index-decreased-to-50-in.html", quote: "The ISM Services index was at 50.0%, down from 52.0% last month"}
+  small_business:
+    - {months: "2026-01..2026-09", url: "https://www.nfib.com/wp-content/uploads/2026/10/NFIB-SBET-Report-September-2026.pdf", quote: "97.9 in September, down 0.8 points ... 52-year average of 98.0"}
+    - {months: "2025-01..2025-09", url: "https://www.nfib.com/wp-content/uploads/2025/10/NFIB-SBET-Report-Sept.-2025.pdf"}
+    - {months: "2025-10..2025-12", url: "https://ycharts.com/indicators/small_business_optimism_index", note: "aggregator only, not verified against NFIB"}
+    - {months: "reference", note: "only 21 months collected: the MA60 reference (D-S02-6) uses the months available (flagged)"}

@@ -157,18 +157,41 @@ def _prev_month(d: date) -> str:
 
 
 def manual(ctx: RunContext, _: str) -> dict:
+    """The monthly macro file. With the auto source (production) it is fetched first (qt.data.macro_auto) and the run
+    goes on with the last months known when a report is not found, saying so; without it, the run waits for an
+    uploaded file as before."""
     from qt.data.macro_feed import parse_manual
+    auto = ctx.services.get("macro_auto")
+    rep = None
+    if auto is not None:
+        rep = refresh_macro(ctx, auto)
     up = Queue(ctx.db).latest_upload("manual_macro")
     need = _prev_month(ctx.as_of)
     if up is not None:
         import yaml
         raw = yaml.safe_load(up["content"]) or {}
-        if need in {str(k) for k in (raw.get("ism_pmi") or {})}:
-            return {"upload_id": up["id"], "series": parse_manual(up["content"], ctx.as_of)}
+        if need in {str(k) for k in (raw.get("ism_pmi") or {})} or (auto is not None and raw.get("ism_pmi")):
+            out = {"upload_id": up["id"], "series": parse_manual(up["content"], ctx.as_of)}
+            if rep is not None:
+                out["auto"] = rep
+            return out
     _send(ctx, f"חודשית {ctx.as_of.isoformat()} מחכה לקובץ המקרו הידני: ISM PMI/NMI ו-NFIB עד {need}. "
                "שלח לי אותו כאן כקובץ YAML ({series: {YYYY-MM: value}}) והריצה תמשיך לבד."
                + ("" if ctx.services.get("fred") is not None else "\n" + FRED_KEY_HE))
     raise ManualFileMissing(f"manual macro file with ism_pmi for {need}")
+
+
+def refresh_macro(ctx: RunContext, auto) -> dict:
+    """qt.data.macro_auto into the manual_macro upload; a failure never stops the run (the last file stands)."""
+    from qt.data import macro_auto as MA
+    try:
+        rep = MA.run(ctx.db, ctx.as_of, auto())
+    except Exception as e:                                           # noqa: BLE001 - the last file stands
+        ctx.event(f"macro auto: {type(e).__name__}: {e}", "warn", "manual")
+        return {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+    ctx.event("macro auto: " + (", ".join(f"{k} {v}" for k, v in rep["added"].items()) or "nothing new"),
+              "warn" if rep["stale"] or rep["rejected"] else "info", "manual", data=rep)
+    return rep
 
 
 def fred(ctx: RunContext, _: str) -> dict:

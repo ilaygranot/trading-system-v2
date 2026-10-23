@@ -57,7 +57,9 @@ def services(db: DB, portfolio_path: str | None = None) -> dict[str, Any]:
     from qt.telegram import Telegram
     store = Store(db)
     yahoo = Yahoo(store)
-    s: dict[str, Any] = {"prices": yahoo, "prices_fallback": FMP(store), "quote": yahoo.quote, "cftc": CFTC()}
+    from qt.data.macro_auto import Sources
+    s: dict[str, Any] = {"prices": yahoo, "prices_fallback": FMP(store), "quote": yahoo.quote, "cftc": CFTC(),
+                         "macro_auto": Sources}      # ISM / NFIB / NAAIM fetched by the runs (no manual file)
     pf = portfolio(db, portfolio_path)
     if pf is not None:
         s["portfolio"] = pf
