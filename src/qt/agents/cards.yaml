@@ -1,4 +1,5 @@
-# The 24 decision cards (architecture/decision-cards.md, 19.10) as the code sees them: who decides, the closed
+# The 24 decision cards (architecture/decision-cards.md, 19.10) and DC-25, the deep-dive article (Ilay 23.10; the
+# format is not from course, the questions are), as the code sees them: who decides, the closed
 # options (the output schema's enum), what is chosen when the facts don't decide, and the card's own fields.
 # The full card text (questions to ask, what is forbidden, required input) is decision_cards.md, sent to the
 # agent as part 5 of its context. An agent decides only through a card (architecture 5).
@@ -28,6 +29,7 @@ DC-13: {agent: A4, options: ["no", cold, hot], undecided: cold, approval: requir
         extra: {tldr: {type: object, description: "Tell-a-friend summary in Hebrew, one short sentence each (Ilay's request, not from course). No numbers for gain or loss: the code adds them from the plan.",
                 properties: {line: {type: string}, macro: {type: string}, sector: {type: string}, company: {type: string}, why_now: {type: string}, wrong: {type: string}},
                 required: [line, macro, sector, company, why_now, wrong], additionalProperties: false}}}
+DC-25: {agent: A4, options: [article], undecided: no_article, approval: journal, extra_from: qt.research.article}
 DC-14: {agent: A5, options: [macro_lead, macro_noise, A, B, C, D], undecided: lower_class, approval: flag,
         extra: {priced_in: {type: boolean}, direction: {enum: [for_idea, against_idea]},
                 level: {enum: [market_macro, industry, company]},

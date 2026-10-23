@@ -10,6 +10,7 @@ from types import SimpleNamespace as NS
 
 from qt.agents import AgentRunner
 from qt.agents.runner import BudgetExceeded
+from qt.research import article as AR
 from qt.research import catalyst_chain as CC
 from qt.research import judge as JG
 from qt.research import report, run
@@ -40,6 +41,10 @@ DEFAULTS = {
     "DC-17": _answer("DC-17", "level_break", level=106.7, return_condition="סגירה מעל 106.7"),
     "DC-19": _answer("DC-19", "k_mid"),
     "DC-20": _answer("DC-20", "2", first_size_pct=3, add_conditions=["סגירה מעל 110"]),
+    "DC-25": _answer("DC-25", "article",
+                     headline={"text": "כותרת", "fact_ids": ["F-001"], "quotes": []},
+                     dek={"text": "תת-כותרת", "fact_ids": ["F-001"], "quotes": []},
+                     sections={k: {"answer": "no_source", "paragraphs": []} for k in AR.SECTION_KEYS}),
 }
 
 
@@ -117,7 +122,7 @@ def test_hot_idea_runs_a4_then_a6_and_fills_the_judgment(db):
     n = _n_events()
     assert n >= 1
     assert client.cards[:3] == ["DC-10", "DC-11", "DC-12"] and client.cards[3:3 + n] == ["DC-14"] * n
-    assert client.cards[3 + n:] == ["DC-13", "DC-17", "DC-19", "DC-20"]
+    assert client.cards[3 + n:] == ["DC-13", "DC-17", "DC-19", "DC-20", "DC-25"]   # the article comes last
     assert calls == [(SYM, {"etf": "XLE", "direction": "long", "options": False})]
     assert j["catalyst_expected"] is True and j["catalysts"] and j["heat"] == "hot" and "code_overrides" not in j
     own = next(r for r in j["catalysts"] if r["kind"] == "own_report")
@@ -173,7 +178,9 @@ def test_full_judgment_and_budget_stop(db):
     J = _judge(db, client)({"as_of": AS_OF, "macro": FIX["macro"], "timing": _timing(2)}, _deep_dive(calls))
     assert J["A1"]["DC-01"]["choice"] == "hot" and J["A1"]["DC-02"]["in_six_months"] == "growth+_inflation+"
     assert set(J["ideas"]) == {"S0", "S1"} and J["judged_by"].startswith("Agents")
-    assert len(J["agent_log"]) == 4 + 2 * (7 + _n_events()) and all(x["status"] == "decided" for x in J["agent_log"])
+    assert [x["card"] for x in J["agent_log"]][-2:] == ["DC-25", "DC-25"]        # the articles after both ideas' cards
+    assert all(j["article"]["status"] == "decided" for j in J["ideas"].values())
+    assert len(J["agent_log"]) == 4 + 2 * (8 + _n_events()) and all(x["status"] == "decided" for x in J["agent_log"])
     assert "warnings" not in J
 
     class Broke(AgentRunner):
@@ -332,7 +339,7 @@ def test_documents_become_facts_and_events(db):
     d["documents"] = DOCS
     text = JG.idea_facts(d, FIX["macro"], AS_OF).render()
     assert "SHEL.filing[0] = 2026-10-10 8-K 2.02 9.01" in text and "Third quarter update note" in text
-    assert "SHEL.risk_factors.headlines = Rising climate" in text and "sec:20-F Item 1A https://www.sec.gov/20f.htm" in text
+    assert "SHEL.risk_factors.headline[0] = Rising climate" in text and "SHEL.risk_factors.headline[1] = Our future" in text and "sec:20-F Item 1A https://www.sec.gov/20f.htm" in text
     assert "SHEL.results.outlook[0] = [8-K 2026-10-10] Production expected" in text  # dated: never a stale "latest"
     assert "SHEL.results.date = 2026-10-10" in text
     assert "SHEL.results.outlook[0]" in text and "SHEL.catalysts.analyst_actions[0] = 2026-09-28 TD Cowen" in text

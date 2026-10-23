@@ -113,7 +113,8 @@ def _target_options(price: float, direction: str, ext: float, val: dict, levels:
 def peers_for(u: dict, screens: dict, sym: str, etf: str, on_list: set[str] | Callable[[], set[str]] = frozenset(),
               as_of: date | None = None, n: int = MAX_PEERS) -> list[dict]:
     """S08-J25: the stock's peers from the screen of its sector (long and short rows), same industry first, with the
-    next report from the summaries already fetched (no extra HTTP). on_list: the ideas and the watchlist."""
+    next report from the summaries already fetched (no extra HTTP) and the screen row's numbers for the article's
+    peers table (S07-R3 question 2). on_list: the ideas and the watchlist."""
     scr = screens.get(etf) or {}
     summ = u.get("summaries") or {}
     ind = ((summ.get(sym) or {}).get("assetProfile") or {}).get("industry")
@@ -128,8 +129,13 @@ def peers_for(u: dict, screens: dict, sym: str, etf: str, on_list: set[str] | Ca
         ds = sorted(x for x in (raw_date(e) for e in ((ce.get("earnings") or {}).get("earningsDate") or [])) if x)
         ds = [x for x in ds if as_of is None or x > as_of.isoformat()] or ds[-1:]
         out.append({"sym": p, "etf": etf, "same": "industry" if c in same else "etf", "on_list": p in lst,
-                    "next_earnings": ds[0] if ds else None, "last_results_8k": None})
+                    "next_earnings": ds[0] if ds else None, "last_results_8k": None,
+                    "name": ((u.get("quotes") or {}).get(p) or {}).get("name"),
+                    **{k: c.get(k) for k in PEER_COLS}})
     return out
+
+
+PEER_COLS = ("industry", "side", "profile", "market_cap", "sg1", "eg1", "eg2", "pe1", "ps1")   # the screen row (S06)
 
 
 def raw_date(x: Any) -> str | None:

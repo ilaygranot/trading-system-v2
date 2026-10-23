@@ -22,6 +22,8 @@ agents:                       # model, effort, and the model to escalate to (fla
   L: {model: opus, effort: high}
 fallbacks: default            # server-side refusal fallback (beta server-side-fallback-2026-07-01); not on Haiku
 max_tokens: 16000
+max_tokens_by_card:           # the article writes 13 sections; 21,000 is the SDK's ceiling without streaming (not from course)
+  DC-25: 21000
 budget:
   monthly_usd: 150            # also set as the Anthropic console limit (runtime plan 8.4)
   daily_usd: 10               # over it, only A7 and the Critic keep running, and Ilay gets a message

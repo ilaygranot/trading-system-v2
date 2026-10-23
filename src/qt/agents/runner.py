@@ -189,7 +189,7 @@ class AgentRunner:
         self._check_budget(agent)
         model, effort = self.model_for(agent, escalate)
         ctx = dict(run_id=run_id, step=step, subject=subject, prompt_version=playbook_pack(agent)[1])
-        max_tokens = config()["max_tokens"]
+        max_tokens = (config().get("max_tokens_by_card") or {}).get(card_id, config()["max_tokens"])
 
         note, out, problems, cost0 = None, None, [], self.spent_today()
         for _ in range(2):
