@@ -421,7 +421,8 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
             news = MS.fetch_news(as_of)
             if state is not None and news["items"] and not news["errors"]:
                 state.put("stage:macro_news.json", news)
-        stages = dict(as_of=as_of, macro=macro, sectors=sectors, screens=screens, timing=timing, macro_news=news)
+        stages = dict(as_of=as_of, macro=macro, sectors=sectors, screens=screens, timing=timing, macro_news=news,
+                      watchlist=sorted(on_wl))
         J = _cached(work / "judgments.json", lambda: judge(stages, lambda sym, etf, dr, j: deep_dive(
             y, u, screens, sym, etf, dr, j, bias, buckets, as_of, docs=docs, peers=peers)))
         if J.get("incomplete"):                         # cut by the budget: the next run asks for what is missing
