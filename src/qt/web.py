@@ -301,7 +301,7 @@ class App:
         sig = (parse_qs(env.get("QUERY_STRING", "")).get("sig") or [""])[0]
         if not (verify_report(upload_id, sig, self.password) or self._authed(env)):
             return self._deny(start)
-        row = self.db.one("SELECT content FROM uploads WHERE id = ? AND kind = 'report'", (upload_id,))
+        row = self.db.one("SELECT content FROM uploads WHERE id = ? AND kind IN ('report', 'dry_report')", (upload_id,))
         if row is None:
             return self._send(start, "404 Not Found", "not found", "text/plain")
         return self._send(start, "200 OK", row["content"])

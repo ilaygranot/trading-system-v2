@@ -187,7 +187,10 @@ def test_weekly_research_no_longer_waits_for_the_manual_file(db, monkeypatch):
     monkeypatch.setattr(MA, "_pdf_text", lambda blob: NFIB_PDF_TEXT)
     bot = WBot()
     svc = {**_svc(bot, None), "macro_auto": lambda: MA.Sources(FakeHttp(_pages()))}
-    rid = Runner(db, PIPELINES, svc).start("weekly", W_AS_OF)
-    out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='research'", (rid,), ["output"])["output"]
-    assert "קובץ המקרו החודשי" not in out["skipped"] and Queue(db).latest_upload("manual_macro") is not None
-    assert out["macro_auto"]["latest"]["ism_pmi"] >= "2026-09"
+    import pytest
+    with pytest.raises(Exception) as e:                                  # no agents and no FRED here: the step fails
+        Runner(db, PIPELINES, svc).start("weekly", W_AS_OF)
+    assert "קובץ המקרו החודשי" not in str(e.value) and "FRED_API_KEY" in str(e.value)
+    import yaml
+    up = yaml.safe_load(Queue(db).latest_upload("manual_macro")["content"])
+    assert max(str(k) for k in up["ism_pmi"]) >= "2026-09"

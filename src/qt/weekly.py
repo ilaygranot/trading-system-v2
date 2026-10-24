@@ -36,6 +36,11 @@ MIN_NEW_IDEAS = 2                      # S13-R26
 ARCHIVE = {"invalidated": "הטריגר בוטל", "expired": "הטריגר פג"}
 
 
+class DataMissing(RuntimeError):
+    """Data the weekly run needs is missing (Ilay 24.10: no run goes on without its data): the step fails and says
+    what is missing; a resume tries again."""
+
+
 def _pf(ctx: RunContext) -> dict:
     return ctx.services.get("portfolio") or {}
 
@@ -63,6 +68,8 @@ def wfetch(ctx: RunContext, _: str) -> dict:
                 break
         else:
             out["missing"].append(s)
+    if out["missing"]:                     # Ilay 24.10: the week is not reviewed on part of the prices
+        raise DataMissing(f"no prices from any provider for {', '.join(out['missing'])}")
     return out
 
 
@@ -204,40 +211,9 @@ def merge_watchlist(old: dict | None, new: dict) -> dict:
     return {**new, "entries": list(out.values())}
 
 
-# What the agents do not write in v1 (judge.py: A1 gives DC-01..DC-04, A2 is not in v1): the last research's text stays,
-# marked with its date, so the report never shows less than the one before it.
-CARRY = {"A1": ("story", "fed", "events"), "A2": None}
-
-
-def carry_forward(d: dict, prev_upload: dict | None) -> None:
-    import json
-    try:
-        prev = json.loads(prev_upload["content"]) if prev_upload else None
-    except ValueError:
-        prev = None
-    if not prev:
-        return
-    PJ, J = prev.get("judgments") or {}, d.setdefault("judgments", {})
-    when = (PJ.get("carried") or {}).get("from") or (prev.get("meta") or {}).get("as_of")
-    carried = []
-    for agent, keys in CARRY.items():
-        old = PJ.get(agent) or {}
-        if keys is None:
-            if old and not J.get(agent):
-                J[agent] = old
-                carried.append(agent)
-            continue
-        new = J.setdefault(agent, {})
-        for k in keys:
-            if old.get(k) and not new.get(k):
-                new[k] = old[k]
-                carried.append(f"{agent}.{k}")
-    if carried:
-        J["carried"] = {"from": when, "what": carried}
-
-
 class ResearchIncomplete(RuntimeError):
-    """The agents' budget cut the research: the step fails after the partial report, and a resume (the bot's
+    """The report is not finished (qt.research.completeness: a picked stock without its analysis or article, the
+    budget, a missing key, no data check): the step fails after the partial report, and a resume (the bot's
     button, the second cron firing, or a new run of the week) asks only for what is missing (qt.research.state)."""
 
 
@@ -260,8 +236,12 @@ def research(ctx: RunContext, _: str) -> dict:
     manual = q.latest_upload("manual_macro")
     missing = [n for n, v in (("Claude (ANTHROPIC_API_KEY או CLAUDE_CODE_OAUTH_TOKEN)", runner), ("FRED_API_KEY", fred), ("קובץ המקרו החודשי", manual))
                if v is None]
-    if missing:
-        return {"skipped": missing, "macro_auto": auto}
+    if auto is not None:                       # the monthly macro file the research reads must be current
+        from qt.data.macro_auto import lines as macro_lines
+        if auto.get("error") or auto.get("stale") or auto.get("rejected"):
+            missing += macro_lines(auto)
+    if missing:                                # Ilay 24.10: the research never goes on, or is skipped, without its data
+        raise DataMissing("המחקר השבועי לא רץ: חסר " + "; ".join(missing))
     import json
     import yaml
     from qt.agents.runner import config
@@ -279,12 +259,15 @@ def research(ctx: RunContext, _: str) -> dict:
             pass
     prev, runner.limit_usd = runner.limit_usd, config()["budget"]["weekly_research_usd"]
     try:
-        d = (ctx.services.get("research_run") or _run_research)(ctx.as_of, Judge(runner, run_id=ctx.run_id, state=state),
-                                                                 manual["content"], fred)
+        lim = ctx.services.get("research_limits") or {}            # the dry run: fewer deep dives (qt.dryrun)
+        judge = Judge(runner, run_id=ctx.run_id, state=state,
+                      **{k: lim[k] for k in ("max_deep", "max_rescue") if k in lim})
+        d = (ctx.services.get("research_run") or _run_research)(ctx.as_of, judge, manual["content"], fred)
     finally:
         runner.limit_usd = prev
     d = json.loads(json.dumps(d, default=str))
-    carry_forward(d, q.latest_upload("dossier"))
+    from qt.research import completeness
+    d["completeness"] = done = completeness.check(d)           # the report opens with it; a block fails the step
     html = report.render(d)
     rid = q.upload("report", f"report-{ctx.as_of.isoformat()}.html", "<!doctype html><meta charset=utf-8>" + html)
     q.upload("dossier", f"dossier-{ctx.as_of.isoformat()}.json", json.dumps(d, ensure_ascii=False))  # the dashboard
@@ -298,10 +281,9 @@ def research(ctx: RunContext, _: str) -> dict:
              for s, i in d["ideas"].items()]
     sc = (d.get("sectors") or {}).get("scorecard") or {}
     growth = {e: dict(v["growth"], total=v.get("total"), bucket=v.get("bucket")) for e, v in sc.items() if v.get("growth")}
-    if J.get("incomplete"):                    # the partial report is up; the run is not done
-        raise ResearchIncomplete(f"agent budget cut the research: {', '.join(J['incomplete'])} missing; "
-                                 f"resume the run to finish them (report {rid})")
-    return {"report_id": rid, "ideas": ideas, "watchlist_n": len(wl["entries"]), "sector_growth": growth,
+    if done["status"] != "complete":           # the partial report is up; the run is not done
+        raise ResearchIncomplete("\n".join(completeness.lines(done)) + f"\n(report {rid}; resume the run to finish it)")
+    return {"report_id": rid, "completeness": done, "ideas": ideas, "watchlist_n": len(wl["entries"]), "sector_growth": growth,
             "rejected_on_list": [x["symbol"] for x in ideas if x["bucket"] == "reject" and x["symbol"] in on_list],
             "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {}),
             "continued": J.get("continued") or [], "macro_auto": auto}
@@ -357,13 +339,14 @@ def summary(ctx: RunContext) -> str:
     rs = ctx.out("research") or {}
     from qt.data.macro_auto import lines as macro_lines
     lines += macro_lines(rs.get("macro_auto"))
-    if rs.get("skipped"):
-        lines.append("מחקר שבועי לא רץ: חסר " + ", ".join(rs["skipped"]))
-    elif rs.get("ideas") is not None:
+    if rs.get("ideas") is not None:
         from qt.telegram import report_link
         link = report_link(rs["report_id"])
         lines.append(f"מחקר שבועי: {len(rs['ideas'])} רעיונות נבדקו · עלות הסוכנים {rs['cost_usd']:.2f}$"
                      + (f" · הדוח: {link}" if link else ""))
+        if rs.get("completeness"):
+            from qt.research.completeness import lines as verdict_lines
+            lines += verdict_lines(rs["completeness"])
         for x in rs["ideas"]:
             if x["bucket"] in ("enter", "conditional"):
                 lines.append(f"• {x['symbol']} {BUCKET_HE[x['bucket']]} · יחס {_f(x['rr'], sign=False)} · {x['line']}")

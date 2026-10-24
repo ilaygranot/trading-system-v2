@@ -15,10 +15,10 @@ from functools import lru_cache
 from pathlib import Path
 
 def _default_tiers_dir() -> Path:
-    """The repo's playbook_snapshot: next to src/ in a checkout or an editable install; in a regular install (Render
-    builds with `pip install .`) the package sits in site-packages, so the checkout in the working directory."""
-    here = Path(__file__).resolve().parents[2] / "playbook_snapshot"
-    return here if here.exists() else Path.cwd() / "playbook_snapshot"
+    """The snapshot ships inside the package (qt/playbook_snapshot, package data), so an editable install, a regular
+    install (Render) and any working directory read the same files (24.10: it was found from the checkout only, and
+    on Render it loaded empty)."""
+    return Path(__file__).resolve().parent / "playbook_snapshot"
 
 
 DEFAULT_TIERS_DIR = _default_tiers_dir()

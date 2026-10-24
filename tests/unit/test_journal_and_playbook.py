@@ -58,12 +58,15 @@ def test_zacks_import_maps_known_columns_and_reports_the_rest():
     assert "Weird Col" in imp.unmapped_headers
 
 
-def test_playbook_found_from_a_regular_install(tmp_path, monkeypatch):
-    """Render installs with `pip install .`: the package is in site-packages and the snapshot is in the checkout."""
+def test_playbook_ships_in_the_package_and_never_loads_empty(tmp_path, monkeypatch):
+    """24.10: on Render (`pip install .`) the snapshot was looked up next to src/ and loaded empty. It is package
+    data now: found from the package itself, whatever the working directory."""
     import pytest
     from qt import playbook as P
-    monkeypatch.setattr(P, "__file__", str(tmp_path / "site" / "qt" / "playbook.py"))
-    monkeypatch.chdir(Path(__file__).resolve().parents[2])
-    assert P._default_tiers_dir() == Path.cwd() / "playbook_snapshot"
+    monkeypatch.chdir(tmp_path)
+    d = P._default_tiers_dir()
+    assert d == Path(P.__file__).resolve().parent / "playbook_snapshot" and (d / "chapters" / "decisions.md").exists()
+    pb = P.load_playbook(str(d))
+    assert len(pb.rules) > 400 and len(pb.hard_rules()) >= 40
     with pytest.raises(FileNotFoundError):
         P.load_playbook(str(tmp_path))                           # no snapshot: loud, never an empty rule set
