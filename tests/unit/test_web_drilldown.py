@@ -47,7 +47,7 @@ def test_overview_links_tickers_to_their_pages(site):
     assert "rep-slot" in _call(site, "/")[2]                              # the report comes in after the live parts
     page = _call(site, "/", query="part=report")[2]
     assert 'href="#idea-' not in page and 'href="/stock/SHEL"' in page
-    assert '<h3><a href="/stock/SHEL">SHEL</a>' in page                  # the idea's header
+    assert "id='ir-SHEL'" in page and "href='/stock/SHEL'" in page      # the idea's row opens its page
     assert 'href="/sectors">XLE' in page and 'href="/stock/XLE"' not in page
     assert "href='/macro'" in page and "href='/sectors'" in page
 

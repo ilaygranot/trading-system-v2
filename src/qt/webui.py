@@ -95,6 +95,29 @@ button.go{background:var(--accent);border-color:var(--accent);color:var(--surfac
 .bars div{display:grid;grid-template-columns:70px 1fr 70px;gap:10px;align-items:center;font-size:.9rem}
 .bars i{display:block;height:10px;border-radius:5px;background:var(--accent);min-width:2px}
 .note,.muted{font-size:.88rem;color:var(--muted)}
+.wlist{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.wl-g{font-size:.78rem;font-weight:700;color:var(--muted);letter-spacing:.03em;background:var(--bg);padding:5px 14px;
+border-bottom:1px solid var(--line)}
+details.wl{border-bottom:1px solid var(--line);margin:0}details.wl:last-child{border-bottom:0}
+details.wl>summary{list-style:none;cursor:pointer;color:var(--fg);padding:10px 14px 10px 34px;position:relative;display:grid;
+grid-template-columns:minmax(150px,1.2fr) auto minmax(0,2fr);gap:4px 14px;align-items:baseline}
+details.wl>summary::-webkit-details-marker{display:none}
+details.wl>summary::after{content:"";position:absolute;left:15px;top:17px;width:7px;height:7px;
+border-left:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);transition:transform .15s}
+details.wl[open]>summary::after{transform:rotate(-45deg)}
+details.wl>summary:hover,details.wl[open]>summary{background:var(--accent-soft)}
+.wl-s{min-width:0}.wl-s b{font-family:var(--display);font-size:1.08rem}
+.wl-p{display:flex;gap:4px;flex-wrap:wrap}
+.wl-n{display:flex;flex-wrap:wrap;gap:2px 14px;font-size:.88rem;justify-content:flex-end}.wl-n i{font-style:normal;color:var(--muted);font-size:.8rem}
+.wl-o{grid-column:1/-1;font-size:.92rem;color:var(--muted);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+overflow:hidden;max-width:none;line-height:1.5;max-height:4.5em}
+details.wl[open] .wl-o{-webkit-line-clamp:unset;max-height:none;color:var(--fg)}
+.wl-b{padding:6px 14px 14px;display:flex;flex-direction:column;gap:10px}
+.wl-b dl{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px 16px;margin:0}
+.wl-b dl div{min-width:0}.wl-b dt{font-size:.76rem;font-weight:700;color:var(--muted)}
+.wl-b dd{margin:0;font-variant-numeric:tabular-nums;font-size:.92rem}
+.wl-b h4{margin:0;font-size:.9rem}.wl-go{font-weight:700;text-decoration:none}
+details.more>summary{cursor:pointer;color:var(--accent);padding:8px 0}
 .empty{background:var(--surface);border:1px dashed var(--line);border-radius:10px;padding:14px 16px;color:var(--muted)}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px}
 pre{white-space:pre-wrap;word-break:break-word;background:var(--surface);border:1px solid var(--line);border-radius:8px;
@@ -138,13 +161,18 @@ table td:first-child{font-family:var(--display);font-size:1.02rem;border-bottom:
 table td:last-child{border-bottom:0}
 table td:empty{display:none}
 .bars div{grid-template-columns:56px 1fr 60px}
+.wlist{border-radius:10px}
+details.wl>summary{grid-template-columns:1fr auto;padding:10px 12px 10px 30px}
+.wl-n{grid-column:1/-1;justify-content:flex-start}
+.wl-b dl{grid-template-columns:1fr 1fr}
 .two{grid-template-columns:1fr}
 }
 @media (display-mode:standalone){.brand{padding-top:2px}}
 """ % {"dark": _DARK}
 
 # Live refresh (runtime plan 7.1): the page re-reads its own fragment every REFRESH_S seconds while it is visible,
-# and swaps in each live part ([data-live]), so positions, the queue and the runs stay current without a reload.
+# and swaps in each live part ([data-live]), keeping open the rows a person opened, so positions, the queue and the
+# runs stay current without a reload.
 # The parts that change once a week (the research report) are not in the fragment and are not re-fetched.
 LIVE_JS = """<script>(function(){var st=document.getElementById('stamp'),pu=document.getElementById('pulse');
 function tick(){if(document.visibilityState!=='visible')return;
@@ -152,7 +180,9 @@ var u=location.pathname+(location.search?location.search+'&':'?')+'fragment=1';
 fetch(u,{credentials:'same-origin',cache:'no-store'}).then(function(r){if(!r.ok)throw r.status;return r.text()})
 .then(function(t){var d=new DOMParser().parseFromString(t,'text/html'),parts=d.querySelectorAll('[data-live]');
 if(!parts.length){document.querySelector('[data-live=main]').innerHTML=t}
-parts.forEach(function(n){var el=document.querySelector('[data-live="'+n.getAttribute('data-live')+'"]');if(el)el.innerHTML=n.innerHTML});
+parts.forEach(function(n){var el=document.querySelector('[data-live="'+n.getAttribute('data-live')+'"]');if(!el)return;
+var o=[].map.call(el.querySelectorAll('details[open][id]'),function(x){return x.id});el.innerHTML=n.innerHTML;
+o.forEach(function(i){var x=document.getElementById(i);if(x)x.open=true})});
 st.textContent='עודכן '+new Date().toLocaleTimeString('he-IL');pu.className='pulse'})
 .catch(function(){st.textContent='אין חיבור לשרת, מנסה שוב';pu.className='pulse off'})}
 setInterval(tick,%d*1000);document.addEventListener('visibilitychange',tick)})()</script>""" % REFRESH_S

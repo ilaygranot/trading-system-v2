@@ -1336,14 +1336,15 @@ html{scroll-behavior:smooth;scroll-padding-top:56px}
 """
 
 
-def sections(d: dict[str, Any]) -> tuple[list[tuple[str, str]], str]:
+def sections(d: dict[str, Any], ideas: str | None = None) -> tuple[list[tuple[str, str]], str]:
     """The report's sections and its rail (anchor, title), without the page around them: render() wraps them for the
-    standalone report, and the dashboard (qt.web) shows them inside its own page."""
+    standalone report, and the dashboard (qt.web) shows them inside its own page, with its own `ideas` section (a
+    short row per stock; the articles are on each stock's page)."""
     nav = [("summary", "שורה תחתונה"), ("funnel", "משפך"), ("macro", "מקרו"), ("sectors", "סקטורים"),
            ("screen", "סינון ורמזור"), ("ideas", "רעיונות"), ("method", "שיטה")]
     if d.get("verification"):
         nav.insert(1, ("verify", "אימות"))
-    return nav, (f"{_summary(d)}{_verification(d)}{_funnel(d)}{_macro(d)}{_sectors(d)}{_screen(d)}{_ideas(d)}"
+    return nav, (f"{_summary(d)}{_verification(d)}{_funnel(d)}{_macro(d)}{_sectors(d)}{_screen(d)}{_ideas(d) if ideas is None else ideas}"
                  f"{_method(d)}")
 
 

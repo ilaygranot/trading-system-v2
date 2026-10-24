@@ -108,3 +108,29 @@ def test_watchlist_shows_the_ideas_with_the_latest_daily_check(web, db):
                      "dist_to_trigger_pct": 0.0, "triggered": True, "days_on_list": 2}]}),))
     html = web.watch_html()
     assert "SHEL" in html and "104.90" in html and "מוכנה לכניסה" in html and "+18.2%" in html and "הנפט יקר" in html
+    assert "<details class=wl id='wl-SHEL'>" in html and "href='/stock/SHEL'" in html   # depth only on a click
+
+
+def test_overview_lists_the_watchlist_first_and_the_ideas_as_rows(web, db):
+    """Ilay, 24.10: a list to scroll through, each stock in a row with a short overview; the article on its page."""
+    from pathlib import Path
+    fix = (Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8")
+    web.upload("dossier-2026-10-20.json", fix)
+    Queue(db).upload("watchlist", "watchlist-2026-10-20.yaml", yaml.safe_dump({"entries": [
+        {"symbol": "SHEL", "direction": "long", "etf": "XLE", "bucket": "enter", "tldr": "הנפט יקר",
+         "breakers": ["הורדות תחזית"]}]}, allow_unicode=True))
+    page = _call(web, "/")[2]
+    assert page.index("data-live=watch") < page.index("rep-slot")                   # the list before the report
+    assert "Shell plc" in page and "הורדות תחזית" in page
+    rep = _call(web, "/", query="part=report")[2]
+    ideas = rep[rep.index('id="ideas"'):rep.index('id="method"')]
+    assert "<details class=wl id='ir-SHEL'>" in ideas and "id='ir-MAA'" in ideas and "<article" not in ideas
+    assert "תחזית 2027 יורדת" in ideas                                              # the reason, in short
+
+
+def test_overview_text_is_cut_at_a_sentence():
+    from qt.web import App
+    one = "מילה " * 30 + "סוף."
+    assert App.overview({"tldr": " ".join([one] * 4)}, None) == " ".join([one] * 2)
+    assert App.overview({"tldr": "מילה " * 120}, None).endswith("מילה…")
+    assert App.overview({"tldr": "קצר"}, {"judgment": {"tldr": {"line": "שורה", "why_now": "עכשיו"}}}) == "שורה עכשיו"
