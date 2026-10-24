@@ -120,6 +120,10 @@ def _upstream(d: dict) -> list[dict]:
     if hard:
         out.append(_item("universe", "universe", f"{len(hard)} מניות נפלו מהיקום בגלל שגיאת נתונים (לא בגלל כלל): "
                          + ", ".join(sorted(hard)[:15]) + f" · {str(next(iter(hard.values())))[:80]}"))
+    nerr = (((d.get("meta") or {}).get("news")) or {}).get("errors") or {}
+    if nerr:                                           # A1's story written on part of the week's headlines
+        out.append(_item("news", "macro", f"{len(nerr)} מקורות חדשות לא ענו לסיפור השוק: "
+                         + ", ".join(f"{q} ({str(e)[:40]})" for q, e in list(nerr.items())[:5])))
     bad = [t for t in d.get("timing") or [] if t.get("error") and "daily bars" not in str(t["error"])]
     if bad:
         out.append(_item("timing", "timing", f"הרמזור לא חושב ל-{len(bad)} מניות: "
@@ -138,7 +142,7 @@ def _verification(v: Any) -> tuple[list[dict], list[dict]]:
     if not v.get("sec"):
         blocks.append(_item("verify_sec", "verify", "בדיקת הנתונים רצה בלי SEC (לא זמין או חסום)"))
     if not v.get("second_price"):
-        blocks.append(_item("verify_price", "verify", "בדיקת הנתונים רצה בלי מקור שני למחיר (FMP / Alpha Vantage)"))
+        blocks.append(_item("verify_price", "verify", "בדיקת הנתונים רצה בלי מקור שני למחיר (FMP / nasdaq.com / Alpha Vantage)"))
     down = [c for c in v["checks"] if c.get("field") == "close" and "לא זמין" in str(c.get("note"))]
     if down:
         blocks.append(_item("verify_price_down", "verify", "המקור השני למחיר לא ענה ל-" + ", ".join(c["subject"] for c in down)))

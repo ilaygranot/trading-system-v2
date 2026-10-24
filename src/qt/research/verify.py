@@ -367,12 +367,12 @@ def summarize(rows: list[dict]) -> dict[str, Any]:
 
 # ------------------------------------------------------------------ live sources
 def default_sources(store: Any = None) -> dict[str, Any]:
-    """EDGAR, a second close (FMP, then Alpha Vantage) and a page fetcher, each only if it answers here."""
+    """EDGAR, a second close (FMP, then nasdaq.com, then Alpha Vantage) and a page fetcher, each only if it answers here."""
     import os
 
     import requests
 
-    from qt.data.providers import EDGAR, FMP, AlphaVantage
+    from qt.data.providers import EDGAR, FMP, AlphaVantage, Nasdaq
 
     out: dict[str, Any] = {"sec": EDGAR(store, contact=os.environ.get("SEC_CONTACT"))}
     try:
@@ -392,15 +392,25 @@ def default_sources(store: Any = None) -> dict[str, Any]:
                 errors.append("fmp: no bar")
             except Exception as ex:                                      # noqa: BLE001 - try the next source
                 errors.append(f"fmp: {str(ex)[:60]}")
+        try:
+            closes, src = Nasdaq(store).daily_closes(sym, day - timedelta(days=7), day)
+            if day.isoformat() in closes:
+                return closes[day.isoformat()], src
+            errors.append("nasdaq: no bar")
+        except Exception as ex:                                          # noqa: BLE001 - try the next source
+            errors.append(f"nasdaq: {str(ex)[:60]}")
         if os.environ.get("ALPHAVANTAGE_API_KEY"):
-            if sym not in av_cache:
-                av_cache[sym] = AlphaVantage(store).daily_closes(sym)[0]
-            if day.isoformat() in av_cache[sym]:
-                return av_cache[sym][day.isoformat()], "alphavantage:TIME_SERIES_DAILY"
-            errors.append("alphavantage: no bar")
+            try:
+                if sym not in av_cache:
+                    av_cache[sym] = AlphaVantage(store).daily_closes(sym)[0]
+                if day.isoformat() in av_cache[sym]:
+                    return av_cache[sym][day.isoformat()], "alphavantage:TIME_SERIES_DAILY"
+                errors.append("alphavantage: no bar")
+            except Exception as ex:                                      # noqa: BLE001 - the last source
+                errors.append(f"alphavantage: {str(ex)[:60]}")
         raise RuntimeError("; ".join(errors) or "no second price source configured")
 
-    out["second_close"] = second_close if (os.environ.get("FMP_API_KEY") or os.environ.get("ALPHAVANTAGE_API_KEY")) else None
+    out["second_close"] = second_close                                  # nasdaq.com needs no key
 
     def fetch(url: str) -> str:
         host = (urlparse(url).hostname or "").lower()

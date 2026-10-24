@@ -424,3 +424,12 @@ def test_6k_titled_by_its_period_end_is_a_results_release():
     rel = f._release(row)
     assert rel is not None and rel["date"] == "2026-07-23" and rel["source"] == "sec:6-K EX-99.1"
     assert f._release(dict(row, reportDate="2026-07-23")) is None       # not a period end: title words decide
+
+
+@pytest.mark.parametrize("head", ["Item 1. Business", "Items 1 and 2. Business and Properties", "ITEMS 1 & 2. BUSINESS AND PROPERTIES"])
+def test_the_business_section_under_its_10k_headings(head):
+    """Talos files "Items 1 and 2. Business and Properties" (the dry run of 24.10 found no business section)."""
+    body = "We explore for and produce oil and natural gas in the Gulf of America. " * 5
+    text = f"Table of Contents\n{head}\n1\nItem 1A. Risk Factors\n2\n\nPART I\n{head}\nOverview\n{body}\nItem 1A. Risk Factors\nRisks."
+    biz = F.cut_business(text, "10-K")
+    assert biz.splitlines()[0] == head and "Gulf of America" in biz and "Risks." not in biz

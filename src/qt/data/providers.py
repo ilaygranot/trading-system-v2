@@ -136,6 +136,28 @@ class FMP:
         return parse_fmp_prices(rows), "fmp:stable/historical-price-eod"
 
 
+class Nasdaq:
+    """Daily closes from nasdaq.com's quote API: no key, every US listing (NYSE too). The second close of the data
+    check (qt.research.verify): FMP's free plan answers only the largest names (HTTP 402 for TALO, EGY, SHEL; 24.10)
+    and Alpha Vantage stops after 25 calls a day."""
+    URL = "https://api.nasdaq.com/api/quote/{sym}/historical?assetclass=stocks&fromdate={start}&todate={end}&limit=60"
+
+    def __init__(self, store: Store | None = None):
+        self.store = store
+
+    def daily_closes(self, symbol: str, start: date, end: date) -> tuple[dict[str, float], str]:
+        body = get_json(self.URL.format(sym=symbol.replace("-", "."), start=start, end=end), self.store,
+                        headers={"User-Agent": BROWSER_UA, "Accept": "application/json"})
+        rows = (((body or {}).get("data") or {}).get("tradesTable") or {}).get("rows") or []
+        if not rows:
+            raise ProviderError(f"nasdaq {symbol}: no rows")
+        out = {}
+        for r in rows:
+            m, d, y = r["date"].split("/")
+            out[f"{y}-{m}-{d}"] = float(r["close"].replace("$", "").replace(",", ""))
+        return out, "nasdaq:quote/historical"
+
+
 class AlphaVantage:
     BASE = "https://www.alphavantage.co/query"
 
