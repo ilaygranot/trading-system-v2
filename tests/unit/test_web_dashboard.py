@@ -29,20 +29,43 @@ def _runs(db):
                                   created_at=datetime.now(timezone.utc).isoformat(timespec="seconds")))
 
 
-def test_overview_has_every_part_and_refreshes(web, db):
+def test_every_part_of_the_old_overview_has_its_tab(web, db):
+    """Ilay 24.10, the approved design: the one long overview became four tabs and the system's page; every part it
+    had is still there, on the tab that now holds it."""
     _runs(db)
     Queue(db).upload("portfolio", "portfolio.yaml", yaml.safe_dump(PF))
     Queue(db).upload("report", "report-2026-10-17.html", "<h1>r</h1>")
     Queue(db).add("daily-2026-10-22", date.today(), dict(kind="tighten_stop", rule_id="S11-R7", symbol="MSFT",
                                                          stop=301.0, detail="הסטופ עולה"), 330.0)
     st, _, page = _call(web, "/")
-    assert st.startswith("200") and "setInterval" in page and "data-live=top" in page and "Frank+Ruhl" in page
-    for part in ("מחכה לך (1)", "פוזיציות פתוחות (2)", "ריצות", "עסקאות נייר", "התראות מהריצות", "COT חסר",
-                 "החלטות אחרונות", "דוחות וקבצים", "report-2026-10-17.html", "עלות Agents", "0.50$", "לוח זמנים",
-                 "IB Gateway", "/runs/daily-2026-10-21/resume", "הידוק סטופ"):
-        assert part in page, part
+    assert st.startswith("200") and "setInterval" in page and "data-live=queue" in page and "Frank+Ruhl" in page
+    homes = {"/": ("מחכה לאישורך (1)", "הידוק סטופ", "/item/", "שווי התיק", "MSFT", "הריצות הבאות", "קרובות לטריגר",
+                   "דוח המחקר"),
+             "/system": ("ריצות", "התראות מהריצות", "COT חסר", "מה הריצות אמרו", "לוח זמנים", "IB Gateway", "עלות Agents",
+                         "0.50$", "/runs/daily-2026-10-21/resume", "קבצים שהתקבלו", "portfolio.yaml",
+                         "מחכה להחלטה או לפעולה שלך"),
+             "/positions": ("פוזיציות פתוחות (2)", "עסקאות נייר", "החלטות אחרונות", "/journal"),
+             "/research": ("כל הדוחות", "report-2026-10-17.html", "/report/")}
+    for path, parts in homes.items():
+        page = _call(web, path)[2]
+        for part in parts:
+            assert part in page, (path, part)
+    for path in ("/", "/ideas", "/positions", "/research", "/system"):            # the four tabs on every page
+        page = _call(web, path)[2]
+        assert all(f"href='{t}'" in page for t in ("/", "/ideas", "/positions", "/research")), path
+        assert "data-live=health" in page and "href='/system'" in page, path
     frag = _call(web, "/", query="fragment=1")[2]
-    assert "<script" not in frag and "מחכה לך" in frag
+    assert "<script" not in frag and "מחכה לאישורך" in frag and "data-live=health" in frag
+
+
+def test_old_addresses_still_open(web, db):
+    """Links made before the tabs: the pages keep their addresses, and the old overview's anchors move to their tab."""
+    for path in ("/runs", "/system", "/positions", "/macro", "/sectors", "/journal", "/ideas", "/research", "/stock/SHEL"):
+        assert _call(web, path)[0].startswith("200"), path
+    page = _call(web, "/")[2]
+    assert "watch:'/ideas'" in page and "'/research#'+h" in page
+    for path in ("/ideas", "/research"):
+        assert _call(web, path, auth=None)[0].startswith("401"), path
 
 
 def test_runs_and_one_run(web, db):
@@ -83,19 +106,22 @@ def test_next_run_follows_new_york_time():
     assert next_run("monthly", now).isoformat() == "2026-11-14T10:00:00-05:00"
 
 
-def test_overview_is_the_research_report_with_the_live_parts_around_it(web, db):
+def test_the_research_tab_is_the_report_and_today_keeps_its_card(web, db):
     from pathlib import Path
     fix = (Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8")
-    page = _call(web, "/")[2]
-    assert "עוד אין דוח מחקר" in page
+    assert "עוד אין דוח מחקר" in _call(web, "/")[2] and "עוד אין דוח מחקר" in _call(web, "/research")[2]
     assert web.upload("dossier-2026-10-20.json", fix).startswith("דוח המחקר")
     assert web.upload("dossier.json", "{}").startswith("הקובץ לא נקרא")
-    page = _call(web, "/")[2] + _call(web, "/", query="part=report")[2]
-    for part in ("class=rep", "id=\"macro\"", "id=\"sectors\"", "id=\"ideas\"", "href='#macro'", "href='#watch'",
-                 "data-live=book", "data-live=watch", "data-live=runs", "data-live=system", "רשימת מעקב"):
+    page = _call(web, "/research")[2] + _call(web, "/research", query="part=report")[2]
+    for part in ("class=rep", "id=\"macro\"", "id=\"sectors\"", "id=\"ideas\"", "href='#macro'", "href='#reports'", "rep-slot"):
         assert part in page, part
+    home = _call(web, "/")[2]
+    assert "report-card" in home and "2026-10-20" in home and "rep-slot" not in home      # the report left the home page
+    for part in ("data-live=alert", "data-live=queue", "data-live=book", "data-live=watch", "data-live=next"):
+        assert part in home, part
     frag = _call(web, "/", query="fragment=1")[2]
-    assert "data-live=top" in frag and "id=\"macro\"" not in frag            # the report is not re-fetched
+    assert "data-live=queue" in frag and "id=\"macro\"" not in frag            # the report is not re-fetched
+    assert "id=\"macro\"" in _call(web, "/", query="part=report")[2]          # the old address of the report still answers
 
 
 def test_watchlist_shows_the_ideas_with_the_latest_daily_check(web, db):
@@ -111,7 +137,7 @@ def test_watchlist_shows_the_ideas_with_the_latest_daily_check(web, db):
     assert "<details class=wl id='wl-SHEL'>" in html and "href='/stock/SHEL'" in html   # depth only on a click
 
 
-def test_overview_lists_the_watchlist_first_and_the_ideas_as_rows(web, db):
+def test_the_ideas_tab_lists_the_watchlist_and_the_report_lists_the_ideas_as_rows(web, db):
     """Ilay, 24.10: a list to scroll through, each stock in a row with a short overview; the article on its page."""
     from pathlib import Path
     fix = (Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8")
@@ -119,10 +145,9 @@ def test_overview_lists_the_watchlist_first_and_the_ideas_as_rows(web, db):
     Queue(db).upload("watchlist", "watchlist-2026-10-20.yaml", yaml.safe_dump({"entries": [
         {"symbol": "SHEL", "direction": "long", "etf": "XLE", "bucket": "enter", "tldr": "הנפט יקר",
          "breakers": ["הורדות תחזית"]}]}, allow_unicode=True))
-    page = _call(web, "/")[2]
-    assert page.index("data-live=watch") < page.index("rep-slot")                   # the list before the report
-    assert "Shell plc" in page and "הורדות תחזית" in page
-    rep = _call(web, "/", query="part=report")[2]
+    page = _call(web, "/ideas")[2]
+    assert "Shell plc" in page and "הורדות תחזית" in page and "ניתוח מ-2026-10-20" in page
+    rep = _call(web, "/research", query="part=report")[2]
     ideas = rep[rep.index('id="ideas"'):rep.index('id="method"')]
     assert "<details class=wl id='ir-SHEL'>" in ideas and "id='ir-MAA'" in ideas and "<article" not in ideas
     assert "תחזית 2027 יורדת" in ideas                                              # the reason, in short
