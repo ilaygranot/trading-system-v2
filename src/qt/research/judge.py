@@ -40,6 +40,7 @@ MIN_DEEP, MAX_DEEP = 8, 12     # DC-09: up to 12 green and orange stocks all pas
                                 # go on (Ilay 22.10, to start; the card had 8-15 per direction; not from course)
 MAX_RESCUE = 6                 # DC-08 calls per research run (not from course: cost)
 RESCUE_ROW = ("f0", "f1", "f2", "eg1", "eg2", "sg1", "pe1", "ps1", "market_cap", "price", "industry", "short_float")
+PICK_ROW = RESCUE_ROW + ("pe2", "peg", "tags", "flags", "triple", "conflicts")   # DC-09's inputs from the screen row
 K_OPTIONS = {"k_min": 3.0, "k_mid": 4.0, "k_max": 5.0}       # DC-19: 3 (20.10), default 4, 5 inferred from 102
 TARGET_SOURCE = {"hist_3y": "own_multiple_target", "sector": "own_multiple_target", "other": None}
 SRC = "code:research"
@@ -430,7 +431,8 @@ class Judge:
                     -(t.get("rr_extreme") or 0))
         return sorted(ok, key=key)
 
-    def pick(self, timing: list[dict], macro: dict, as_of: date) -> list[dict]:
+    def pick(self, timing: list[dict], macro: dict, as_of: date, screens: dict | None = None,
+             watchlist: list[str] | tuple = ()) -> list[dict]:
         """Every green and orange stock when they fit under the cap; above it DC-09 ranks and 8 to 12 go on. A green
         stock is never left out silently: it goes on, or it is skipped with the agent's reason, or (only when the
         cap is full of green stocks) with the code's. Every skipped stock has a reason; self.selection keeps them."""
@@ -444,6 +446,17 @@ class Judge:
         for t in ok:
             add_facts(fs, t["sym"], {k: t.get(k) for k in ("etf", "dir", "profile", "combined", "stock", "sector",
                                                           "market", "rr_extreme", "adr", "price")}, as_of, depth=1)
+            row = next((c for c in (screens or {}).get(t["etf"], {}).get(t["dir"]) or [] if c["ticker"] == t["sym"]), None)
+            if row:                                       # the card's inputs: F0-F2, growth, multiples, tags and flags
+                add_facts(fs, t["sym"], {k: row.get(k) for k in PICK_ROW if k not in ("price",)}, as_of, "code:screening",
+                          depth=1)
+        for e in dict.fromkeys(t["etf"] for t in ok):
+            avg = ((screens or {}).get(e) or {}).get("averages")
+            if avg:
+                add_facts(fs, f"{e}.group_avg", {k: avg.get(k) for k in ("eg1", "eg2", "sg1", "sg1_threshold", "pe", "ps")},
+                          as_of, "code:screening", depth=1)
+        on = sorted(set(watchlist) & {t["sym"] for t in ok})
+        fs.add("watchlist.candidates_on_it", on, "code:watchlist", as_of)
         add_facts(fs, "macro.stance", {k: macro["stage2"]["stance"].get(k) for k in ("zone", "bias")}, as_of, depth=1)
         world = {"candidates": [t["sym"] for t in ok], "green": [t["sym"] for t in ok if t["combined"] == "green"],
                  "min": MIN_DEEP, "cap": self.max_deep,
@@ -615,14 +628,15 @@ class Judge:
         return j, d, world
 
     # ---------------------------------------------------------------- the run
-    def _picked(self, timing: list[dict], macro: dict, as_of: date) -> list[dict]:
+    def _picked(self, timing: list[dict], macro: dict, as_of: date, screens: dict | None = None,
+                watchlist: list[str] | tuple = ()) -> list[dict]:
         """The DC-09 pick, or the one a run of the same week made (on the same traffic light)."""
         sel = self._saved("A3")
         if sel:
             by = {t["sym"]: t for t in candidates(timing)}
             self.selection = {**sel, "skipped": dict(sel.get("skipped") or {})}
             return [by[s] for s in sel.get("picked") or [] if s in by]
-        picked = self.pick(timing, macro, as_of)
+        picked = self.pick(timing, macro, as_of, screens, watchlist)
         self._save("A3", self.selection)
         return picked
 
@@ -662,7 +676,7 @@ class Judge:
         a1 = {**a1, **{k: story[k] for k in ("story", "fed", "events") if story.get(k)},
               "narrative": {k: story.get(k) for k in ("status", "stats", "dropped", "error") if story.get(k) is not None}}
         J: dict[str, Any] = {"judged_by": JUDGED_BY, "A1": a1, "ideas": {}}
-        picked = self._picked(stages["timing"], macro, as_of)
+        picked = self._picked(stages["timing"], macro, as_of, stages.get("screens"), stages.get("watchlist") or ())
         done: list[tuple[dict, dict, dict]] = []
         for n, t in enumerate(picked):
             try:

@@ -180,6 +180,21 @@ def test_dc09_ranks_only_above_the_cap_and_red_never_passes(db):
     assert [t["sym"] for t in picked] == ["S4", "S3"]                 # the code's order: R:R to the extreme
 
 
+def test_dc09_sees_the_screen_row_the_group_averages_and_the_watchlist(db):
+    """Dry run 24.10: DC-09 got only the lights, so A3 had "no basis to choose" among 50 candidates."""
+    rows = [{"ticker": f"S{i}", "f0": 1.0, "f1": 1.2, "f2": 1.5 + i, "eg1": 20.0, "eg2": 25.0, "sg1": 12.0, "pe1": 9.0,
+             "ps1": 1.1, "peg": 0.4, "market_cap": 2e9, "industry": "Oil & Gas E&P", "tags": ["y2_below_sector"],
+             "flags": [], "triple": False, "conflicts": []} for i in range(5)]
+    screens = {"XLE": {"long": rows, "short": [], "averages": {"eg1": 10.0, "eg2": 12.0, "sg1": 5.0, "pe": 11.0, "ps": 1.4}}}
+    client = CardClient({"DC-09": _answer("DC-09", "ranked", ranked=["S4", "S3"], skipped=[])})
+    _judge(db, client, max_deep=2).pick(_timing(5), FIX["macro"], AS_OF, screens, ["S1", "ZZZ"])
+    sheet = client.requests[0]["messages"][0]["content"]
+    for key in ("S4.f2", "S4.eg1", "S4.peg", "S4.tags", "S4.industry", "XLE.group_avg.eg1", "XLE.group_avg.ps",
+                "watchlist.candidates_on_it"):
+        assert key in sheet, key
+    assert "watchlist.candidates_on_it = ['S1']" in sheet and "ZZZ" not in sheet
+
+
 def test_full_judgment_and_budget_stop(db):
     client, calls = CardClient(), []
     J = _judge(db, client)({"as_of": AS_OF, "macro": FIX["macro"], "timing": _timing(2)}, _deep_dive(calls))
