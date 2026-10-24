@@ -87,9 +87,12 @@ CRITIC_SCHEMA = {
 
 
 class AgentRunner:
-    def __init__(self, db: DB, client: Any = None, journal: Journal | None = None, limit_usd: float | None = None):
+    def __init__(self, db: DB, client: Any = None, journal: Journal | None = None, limit_usd: float | None = None,
+                 blind: bool = False, model: str | None = None):
         self.db = db
         self.limit_usd = limit_usd                                  # a run's own cap (the weekly research), else daily
+        self.blind = blind                                          # the test set: no worked examples (qt.agents.eval)
+        self.model = model                                          # the test set: one model for every deciding agent
         self.db.ddl(RUNS_SCHEMA)
         self.journal = journal or Journal(db)
         self._client = client
@@ -108,6 +111,8 @@ class AgentRunner:
         name, effort = a["model"], a["effort"]
         if escalate and a.get("escalate"):
             name = a["escalate"]
+        if self.model and agent != "C":
+            name = self.model
         if agent == "C" and checked_agent in a.get("always_opus_for", []):
             name = "opus"
         return c["models"][name], effort
@@ -193,7 +198,8 @@ class AgentRunner:
 
         note, out, problems, cost0 = None, None, [], self.spent_today()
         for _ in range(2):
-            out, resp = self._call(agent, build_request(agent, card, facts, world, model, effort, max_tokens, note), ctx)
+            out, resp = self._call(agent, build_request(agent, card, facts, world, model, effort, max_tokens, note,
+                                                        blind=self.blind), ctx)
             problems = self.check(out, card, facts)
             if not problems:
                 break
@@ -208,7 +214,8 @@ class AgentRunner:
         critic = self.critique(agent, card, facts, world, out, ctx)
         if critic["verdict"] == "return":
             note = "The Critic returned your decision: " + "; ".join(f"{i['kind']}: {i['detail']}" for i in critic["issues"])
-            out2, _ = self._call(agent, build_request(agent, card, facts, world, model, effort, max_tokens, note), ctx)
+            out2, _ = self._call(agent, build_request(agent, card, facts, world, model, effort, max_tokens, note,
+                                                     blind=self.blind), ctx)
             if not self.check(out2, card, facts):
                 out = out2
                 critic = self.critique(agent, card, facts, world, out, ctx, escalate=True)
@@ -222,7 +229,7 @@ class AgentRunner:
         model, effort = self.model_for("C", escalate, checked_agent=agent)
         decision = f"<decision agent=\"{agent}\">\n{json.dumps(out, ensure_ascii=False, sort_keys=True)}\n</decision>"
         req = build_request("C", card, facts, world, model, effort, config()["max_tokens"], pack_for=agent,
-                            schema=CRITIC_SCHEMA, extra_user=decision)
+                            schema=CRITIC_SCHEMA, extra_user=decision, blind=self.blind)
         res, _ = self._call("C", req, {**ctx, "subject": ctx.get("subject")})
         if res is None:
             return {"verdict": "flag_ilay", "issues": [{"kind": "reasoning", "detail": "critic gave no valid output"}]}

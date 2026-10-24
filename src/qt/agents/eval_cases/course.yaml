@@ -1,0 +1,590 @@
+# The agent test set (runtime plan 8.3): cases from the application lessons (098-102) where the lecturer's decision
+# is known. Built from the spike's scenarios (project files spike/scenarios/E2E-1..5: input.md = the facts before the
+# decision, key.md = what the lecturer did, with the line in course/transcripts-clean).
+#
+# Each case is one card, with the facts as they were known that day and the earlier cards' answers in the world, so
+# one card is tested at a time. expect = the lecturer's decision as a card option; near = an option that is close
+# (it counts apart from a miss); anything else is a miss. reading: true when the option is our reading of what he
+# said and not his words; Ilay reviews those (24.10). Free-text cards (DC-12, DC-25, DC-26) are not scored here.
+#
+# traps: decisions with a planted flaw that the code's checks let through, for the Critic to catch; control: a sound
+# decision the Critic should pass.
+
+scenarios:
+  E2E-1:
+    lesson: "099"
+    as_of: 2023-04-21
+    facts:
+      - [macro.activity_score, "17/50 (34%) from ISM services 55.1, NFIB 90.9, Michigan 67, building permits, ISM manufacturing below 50"]
+      - [macro.stance.zone, cold]
+      - [macro.stance.bias, "bearish: more shorts, longs in defensive sectors"]
+      - [macro.fed, "FFR above 4.5% from about 0% a year ago, rising in every period; meeting 2-3 May 2023"]
+      - [macro.ism_manufacturing_march, "about 70% of production contracting; 2 of the 6 large industries growing"]
+      - [market.state, "volatility down in recent weeks; indices moving sideways in a narrow range; recession vs soft landing split"]
+      - [sectors.score, "energy positive; construction very weak"]
+      - [calendar.earnings_season, "the coming week is the busiest week of the reporting season, and so are the 2-3 weeks after"]
+  E2E-2:
+    lesson: "100"
+    as_of: 2023-05-01
+    facts:
+      - [macro.stance.zone, cold]
+      - [macro.stance.bias, "bearish: more shorts, longs in defensive sectors"]
+      - [BLDR.profile.business, "supplies contractors and home builders: windows and doors, tools, project software; driven by US residential construction"]
+      - [BLDR.industry.housing_starts_yoy, "-20%"]
+      - [BLDR.fundamentals.history, "dramatic revenue and profit growth in 2021-2022"]
+      - [BLDR.fundamentals.revenue_now, "revenue so far does not yet reflect the fall in housing starts"]
+      - [BLDR.estimates.eps_next_year, "consensus about -60%, no significant recovery the year after"]
+      - [BLDR.estimates.guidance, "no official management guidance mentioned"]
+      - [BLDR.price, 94]
+      - [BLDR.chart.two_years, "from about $20 to $94; the uptrend is still going"]
+      - [BLDR.levels.below, "just under $90, $80, $70; no significant support between $90 and $70"]
+      - [BLDR.market_cap, "about $12.0B (128M shares x $94)"]
+      - [BLDR.catalysts.next_earnings, "2023-05-03"]
+      - [BLDR.catalysts.housing_data, "monthly housing data keeps coming in the horizon"]
+  E2E-3:
+    lesson: "101"
+    as_of: 2023-05-13
+    facts:
+      - [macro.stance.zone, cold]
+      - [macro.stance.bias, "bearish: more shorts, longs in defensive sectors"]
+      - [BA.watchlist, "short idea on the watchlist (value trap); trigger written last week: establishing a little below $200"]
+      - [BA.price, 198]
+      - [BA.week_move, "-5% in the last week while the market rose"]
+      - [BA.chart.structure, "double top; lower highs and lower lows beginning; the rising trend (supported lows) broke this week after the last support broke"]
+      - [BA.levels.190, "significant level of the last year: support, then resistance, tested several times"]
+      - [BA.levels.below, "$170 the next step; $150 in a sharper scenario"]
+      - [BA.levels.above, "$210-$220 the recent highs"]
+      - [BA.chart.rally, "more than +80% from the October 2022 low to the February 2023 high"]
+      - [BA.news.supplier, "Spirit AeroSystems keeps reporting losses from faulty parts it supplies to Boeing"]
+      - [BA.analysts, "analysts comment in the media but have not cut ratings or targets"]
+      - [BA.earnings, "reported about two weeks ago; option premiums fell markedly since"]
+      - [BA.market_cap, "about $119B (602M shares x $198)"]
+      - [BA.options.july_puts, "190: 7.20, 185: 5.90, 170: 2.80 per share; expiry 2023-07-21, about 45 trading days"]
+  E2E-4:
+    lesson: "102"
+    as_of: 2023-06-01
+    facts:
+      - [STOCK.watchlist, "long idea on the watchlist; jumped after the last report; the scenario saw it reaching about $300"]
+      - [STOCK.base, "resting just under $300 in a narrow range; low of the base $287"]
+      - [STOCK.history, "once before, in a move that ended higher, it first fell to a new 3-month low and only then reversed up"]
+      - [STOCK.adr, "average daily range (High-Low) about 3%; yearly window 2.8% (Yahoo Finance daily data since 1993)"]
+      - [account.equity, 10000]
+  E2E-5:
+    lesson: "096-098"
+    as_of: 2023-04-03
+    facts:
+      - [macro.activity_score, "17/50 (34%): ISM manufacturing 0, ISM services 3, Michigan 7, building permits 7, NFIB 0"]
+      - [macro.stance.zone, cold]
+      - [macro.policy, "the Fed moved from the largest and fastest QE in its history to the sharpest and fastest QT; bank liquidity stress in March 2023"]
+      - [macro.inflation, "inflation has stopped rising and is cooling"]
+      - [macro.activity, "business activity is cooling"]
+      - [macro.fed_expectation, "the market expects another hike in May 2023"]
+      - [market.state, "indices more than a year from the high; a bear market in 2022; now fighting for the correction zone"]
+      - [market.etf_perf, "1w/1m/3m/6m/1y: XLK 4.6/7.6/21.2/26.9/-5.1; XLC 4.2/6.3/21.3/21.6/-15.4; XLF 2.6/-10.5/-5.8/6.1/-15.9; XLRE 5.0/-4.4/0.3/2.8/-23.4; XLE 7.2/-0.8/-1.0/20.2/13.3; SPY 3.9/1.7/7.5/15.1/-9.0"]
+      - [market.spy_vs_ma200, "SPY up over 3 months and above its 200-day average"]
+      - [sectors.ism_march, "only 2 of 6 large manufacturing industries grew; 70% of production contracting"]
+      - [sectors.sp_global, "banking, real estate and construction contracting; services and software, health care and technology expanding"]
+
+  L084:
+    lesson: "084"
+    as_of: 2020-02-27
+    facts:
+      - [market.vix, "from about 15 to about 30 in days: more than double, far above +40% from its recent low"]
+      - [portfolio.regime, "tactical: the code detected the switch today"]
+      - [portfolio.equity, 100000]
+      - [portfolio.daily_move, "a book that usually moves about $1,000 a day now moves several times that"]
+      - [portfolio.positions, "high-beta and speculative names, names breaking their moving averages, and names holding momentum"]
+
+cases:
+  # ---------------------------------------------------------------- 099: AXON, BA, BBY (E2E-1)
+  - id: E2E-1.BA.DC-10
+    scenario: E2E-1
+    card: DC-10
+    subject: BA
+    facts:
+      - [BA.industry, Aerospace]
+      - [BA.news.deliveries, "2023-04-13/14: temporarily halted deliveries of some 737 MAX models because of a supplier problem"]
+      - [BA.management, "CEO: no harm to long-term targets; FCF target $10B in 2025-2026"]
+      - [BA.estimates.revenue_vs_2y_ago, "company revenue forecasts for 2023/2024/2025 cut by about 20%-30% from two years ago"]
+      - [BA.estimates.eps, "Zacks: from a loss per share to a profit this year, then a very large jump next year; high revenue growth expected"]
+      - [BA.profile, "no automatic profile (asterisk): F1 EPS near zero, base effect"]
+      - [BA.price, "about $205-210; rose from about $120 (Oct 2022 low) to about $220 (Feb 2023 high)"]
+      - [BA.chart.structure, "lower highs and lower lows beginning; $200 a clear level below; the 2022 lows far below"]
+      - [BA.market_cap, "about $124B-$127B"]
+      - [BA.catalysts.next_earnings, "2023-04-26"]
+    world: {symbol: BA, direction: long, etf: XLI, traffic_light: orange, screen: "long screen, growth above the industry, no profile (asterisk)"}
+    expect: [value_trap]
+    near: [bubble]
+    source: "099:205"
+    quote: "אני רואה כאן מלכודת ערך קלאסית בבואינג... עלייה של 80%, לא כל כך מצדיקה את עצמה עם הפרוספקט הפונדמנטלי"
+
+  - id: E2E-1.AXON.DC-10
+    scenario: E2E-1
+    card: DC-10
+    subject: AXON
+    facts:
+      - [AXON.industry, "Industrial Products (Zacks)"]
+      - [AXON.business, "tasers, body cameras, drones, and a cloud platform for evidence and real-time workforce management"]
+      - [AXON.customers, "mostly government and law enforcement (LAPD, DOJ, federal agencies, police in Canada, Italy, London); most revenue from 5+ year contracts; about 17,000 public customers"]
+      - [AXON.estimates, "Zacks: revenue +20% this year; EPS +39% this year and +28% next year; both far above the sector average"]
+      - [AXON.company_outlook, "revenue 2023 +21%, about +20% in 2024 and 2025 (not verified); retention about 121% (not verified)"]
+      - [AXON.background, "police and defence budgets growing in the US and Europe"]
+      - [AXON.chart, "at an all-time high, consolidating; outperformed in periods when the market was weak"]
+      - [AXON.catalysts, "no specific event or catalyst now"]
+      - [AXON.market_cap, "about $15B-$16B (not verified)"]
+    world: {symbol: AXON, direction: long, etf: XLI, traffic_light: green}
+    expect: [momentum_long]
+    near: [unclear]
+    source: "099:193-195"
+    quote: "יש לנו כאן חברה שלא צפויה להיפגע גם אם אנחנו נראה האטה בפעילות העסקית"
+    reading: true
+
+  - id: E2E-1.BBY.DC-10
+    scenario: E2E-1
+    card: DC-10
+    subject: BBY
+    facts:
+      - [BBY.industry, "Retail (electronics)"]
+      - [BBY.management, "CEO in the last report: store sales expected to fall, operating margin to shrink; consumer electronics keeps feeling macro pressure; guidance cut again"]
+      - [BBY.guidance, "revenue $43.8B-$45.2B; comparable sales -3% to -6%; operating margin 3.7%-4.1%; EPS $5.70-$6.50; capex about $850M (efficiency)"]
+      - [BBY.estimates, "Zacks: EPS -5% this year, about +13% next year; revenue growth negative this year"]
+      - [BBY.sector_avg, "retail: revenue +5%, EPS slightly negative this year, about +13% next year"]
+      - [BBY.market_cap, "about $16B-$17B"]
+    world: {symbol: BBY, direction: short, etf: XLY, traffic_light: orange}
+    expect: [unclear]
+    near: [stagnation, momentum_short]
+    source: "099:221"
+    quote: "אנחנו נשארים כאן עם איזשהו תחום אפור שיכול מהר מאוד להפוך להיות אדום עבור המניה"
+
+  - id: E2E-1.BA.DC-13
+    scenario: E2E-1
+    card: DC-13
+    subject: BA
+    facts:
+      - [BA.price, "about $205-210"]
+      - [BA.chart.structure, "lower highs and lower lows beginning; $200 a clear level below; the 2022 lows far below"]
+      - [BA.news.deliveries, "2023-04-13/14: temporarily halted deliveries of some 737 MAX models because of a supplier problem"]
+      - [BA.catalysts.next_earnings, "2023-04-26"]
+      - [cycle.candidates, "AXON (long), BA (short), BBY (short)"]
+    world:
+      symbol: BA
+      direction: short
+      DC-10: {option: value_trap, reasoning: "management targets against a record of 20-30% cuts, supply problems, a rally from $120 to $220 not backed by the business"}
+      DC-11: {option: unjustified}
+      DC-12: {thesis_breakers: [{kind: kpi, text: "deliveries resume on schedule and the loss-to-profit path holds in the 2023-04-26 report"}]}
+      DC-14: [{class: B, what: "Q1 report 2023-04-26", timing: expected, direction: for_idea}]
+      catalyst_code: {expected: true, chain: false, wait: false}
+    expect: [hot]
+    near: [cold]
+    source: "099:209-213"
+    quote: "יש כאן רעיון שהוא טיפה יותר בשל מהרעיון שראינו באקסון"
+    reading: true
+
+  - id: E2E-1.AXON.DC-13
+    scenario: E2E-1
+    card: DC-13
+    subject: AXON
+    facts:
+      - [AXON.estimates, "Zacks: EPS +39% this year and +28% next year, far above the sector"]
+      - [AXON.chart, "at an all-time high, consolidating"]
+      - [AXON.catalysts, "no specific event or catalyst now"]
+      - [cycle.candidates, "AXON (long), BA (short), BBY (short)"]
+    world:
+      symbol: AXON
+      direction: long
+      DC-10: {option: momentum_long, reasoning: "growth far above the sector, not tied to the business cycle (government contracts of 5+ years)"}
+      DC-11: {option: justified}
+      DC-14: []
+      catalyst_code: {expected: false, chain: false, wait: false}
+    expect: [cold]
+    near: []
+    source: "099:185, 195"
+    quote: "רעיון מעניין שיהיה ברשימת המעקב... להשתלב בו במידת הצורך"
+
+  - id: E2E-1.BBY.DC-13
+    scenario: E2E-1
+    card: DC-13
+    subject: BBY
+    facts:
+      - [BBY.guidance, "revenue $43.8B-$45.2B; comparable sales -3% to -6%; operating margin 3.7%-4.1%; EPS $5.70-$6.50"]
+      - [BBY.estimates, "Zacks: EPS -5% this year, about +13% next year (as the sector)"]
+      - [BBY.coverage, "no chart, catalyst or analyst coverage data shown"]
+      - [cycle.candidates, "AXON (long), BA (short), BBY (short)"]
+    world:
+      symbol: BBY
+      direction: short
+      DC-10: {option: unclear, reasoning: "wide guidance and thin margins, a grey area"}
+      DC-11: {option: unclear}
+      DC-14: []
+      catalyst_code: {expected: false, chain: false, wait: false}
+    expect: [cold]
+    near: []
+    source: "099:227"
+    quote: "יכולה להיכנס לרשימת המעקב שלנו לשורט. אממה... היא פחות בשלה"
+
+  - id: E2E-1.BA.DC-17
+    scenario: E2E-1
+    card: DC-17
+    subject: BA
+    facts:
+      - [BA.price, "about $205-210"]
+      - [BA.chart.structure, "lower highs and lower lows beginning; $200 a clear level below; the 2022 lows far below"]
+      - [BA.levels.200, 200]
+      - [BA.timing.combined, orange]
+    world: {symbol: BA, direction: short, heat: hot, thesis: "value trap", DC-12: {thesis_breakers: [{kind: kpi, text: "deliveries resume and the loss-to-profit path holds"}]}}
+    expect: [base_below_or_above]
+    near: [level_break, wait]
+    source: "099:209"
+    quote: "אנחנו בשלב הראשון נחכה להתבססות מתחת ל-200 דולרים"
+
+  # ---------------------------------------------------------------- 100: BLDR (E2E-2)
+  - id: E2E-2.BLDR.DC-10
+    scenario: E2E-2
+    card: DC-10
+    subject: BLDR
+    world: {symbol: BLDR, direction: short, etf: XLI, traffic_light: orange, screen: "short screen"}
+    expect: [value_trap, bubble]
+    near: [unclear, momentum_short]
+    source: "100:109, 115"
+    quote: "השוק כרגע לא נותן לזה ביטוי... האם אנחנו מפספסים משהו, או האם יש כאן הזדמנות, או מלכודת ערך?"
+    reading: true
+
+  - id: E2E-2.BLDR.DC-13
+    scenario: E2E-2
+    card: DC-13
+    subject: BLDR
+    world:
+      symbol: BLDR
+      direction: short
+      DC-10: {option: value_trap, reasoning: "housing starts -20% and EPS -60% expected, while the price still rises"}
+      DC-11: {option: unjustified}
+      DC-14: [{class: B, what: "Q1 report 2023-05-03", timing: expected, direction: for_idea}]
+      catalyst_code: {expected: true, chain: false, wait: false}
+    expect: [cold]
+    near: [hot]
+    source: "100:113"
+    quote: "אבל בינתיים אני בהחלט רוצה אותה במעקב"
+
+  - id: E2E-2.BLDR.DC-17
+    scenario: E2E-2
+    card: DC-17
+    subject: BLDR
+    facts:
+      - [BLDR.levels.above, "about $100: the test the lecturer expects above the price"]
+      - [BLDR.timing.combined, orange]
+    world: {symbol: BLDR, direction: short, heat: hot, thesis: "price not reflecting the fall in housing and earnings"}
+    expect: [short_from_above]
+    near: [wait]
+    source: "100:109, 113"
+    quote: "ברגע שהסביבה הטכנית תגיד לי: אוקיי, משהו כאן מתחיל להשתנות... אני מניח שהמבחן הזה יגיע בסביבות ה-100 דולרים"
+
+  - id: E2E-2.BLDR.DC-16
+    scenario: E2E-2
+    card: DC-16
+    subject: BLDR
+    facts:
+      - [BLDR.since_add_pct, "+6% (from $94 toward $100), no news"]
+      - [BLDR.held, "no open position"]
+    world: {symbol: BLDR, direction: short, current_state: cold, waiting_for: "a test of about $100 and a reversal", reasons: [against_move]}
+    expect: [noise_continue]
+    near: []
+    source: "100:109"
+    quote: "אני מניח שהמבחן הזה יגיע בסביבות ה-100 דולרים"
+
+  # ---------------------------------------------------------------- 101: BA (E2E-3)
+  - id: E2E-3.BA.DC-15
+    scenario: E2E-3
+    card: DC-15
+    subject: BA
+    world: {symbol: BA, direction: short, current_state: cold, reasons: [trigger_met, news], catalysts: ["supplier losses (Spirit AeroSystems)"]}
+    expect: [hot]
+    near: []
+    source: "101:83-85"
+    quote: "אז כמו שאמרתי, זאת עסקה חמה"
+
+  - id: E2E-3.BA.DC-17
+    scenario: E2E-3
+    card: DC-17
+    subject: BA
+    facts:
+      - [BA.timing.combined, orange]
+    world: {symbol: BA, direction: short, heat: hot, written_trigger: "establishing a little below $200"}
+    expect: [base_below_or_above]
+    near: [level_break]
+    source: "101:85"
+    quote: "רציתי לראות את המניה מתבססת מעט מתחת ל-200 דולר, ועכשיו זה מה שהיא עושה, ולכן אני מתחיל להיכנס לעסקה"
+
+  - id: E2E-3.BA.DC-20
+    scenario: E2E-3
+    card: DC-20
+    subject: BA
+    facts:
+      - [account.equity, 50000]
+      - [account.options, "$6,000 in short expiries (a month or less), $3,000 in longer expiries"]
+      - [plan.structure, "bear put spread 185/170 July, cost $3.10 per share ($310 per spread)"]
+      - [plan.max_units, "3 spreads under the 20% options cap ($930, 1.86% risk)"]
+      - [BA.timing.combined, orange]
+    world: {symbol: BA, direction: short, DC-17: {option: base_below_or_above, level: 200}, DC-18: {option: put_spread}}
+    expect: ["3"]
+    near: ["2"]
+    source: "101:85-87"
+    quote: "אני מניח שאני אפרוס את זה במהלך השבוע, שבועיים הקרובים, תלוי בהתנהגות המחיר"
+    reading: true
+
+  - id: E2E-3.BA.DC-21
+    scenario: E2E-3
+    card: DC-21
+    subject: BA
+    facts:
+      - [position.structure, "bear put spread 185/170 July 2023, cost $3.10 ($310 per spread), max loss = the premium; no stop on the spread"]
+      - [position.event, "BA rallies to $250 in the first weeks, price only, no news"]
+      - [position.horizon, "July expiry; the thesis expects a 15-20% correction to $170 and $150"]
+    world: {position: {symbol: BA, direction: short, instrument: put_spread, defined_risk: true}, regime: portfolio, event: "price rally to $250, no news"}
+    expect: [hold]
+    near: [reduce]
+    source: "101:89-91"
+    quote: "היא יכולה לעלות ל-250 דולר, אני אפסיד 310. היא יכולה לעלות ל-250 בשבוע הבא, ובעוד חודש להתרסק ל-150, ואני אעשה הרבה מאוד כסף"
+
+  # ---------------------------------------------------------------- 102: the long before $300 (E2E-4)
+  - id: E2E-4.STOCK.DC-19
+    scenario: E2E-4
+    card: DC-19
+    subject: STOCK
+    facts:
+      - [plan.entry, 300]
+      - [plan.k_options, "k_min 3: stop 9% = $273; k_mid 4: stop 12% = $264; k_max 5: stop 15% = $255"]
+      - [plan.target, "not set in the lesson"]
+    world: {symbol: STOCK, direction: long, instrument: stock}
+    expect: [k_mid, k_max]
+    near: []
+    source: "102:63"
+    quote: "עושה על זה כפול 4 לפחות, זאת אומרת טווח של באזור ה-12-15% סטופ במניה הזאתי. זה המינימום שאני צריך לתת לה"
+
+  - id: E2E-4.STOCK.DC-21
+    scenario: E2E-4
+    card: DC-21
+    subject: STOCK
+    facts:
+      - [position.structure, "long stock, entry $300, stop at 4x ADR"]
+      - [position.event, "the market opens sharply against the book on an unexpected macro event; the position is hit"]
+      - [position.weight, "18% of the book"]
+    world: {position: {symbol: STOCK, direction: long, instrument: stock, defined_risk: false}, regime: portfolio, event: "unexpected macro shock at the open"}
+    expect: [hold, reduce]
+    near: [exit]
+    source: "102:67-71"
+    quote: "עדיף להוריד סיכונים ולא להוסיף סיכונים... לא תמיד גם חייב להגיב לכל אירוע באופן מיידי"
+
+  # ---------------------------------------------------------------- 096-098: macro and the Aerospace screen (E2E-5)
+  - id: E2E-5.macro.DC-02
+    scenario: E2E-5
+    card: DC-02
+    subject: macro
+    facts:
+      - [macro.compass.code_quadrant, "growth-_inflation-: activity 34% < 50%; CPI direction over 3 months down"]
+    world: {quadrants_before: []}
+    expect: [growth-_inflation-]
+    near: [growth-_inflation+]
+    source: "096:109-111"
+    quote: "האינפלציה נעצרה ומתקררת. הפעילות העסקית מתקררת"
+    reading: true
+
+  - id: E2E-5.macro.DC-03
+    scenario: E2E-5
+    card: DC-03
+    subject: macro
+    facts:
+      - [macro.compass, growth-_inflation-]
+      - [market.trigger, "bearish bias (cold) while S&P 500 is up over 3 months and above its 200-day average"]
+    world: {DC-01: cold, DC-02: growth-_inflation-}
+    expect: [narrow_rotation]
+    near: [correction_in_trend]
+    source: "096:117"
+    quote: "יותר דיפרנציאליות בתנועות של הסקטורים... להיות יותר ספציפיים בבחירות שלנו, ויותר מגוונים"
+    reading: true
+
+  - id: E2E-5.BA.DC-10
+    scenario: E2E-5
+    card: DC-10
+    subject: BA
+    facts:
+      - [BA.eps, "large loss -> profit near zero -> profit (F0 -> F1 -> F2, Zacks); EG1 99% marks loss to profit, EG2 4791% (uncertain transcription)"]
+      - [BA.sg1, "revenue growth above the industry average (11.8%)"]
+      - [BA.news, "2023-04-14: Boeing halted deliveries of 737 MAX planes"]
+      - [BA.profile, "no profile (asterisk): EPS near zero, base effect"]
+      - [industry.avg, "Aerospace: SG1 11.8%, EPS growth 19% (year 1) and 20% (year 2) in the class file"]
+    world: {symbol: BA, direction: long, screen: "Aerospace long screen"}
+    expect: [value_trap]
+    near: [unclear]
+    source: "098:209-215"
+    quote: "זאת בהחלט יכולה להיות מלכודת... זה לאו דווקא לונג... יכול להתאים יותר לשורט"
+
+  - id: E2E-5.ERJ.DC-10
+    scenario: E2E-5
+    card: DC-10
+    subject: ERJ
+    facts:
+      - [ERJ.eps, "0.35 -> 1.12 -> 1.49 (F0 -> F1 -> F2): EG1 220%, EG2 33%"]
+      - [ERJ.sg1, "revenue growth above the industry average (11.8%)"]
+      - [ERJ.profile, "L3: above the average, growth slowing"]
+      - [industry.avg, "Aerospace: SG1 11.8%, EPS growth 19% (year 1) and 20% (year 2) in the class file"]
+    world: {symbol: ERJ, direction: long, screen: "Aerospace long screen"}
+    expect: [momentum_long]
+    near: [unclear]
+    source: "098:205-209"
+    quote: "מעל הממוצע בסקטור... בשנה השנייה היא מאטה, אבל עדיין מעל... מתאימה לפרופיל L3"
+    reading: true
+
+  # ---------------------------------------------------------------- DC-08: a default failure with a pattern
+  - id: E2E-1.BA.DC-08
+    scenario: E2E-1
+    card: DC-08
+    subject: BA
+    facts:
+      - [BA.eps, "F0 a large loss -> F1 near zero -> F2 a profit: EG1 coded 99, EG2 in the thousands of percent"]
+      - [BA.failed_rules, "S06-R34: growth above the group average, not a short"]
+      - [BA.patterns, "near_zero_jump (S06-J6)"]
+      - [BA.move_pct, "about +80% from the October 2022 low to the February 2023 high"]
+      - [BA.headlines, "2023-04-13/14: temporarily halted deliveries of some 737 MAX models because of a supplier problem"]
+      - [XLI.bucket, short]
+    world: {symbol: BA, etf: XLI, failed: [S06-R34], patterns: {near_zero_jump: S06-J6}}
+    expect: [short]
+    near: [watch_only]
+    source: "099:203"
+    quote: "למה בחרתי את בואינג לשורט? כי אנחנו מסתכלים על הסינון, אנחנו רואים פה חברה שיש לה ציפיות למעבר חזרה לרווחיות"
+
+  - id: E2E-5.ATRO.DC-08
+    scenario: E2E-5
+    card: DC-08
+    subject: ATRO
+    facts:
+      - [ATRO.eps_history, "2016 1.40; 2017 0.58; 2018 1.41; 2019 1.60; 2020 -3.76; 2021 -0.82; 2022 -1.11 (annual, diluted)"]
+      - [ATRO.estimates, "loss -> small profit -> a larger profit"]
+      - [ATRO.failed_rules, "S06-R41: profit -> loss -> profit in recent years"]
+      - [ATRO.patterns, "no_profile (S06-J15)"]
+      - [industry.avg, "Aerospace: SG1 11.8%, EPS growth 19% (year 1) and 20% (year 2) in the class file"]
+    world: {symbol: ATRO, etf: XLI, failed: [S06-R41], patterns: {no_profile: S06-J15}}
+    expect: ["no"]
+    near: [watch_only]
+    source: "098:229"
+    quote: "אין פה באמת חברה שצומחת לאורך זמן באופן עקבי... המשחקים האלה פחות בשבילי"
+
+  - id: E2E-5.TDG.DC-08
+    scenario: E2E-5
+    card: DC-08
+    subject: TDG
+    facts:
+      - [TDG.eps_growth, "EG1 34%, EG2 15% (above the industry in year 1, below it in year 2)"]
+      - [TDG.sg1, "revenue growth above the industry average (11.8%)"]
+      - [TDG.failed_rules, "no_profile: above the average in year 1 and below it in year 2, no branch of the tree"]
+      - [TDG.patterns, "no_profile (S06-J15)"]
+      - [industry.avg, "Aerospace: SG1 11.8%, EPS growth 19% (year 1) and 20% (year 2) in the class file"]
+    world: {symbol: TDG, etf: XLI, failed: [no_profile], patterns: {no_profile: S06-J15}}
+    expect: [watch_only, long]
+    near: ["no"]
+    source: "098:227"
+    quote: "אולי זאת לא תהיה האפשרות הכי טובה שלנו של לונג... אבל גם פה יש לנו פרופיל סיכון שאנחנו יכולים לתת לה"
+    reading: true
+
+  # ---------------------------------------------------------------- 084: the VIX jump (regime card)
+  - id: L084.portfolio.DC-22
+    scenario: L084
+    card: DC-22
+    subject: portfolio
+    world: {state: b, regime: tactical, regime_changed: true}
+    expect: [switch]
+    near: []
+    source: "084"
+    quote: "the lecturer: get out of high beta, speculative names and those breaking their averages, or cut 20%-40% of the positions"
+    reading: true
+
+traps:
+  - id: T1.wrong_fact
+    case: E2E-3.BA.DC-15
+    flaw: wrong_fact
+    output:
+      option: hot
+      confidence: high
+      reasoning: "הטריגר התקיים: המניה ב-198, מתחת ל-200. האנליסטים כבר הורידו המלצות ומחירי יעד, וזה מאשר שהקטליסט בעד הרעיון."
+      fact_ids: [F-004, F-012]
+      cited_rules: [S08-R25, S08-R26]
+      deviations: []
+      missing_facts: []
+      not_from_course: []
+
+  - id: T2.low_k_for_ratio
+    case: E2E-4.STOCK.DC-19
+    flaw: reasoning
+    output:
+      option: k_min
+      confidence: medium
+      reasoning: "סטופ של 9% ב-273 נותן יחס סיכון-סיכוי טוב יותר מסטופ של 12%, ולכן בוחרים k=3 כדי שהיחס יעבור בקלות."
+      fact_ids: [F-004, F-006]
+      cited_rules: [S11-R11]
+      deviations: []
+      missing_facts: []
+      not_from_course: []
+
+  - id: T3.hidden_not_from_course
+    case: E2E-1.AXON.DC-13
+    flaw: hidden_not_from_course
+    output:
+      option: hot
+      confidence: high
+      reasoning: "ה-RSI במצב מכירת יתר ומחיר היעד של האנליסטים גבוה ב-30% מהמחיר, ולכן הרעיון בשל לעסקה."
+      fact_ids: [F-009, F-010]
+      cited_rules: [S07-R35]
+      deviations: []
+      missing_facts: []
+      not_from_course: []
+
+  - id: T4.wrong_rule
+    case: E2E-1.BBY.DC-13
+    flaw: wrong_rule
+    output:
+      option: hot
+      confidence: medium
+      reasoning: "לפי S08-R33 רעיון בלי קטליסט צפוי יכול לקבל חם כשהגיידנס רחב, כי האי-ודאות היא ההזדמנות."
+      fact_ids: [F-009]
+      cited_rules: [S08-R33]
+      deviations: []
+      missing_facts: []
+      not_from_course: []
+
+  - id: T5.undeclared_deviation
+    case: E2E-1.BBY.DC-10
+    flaw: undeclared_deviation
+    output:
+      option: momentum_long
+      confidence: medium
+      reasoning: "ה-EPS צפוי לעלות ב-13% בשנה הבאה, ולכן זה מומנטום לונג."
+      fact_ids: [F-011]
+      cited_rules: [S07-R21]
+      deviations: []
+      missing_facts: []
+      not_from_course: []
+
+  - id: T6.invented_stop
+    case: E2E-3.BA.DC-21
+    flaw: wrong_fact
+    output:
+      option: exit
+      confidence: high
+      reasoning: "המניה עלתה ל-250 ועברה את הסטופ של המרווח ב-210, ולכן יוצאים."
+      fact_ids: [F-016, F-017]
+      cited_rules: [S12-R2]
+      deviations: []
+      missing_facts: []
+      not_from_course: []
+
+control:
+  - id: C1.lecturer_hold
+    case: E2E-3.BA.DC-21
+    output:
+      option: hold
+      confidence: high
+      reasoning: "המרווח הוא סיכון מוגדר: ההפסד המקסימלי הוא הפרמיה של 310 דולר ואין סטופ על המרווח. עלייה ל-250 בלי חדשות היא תנועת מחיר ולא שובר תזה, והפקיעה ביולי משאירה זמן לתיקון לאזור 170. מחזיקים."
+      fact_ids: [F-016, F-017, F-018]
+      cited_rules: [S12-R27, S12-J3]
+      deviations: []
+      missing_facts: []
+      not_from_course: []

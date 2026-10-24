@@ -10,6 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from qt.agents.blind import blind as _blind
 from qt.agents.cards import Card
 from qt.facts import FactSheet
 from qt.playbook import DEFAULT_TIERS_DIR, Tier, load_playbook
@@ -62,10 +63,11 @@ card is flagged to Ilay, not decided."""
 
 
 @lru_cache(maxsize=None)
-def playbook_pack(agent: str) -> tuple[str, str]:
+def playbook_pack(agent: str, blind: bool = False) -> tuple[str, str]:
     """Part 2: the chapters of the agent's stages, the binding decisions, and every R rule's tier.
     Returns (text, version). Built from the Playbook snapshot, so a Playbook change reaches every agent.
-    The Critic gets the pack of the agent it checks (pass that agent's id); L gets every stage."""
+    The Critic gets the pack of the agent it checks (pass that agent's id); L gets every stage.
+    blind: without the course's worked examples (the test set, qt.agents.eval)."""
     pb = load_playbook()
     stages = STAGES.get(agent) or sorted({s for v in STAGES.values() for s in v})
     parts = []
@@ -77,6 +79,8 @@ def playbook_pack(agent: str) -> tuple[str, str]:
         parts.append(f"<tiers stage=\"{s}\">\n" + "\n".join(tiers) + "\n</tiers>")
     parts.append(f"<decisions>\n{(CHAPTERS / 'decisions.md').read_text(encoding='utf-8')}\n</decisions>")
     text = "\n\n".join(parts)
+    if blind:
+        text = _blind(text)[0]
     return text, hashlib.sha256(text.encode()).hexdigest()[:12]
 
 
@@ -86,12 +90,14 @@ def role(agent: str) -> str:
 
 def build_request(agent: str, card: Card, facts: FactSheet, world: dict[str, Any], model: str, effort: str,
                   max_tokens: int, retry_note: str | None = None, pack_for: str | None = None,
-                  schema: dict | None = None, extra_user: str = "") -> dict[str, Any]:
-    """Messages API request body: system = parts 1-2 (cached), user = parts 3-5 (+ the retry note)."""
-    pack, _ = playbook_pack(pack_for or agent)
+                  schema: dict | None = None, extra_user: str = "", blind: bool = False) -> dict[str, Any]:
+    """Messages API request body: system = parts 1-2 (cached), user = parts 3-5 (+ the retry note).
+    blind: the pack and the card without the course's worked examples (the test set)."""
+    pack, _ = playbook_pack(pack_for or agent, blind)
+    card_text = _blind(card.text)[0] if blind else card.text
     user = (f"<fact_sheet>\n{facts.render() or '(empty)'}\n</fact_sheet>\n\n"
             f"<world_state>\n{json.dumps(world, ensure_ascii=False, sort_keys=True, default=str)}\n</world_state>\n\n"
-            f"<decision_card id=\"{card.card_id}\">\n{card.text}\n\nClosed options (codes): {', '.join(card.options)}. "
+            f"<decision_card id=\"{card.card_id}\">\n{card_text}\n\nClosed options (codes): {', '.join(card.options)}. "
             f"When undecided: {card.undecided}.\n</decision_card>")
     if extra_user:
         user += "\n\n" + extra_user

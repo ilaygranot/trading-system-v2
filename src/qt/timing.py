@@ -173,3 +173,34 @@ def snapshot(daily: Sequence[Bar], direction: Direction = "long", levels_color: 
     if len(daily) >= 60 and adr(daily, 20) / adr(daily, 60) >= t.atr_ratio_wait:
         flags.append("atr20_over_atr60_wait")                    # S09-R52, D-S09-10
     return TimingSnapshot(direction, sources, aggregate(sources, veto is not None), veto, details, flags)
+
+
+MACD_TURN_SESSIONS = 2                  # not from course: the histogram shrank 2 sessions in a row = "turning"
+
+
+def profit_flags(daily: Sequence[Bar], direction: Direction = "long") -> dict:
+    """The technical profit-taking flags that open DC-23, in the idea's direction (shorts on mirrored bars):
+    RSI above 70 and turning down, MACD above 0 with its histogram turning down, high intervals (month, quarter)
+    turning red (S12-J5), and price extended: more than 21 sessions without touching MA21 (S09-R26, D-S09-4).
+    The course gives no count of flags (S12-J5) and no number for "MACD at an extreme": the turn here is
+    MACD_TURN_SESSIONS of a shrinking positive histogram (not from course). {} when there is too little history."""
+    t = load_policy().timing
+    bars = I.mirror(daily) if direction == "short" else list(daily)
+    if len(bars) < max(t.macd[1], t.sma_periods[0]) + t.macd[2]:
+        return {}
+    closes = [b.close for b in bars]
+    out: dict = {}
+    vals = [v for v in I.rsi(closes, t.rsi_period) if v is not None]
+    if len(vals) > t.rsi_slope_days and vals[-1] > 70 and vals[-1] < vals[-1 - t.rsi_slope_days]:
+        out["rsi_turn"] = round(vals[-1], 1)
+    line, _, hist = I.macd(closes, *t.macd)
+    h = hist[-MACD_TURN_SESSIONS - 1:]
+    if line[-1] > 0 and h[0] > 0 and all(a > b for a, b in zip(h, h[1:])):
+        out["macd_turn"] = round(line[-1], 4)
+    red = [k for k in ("month", "quarter") if (c := I.resample(bars, k)[-1]).close < c.open]
+    if red:
+        out["high_intervals_red"] = red
+    ext = extended_days([b.low for b in bars], I.sma(closes, t.sma_periods[0]))
+    if ext > t.extended_days:
+        out["extended_days"] = ext
+    return out

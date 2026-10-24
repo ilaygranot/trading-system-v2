@@ -1,7 +1,8 @@
 """The daily run without agents (runtime plan 10, step 3): data, code numbers and rules only.
 
 fetch -> fill -> calc -> rules -> watch -> news -> agents -> journal -> queue -> book -> learn -> notify. The agents step runs
-A7 on positions with an event against them (from the portfolio or from today's news, qt.news) when an agent runner is configured, and A5's
+A7 on positions with an event against them (from the portfolio or from today's news, qt.news; DC-21), on the regime's grey band
+(DC-22) and on technical profit-taking flags (DC-23) when an agent runner is configured, and A5's
 heat cards on the watchlist (DC-16 on an against move, DC-15 on a heat trigger; proposals only, approved by Ilay). The portfolio
 comes from a YAML file (cash, peak equity, open positions); nothing here sends an order: the queue holds
 proposals and the standing orders approved with each trade, and approvals become paper orders (qt.approvals).
@@ -29,6 +30,8 @@ from qt import watch as W
 INDEX, VIX = "^GSPC", "^VIX"
 HISTORY_DAYS = 400                     # enough for ATR60 and the VIX low window
 MAX_HEAT = 8                           # DC-15/DC-16 calls a day (not from course: cost)
+MAX_TECH = 4                           # DC-23 calls a day (not from course: cost)
+TECH_REPEAT_DAYS = 5                   # DC-23 asks again about the same position after 5 days (not from course)
 HEAT_RULES = ("S08-R26", "DC-16")      # approval-queue rule ids of a heat proposal
 
 def load_portfolio(path: str | Path) -> dict:
@@ -108,13 +111,16 @@ def calc(ctx: RunContext, _: str) -> dict:
         out["regime"] = events[-1].regime if events else "portfolio"
         out["regime_changed"] = bool(events) and events[-1].day == date.fromisoformat(snap["bars"][INDEX][-1][0])
         out["atr_20_60"] = series[-1][1] if series else None
+        out["atr_20_60_recent"] = [round(v, 4) for _, v in series[-10:]]   # DC-22: today and the two weeks before
         idx = snap["bars"][INDEX]
         out["market_ret_20d"] = (idx[-1][4] / idx[-21][4] - 1) * 100 if len(idx) > 21 else None
     else:
         out.update(regime="portfolio", regime_changed=False, atr_20_60=None, market_ret_20d=None)
     if VIX in snap["bars"]:
-        v = vix_check([r[4] for r in snap["bars"][VIX]])
-        out["vix"] = asdict(v)
+        vc = [r[4] for r in snap["bars"][VIX]]
+        out["vix"] = asdict(vix_check(vc))
+        out["vix_close"] = vc[-1]
+        out["vix_jump_yesterday"] = len(vc) > 2 and vix_check(vc[:-1]).jump
     for s, rows in snap["bars"].items():
         if s not in (INDEX, VIX) and len(rows) > 21:
             out.setdefault("ret_20d", {})[s] = (rows[-1][4] / rows[-21][4] - 1) * 100
@@ -263,32 +269,185 @@ def heat_cards(ctx: RunContext, runner) -> dict:
     return out
 
 
+def _portfolio_facts(ctx: RunContext, fs) -> None:
+    """The market and the book as facts (DC-21, DC-22, DC-23): regime, ATR 20-60, VIX, exposure, drawdown."""
+    c, r = ctx.out("calc"), ctx.out("rules")
+    m = r["metrics"]
+    rows = [("portfolio.regime", r["regime"], "code:volatility"), ("market.atr_20_60_pct", c.get("atr_20_60"), "code:volatility"),
+            ("market.atr_20_60_last_10", c.get("atr_20_60_recent"), "code:volatility"),
+            ("market.sp500_ret_20d_pct", c.get("market_ret_20d"), "code:calc"), ("market.vix", c.get("vix_close"), "code:calc"),
+            ("market.vix_vs_recent_low", (c.get("vix") or {}).get("ratio_to_low"), "code:volatility"),
+            ("market.vix_above_hist_mean_19_5", (c.get("vix") or {}).get("above_mean"), "code:volatility"),
+            ("portfolio.equity", r["equity"], "code:rules"), ("portfolio.gross", m.get("gross"), "code:manage"),
+            ("portfolio.net", m.get("net"), "code:manage"), ("portfolio.beta", m.get("beta"), "code:manage"),
+            ("portfolio.drawdown_pct", m.get("drawdown_pct"), "code:manage"),
+            ("portfolio.to_portfolio_stop_pct", m.get("to_portfolio_stop_pct"), "code:manage")]
+    for key, value, src in rows:
+        if value is not None:
+            fs.add(key, round(value, 4) if isinstance(value, float) else value, src, ctx.as_of)
+
+
+def _position_facts(ctx: RunContext, p: dict, fs) -> float | None:
+    """One open position as facts: structure, P&L, distance to the stop and the target, weight, open R, and the
+    thesis breakers written at entry when the portfolio file has them. Returns today's price."""
+    c, r = ctx.out("calc"), ctx.out("rules")
+    sym, stock = p["symbol"], p.get("instrument", "stock") == "stock"
+    price = c["prices"].get(sym) if stock else p.get("price")
+    src = (ctx.out("fetch")["sources"].get(sym) or "provider") if stock else "portfolio"
+    sg = 1 if p["direction"] == "long" or not stock else -1
+    rows = [("instrument", p.get("instrument", "stock")), ("direction", p["direction"]), ("qty", p.get("qty")),
+            ("entry", p.get("entry")), ("stop", p.get("stop")), ("entry_stop", p.get("entry_stop")),
+            ("target", p.get("target")), ("expiry", p.get("expiry")), ("strikes", p.get("strikes")),
+            ("defined_risk", p.get("defined_risk", None if stock else True)), ("thesis", p.get("thesis")),
+            ("thesis_breakers", p.get("thesis_breakers"))]
+    if price is not None:
+        fs.add(f"{sym}.{'close' if stock else 'value'}", price, src, ctx.as_of)
+        e = p.get("entry")
+        if e:
+            rows.append(("pnl_pct", round(sg * (price / e - 1) * 100, 2)))
+        if stock and p.get("stop"):
+            rows.append(("to_stop_pct", round(abs(price / p["stop"] - 1) * 100, 2)))
+        if stock and p.get("target"):
+            rows.append(("to_target_pct", round(sg * (p["target"] / price - 1) * 100, 2)))
+        if stock and e and p.get("entry_stop") and e != p["entry_stop"]:
+            rows.append(("open_r", round(sg * (price - e) / abs(e - p["entry_stop"]), 2)))
+    w = (r["metrics"].get("weights") or {}).get(sym)
+    rows += [("weight_pct", round(w, 2) if w is not None else None), ("ret_20d_pct", (c.get("ret_20d") or {}).get(sym)),
+             ("beta", p.get("beta")), ("speculative", p.get("speculative")), ("below_mas", p.get("below_mas"))]
+    for k, v in rows:
+        if v not in (None, "", []):
+            fs.add(f"{sym}.{k}", round(v, 4) if isinstance(v, float) else v, "portfolio" if k not in
+                   ("pnl_pct", "to_stop_pct", "to_target_pct", "open_r", "weight_pct", "ret_20d_pct") else "code:daily",
+                   ctx.as_of)
+    return price
+
+
+def regime_card(ctx: RunContext, runner) -> dict | None:
+    """A7 on the regime's grey band (DC-22, S12-R24/R25, D-S12-2): (b) the code switched to tactical today: which
+    cutting method and order; (a) alert without a switch, on the day it starts (ATR 20-60 crossed above 0, or a VIX
+    jump that was not there yesterday): switch now or stay. Asked once per start, not every alert day (not from
+    course: cost). Positions only: without one there is nothing to cut."""
+    from qt.facts import FactSheet
+    c, r = ctx.out("calc"), ctx.out("rules")
+    pos = _pf(ctx).get("positions", [])
+    if not pos:
+        return None
+    recent = c.get("atr_20_60_recent") or []
+    if r["regime"] == "tactical" and c.get("regime_changed"):
+        state = "b"
+    elif r["regime"] == "portfolio" and ((len(recent) > 1 and recent[-2] <= 0 < recent[-1])
+                                         or ((c.get("vix") or {}).get("jump") and not c.get("vix_jump_yesterday"))):
+        state = "a"
+    else:
+        return None
+    fs = FactSheet()
+    _portfolio_facts(ctx, fs)
+    for p in pos:
+        _position_facts(ctx, p, fs)
+    code_cuts = [a for a in r["actions"] if a["rule_id"] == "S12-R26"]
+    world = {"state": state, "regime": r["regime"], "regime_changed": c.get("regime_changed"),
+             "code_cut_order": [a["symbol"] for a in code_cuts if a["symbol"]], "positions": [p["symbol"] for p in pos],
+             "write_in": "Hebrew"}
+    res = runner.decide("A7", "DC-22", fs, world, run_id=ctx.run_id, step="agents", subject="portfolio")
+    o = res.output
+    method, order = o.get("cut_method"), o.get("cut_order") or []
+    if state == "b" or res.option == "switch":
+        plan = f"DC-22 ({'מעבר שזוהה' if state == 'b' else 'כוננות'}): {res.option}; שיטת חיתוך {method or '-'}; סדר: {', '.join(order) or '-'}"
+        kind = "block_new_risk" if state == "a" else "flag"           # (b): the code's S12-R26 cuts are already queued
+    else:
+        plan, kind = None, None
+    return {"agent": "A7", "card": "DC-22", "state": state, "option": res.option, "status": res.status,
+            "cut_method": method, "cut_order": order, "decision_id": res.decision_id,
+            "reasoning": o.get("reasoning", ""), "for_ilay": res.for_ilay,
+            "item": dict(kind=kind, rule_id="DC-22", symbol=None, qty=None, price=None, preapproved=False,
+                         detail=f"{plan}. {o.get('reasoning', '')}"[:600]) if kind else None}
+
+
+DC23_KIND = {"half": "sell", "all": "exit"}
+
+
+def technical_cards(ctx: RunContext, runner) -> dict:
+    """A7 on technical profit-taking flags (DC-23): an open stock position in profit whose stop is not hit, with at
+    least one flag from qt.timing.profit_flags. Not on options (60/40 is code, S12-R11). half / all go to Ilay as a
+    sell or an exit; none is journalled and the flags stay open for the next close."""
+    from qt.facts import FactSheet
+    from qt.timing import profit_flags
+    snap, c, r = ctx.out("fetch"), ctx.out("calc"), ctx.out("rules")
+    exits = {a["symbol"] for a in r["actions"] if a["kind"] == "exit"}
+    since = (ctx.as_of - timedelta(days=TECH_REPEAT_DAYS)).isoformat()
+    out, n = {}, 0
+    for p in _pf(ctx).get("positions", []):
+        sym = p["symbol"]
+        price, rows = c["prices"].get(sym), snap["bars"].get(sym)
+        if p.get("instrument", "stock") != "stock" or price is None or not rows or sym in exits or sym in snap["stale"]:
+            continue
+        sg = 1 if p["direction"] == "long" else -1
+        if sg * (price - p["entry"]) <= 0:
+            continue
+        flags = profit_flags(_bars(rows), p["direction"])
+        if not flags:
+            continue
+        if ctx.db.one("SELECT id FROM decisions WHERE card_id='DC-23' AND subject=? AND created_at>=? LIMIT 1",
+                      (sym, since)):
+            continue
+        if n >= MAX_TECH:
+            ctx.event(f"{sym}: DC-23 skipped, {MAX_TECH} calls today", "warn", "agents")
+            continue
+        n += 1
+        fs = FactSheet()
+        _portfolio_facts(ctx, fs)
+        _position_facts(ctx, p, fs)
+        for k, v in flags.items():
+            fs.add(f"{sym}.flag.{k}", v, "code:timing.profit_flags", ctx.as_of)
+        world = {"symbol": sym, "direction": p["direction"], "flags": sorted(flags), "regime": r["regime"],
+                 "partial_taken": p.get("partial_taken", False), "write_in": "Hebrew"}
+        try:
+            res = runner.decide("A7", "DC-23", fs, world, run_id=ctx.run_id, step="agents", subject=sym)
+        except Exception as ex:                                      # noqa: BLE001 - budget or API: no proposal
+            ctx.event(f"{sym}: DC-23 {type(ex).__name__}: {ex}", "warn", "agents")
+            continue
+        kind = DC23_KIND.get(res.option)
+        qty = None if kind is None else (float(int(abs(p["qty"]) // 2)) if kind == "sell" else p["qty"])
+        out[sym] = {"agent": "A7", "card": "DC-23", "option": res.option, "status": res.status, "flags": flags,
+                    "decision_id": res.decision_id, "reasoning": res.output.get("reasoning", ""), "for_ilay": res.for_ilay,
+                    "item": dict(kind=kind, rule_id="DC-23", symbol=sym, qty=qty, price=price, preapproved=False,
+                                 detail=f"DC-23: {res.option} ({', '.join(sorted(flags))}). "
+                                        f"{res.output.get('reasoning', '')}"[:600]) if kind and qty else None}
+    return out
+
+
 def agents(ctx: RunContext, _: str) -> dict:
-    """A7 on each open position with an event against it (DC-21), and A5's heat cards on the watchlist (DC-15,
-    DC-16). Without an agent runner (no API key yet), the step records that agents are off and the code's proposals
-    stand alone."""
+    """A7 on each open position with an event against it (DC-21), on the regime's grey band (DC-22) and on technical
+    profit-taking flags (DC-23), and A5's heat cards on the watchlist (DC-15, DC-16). Without an agent runner (no API
+    key yet), the step records that agents are off and the code's proposals stand alone."""
     runner = ctx.services.get("agents")
     if runner is None:
         return {"enabled": False}
     from qt.facts import FactSheet
-    snap, r = ctx.out("fetch"), ctx.out("rules")
+    r = ctx.out("rules")
     out = {}
     news_events = (ctx.out("news") or {}).get("adverse") or {}
     for p in _pf(ctx).get("positions", []):
         if not (p.get("adverse_catalyst") or p["symbol"] in news_events):
             continue
         fs = FactSheet()
-        price = ctx.out("calc")["prices"].get(p["symbol"])
-        if price is not None:
-            fs.add(f"{p['symbol']}.close", price, snap["sources"].get(p["symbol"], ""), ctx.as_of)
-        world = {"position": p, "regime": r["regime"], "metrics": r["metrics"],
-                 "event": p.get("event") or news_events.get(p["symbol"], "")}
+        _position_facts(ctx, p, fs)
+        _portfolio_facts(ctx, fs)
+        event = p.get("event") or news_events.get(p["symbol"], "")
+        fs.add(f"{p['symbol']}.event", event, "news" if p["symbol"] in news_events else "portfolio", ctx.as_of)
+        world = {"position": p, "regime": r["regime"], "metrics": r["metrics"], "event": event}
         res = runner.decide("A7", "DC-21", fs, world, run_id=ctx.run_id, step="agents", subject=p["symbol"])
         out[p["symbol"]] = {"agent": "A7", "card": "DC-21", "option": res.option, "status": res.status,
                             "decision_id": res.decision_id, "confidence": res.output.get("confidence"),
                             "reasoning": res.output.get("reasoning", ""), "deviations": res.output.get("deviations", []),
                             "critic": res.critic, "for_ilay": res.for_ilay}
-    return {"enabled": True, "decisions": out, "heat": heat_cards(ctx, runner)}
+    try:
+        regime = regime_card(ctx, runner)
+    except Exception as ex:                                          # noqa: BLE001 - budget or API: the code's cuts stand
+        ctx.event(f"DC-22 {type(ex).__name__}: {ex}", "warn", "agents")
+        regime = None
+    return {"enabled": True, "decisions": out, "heat": heat_cards(ctx, runner), "regime": regime,
+            "technical": technical_cards(ctx, runner)}
 
 
 def _actions(ctx: RunContext) -> list[dict]:
@@ -334,6 +493,13 @@ def queue(ctx: RunContext, _: str) -> dict:
         iid = q.add(ctx.run_id, ctx.as_of, a, prices.get(sym), d["decision_id"])
         if iid:
             added.append(iid)
+    ag = ctx.out("agents") or {}
+    for d in [ag.get("regime")] + list((ag.get("technical") or {}).values()):   # DC-22, DC-23: every action to Ilay
+        if d and d.get("item"):
+            iid = q.add(ctx.run_id, ctx.as_of, {**d["item"], "agent": {k: v for k, v in d.items() if k != "item"}},
+                        prices.get(d["item"]["symbol"]), d["decision_id"])
+            if iid:
+                added.append(iid)
     return {"added": added}
 
 
@@ -442,6 +608,14 @@ def day_summary(ctx: RunContext) -> str:
     for sym, h in ((ctx.out("agents") or {}).get("heat") or {}).items():
         if h.get("item_id"):
             lines.append(f"🌡️ {sym}: {h['card']} מציע חום {h['from']} → {h['to']} (ממתין לאישורך, S08-R26)")
+    rg = (ctx.out("agents") or {}).get("regime")
+    if rg:
+        lines.append(f"🧭 משטר (DC-22, {'מעבר שזוהה' if rg['state'] == 'b' else 'כוננות'}): {rg['option']}"
+                     + (f" · סדר חיתוך {', '.join(rg['cut_order'])}" if rg.get("cut_order") else "")
+                     + (" (ממתין לאישורך)" if rg.get("item") else ""))
+    for sym, t in ((ctx.out("agents") or {}).get("technical") or {}).items():
+        lines.append(f"📈 {sym}: דגלי מימוש {', '.join(sorted(t['flags']))} · DC-23: {t['option']}"
+                     + (" (ממתין לאישורך)" if t.get("item") else ""))
     bk = (ctx.out("book") or {}).get("log") or []
     if bk:
         lines.append("עדכוני תיק: " + " · ".join(bk))

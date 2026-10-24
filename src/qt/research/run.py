@@ -63,6 +63,15 @@ def _rows_by_etf(u: dict) -> dict[str, list]:
     return out
 
 
+def price_moves(y: Yahoo, sym: str, as_of: date) -> dict:
+    """DC-08's input: the price change over 3, 6 and 12 months (about 63, 126 and 252 sessions)."""
+    try:
+        c = [b.close for b in y.bars(sym, as_of - timedelta(days=400), as_of)]
+    except Exception:                                                   # noqa: BLE001 - a missing input, not a crash
+        return {}
+    return {f"{m}m": round((c[-1] / c[-1 - n] - 1) * 100, 1) for m, n in ((3, 63), (6, 126), (12, 252)) if len(c) > n}
+
+
 def stage_timing(y: Yahoo, screens: dict, as_of: date) -> list[dict]:
     """S09 on every screen survivor, with R:R at the default k to each course target that code can compute
     without the agent: the extreme (all-time high / low in the history held) and the own-multiple target."""
@@ -370,6 +379,9 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     rows = _rows_by_etf(u)
     sectors = _cached(work / "sectors.json", lambda: sector_screen.run(y, rows, phase, phase_flags, st["zone"], as_of))
     screens = _cached(work / "screens.json", lambda: sector_screen.screens(rows, sectors["long"], sectors["short"]))
+    if judge is not None and hasattr(judge, "rescue"):            # DC-08 before the traffic light: rescued ideas get one
+        screens = _cached(work / "screens_dc08.json", lambda: judge.rescue(screens, macro, sectors, as_of,
+                                                                           lambda s: price_moves(y, s, as_of)))
     timing = _cached(work / "timing.json", lambda: stage_timing(y, screens, as_of))
 
     bias = st.get("bias") or "neutral"
