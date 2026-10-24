@@ -1,6 +1,7 @@
 """The end-of-week review (qt.weekly, S13-R21): sector arena, old ideas, the week in the book, the message."""
 from datetime import date, datetime, timedelta, timezone
 
+from qt.agents.runner import config
 from qt import book as B
 from qt import watch as W
 from qt import weekly as WK
@@ -204,7 +205,7 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
     bot = Bot()
     svc = {**_svc(bot, old_wl), "agents": runner, "fred": object(), "research_run": fake_research}
     rid = Runner(db, PIPELINES, svc).start("weekly", AS_OF)
-    assert seen["as_of"] == AS_OF and "ism_pmi" in seen["manual"] and seen["limit"] == 25 and seen["run_id"] == rid
+    assert seen["as_of"] == AS_OF and "ism_pmi" in seen["manual"] and seen["limit"] == config()["budget"]["weekly_research_usd"] and seen["run_id"] == rid
     assert runner.limit_usd is None                                    # the daily cap is back after the run
     out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='research'", (rid,), ["output"])["output"]
     assert out["cost_usd"] == 0.75 and "XYZ" in out["errors"]
