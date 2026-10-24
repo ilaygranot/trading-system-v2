@@ -26,6 +26,9 @@ from qt.facts import FactSheet
 from qt.research import article as AR
 
 GNEWS = "https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+# Google News answers 503 to Render's shared address for hours (the dry runs of 24.10): Bing's feed stands in for a
+# query Google did not answer. It has no date operator; the window is applied to its items like to Google's.
+BING = "https://www.bing.com/news/search?q={q}&format=rss&setlang=en-US"
 FED_RSS = "https://www.federalreserve.gov/feeds/press_monetary.xml"
 # what moves the course's macro picture (S01-S03): the Fed, inflation, jobs, activity, credit, oil, the market
 QUERIES = (
@@ -43,6 +46,7 @@ MIN_STORY, MIN_EVENTS = 2, 1   # below these the narrative is incomplete: the ru
 _ITEM = re.compile(r"<item>(.*?)</item>", re.S)
 _TAG = lambda tag: re.compile(rf"<{tag}[^>]*>(.*?)</{tag}>", re.S)  # noqa: E731
 _TITLE, _LINK, _PUB, _SRC = _TAG("title"), _TAG("link"), _TAG("pubDate"), _TAG("source")
+_BING_SRC = _TAG("News:Source")
 
 
 def _text(m: re.Match | None) -> str:
@@ -57,7 +61,10 @@ def parse_rss(xml: str, default_source: str) -> list[dict]:
             day = parsedate_to_datetime(pub).date()
         except (TypeError, ValueError):
             continue
-        src = _text(_SRC.search(it)) or default_source
+        src = _text(_SRC.search(it)) or _text(_BING_SRC.search(it)) or default_source
+        if "bing.com/news/apiclick" in link:            # Bing wraps the article's address in its click link
+            from urllib.parse import parse_qs, urlparse
+            link = (parse_qs(urlparse(link).query).get("url") or [link])[0]
         if src and title.endswith(f" - {src}"):
             title = title[: -len(src) - 3].strip()
         if title and link:
@@ -76,9 +83,12 @@ def fetch_news(as_of: date, get: Callable[[str], str] | None = None) -> dict:
         url = GNEWS.format(q=quote_plus(f"{q} after:{after.isoformat()} before:{before.isoformat()}"))
         try:
             got = parse_rss(get(url), "Google News")
-        except Exception as e:                       # noqa: BLE001 - one query's failure is listed, the rest stand
-            errors[q] = f"{type(e).__name__}: {e}"
-            continue
+        except Exception as e:                       # noqa: BLE001 - Bing stands in; both failing is listed
+            try:
+                got = parse_rss(get(BING.format(q=quote_plus(q))), "Bing News")
+            except Exception as e2:                  # noqa: BLE001 - one query's failure is listed, the rest stand
+                errors[q] = f"google: {type(e).__name__}: {e}; bing: {type(e2).__name__}: {e2}"
+                continue
         items += [dict(x, query=q) for x in got if after.isoformat() <= x["date"] <= as_of.isoformat()][:PER_QUERY]
     try:
         items += [dict(x, query="fed_press", publisher="Federal Reserve") for x in parse_rss(get(FED_RSS), "Federal Reserve")
