@@ -4,9 +4,10 @@
 # Secrets are entered once, on qt-web (sync: false); the cron jobs copy them from qt-web (fromService envVarKey),
 # so Render asks for each secret one time. After changing a secret on qt-web, run "Manual Sync" on the Blueprint.
 # The IBKR login is entered on qt-ibgateway only. No secret is in this file.
-# Optional keys (ANTHROPIC_API_KEY, FMP_API_KEY) are not copied to the crons: a fromService copy of a variable that
-# qt-web does not have fails the whole sync. When one is added on qt-web, add its copy here too. FRED_API_KEY is
-# copied to the weekly and monthly crons: it must be set on qt-web before this file syncs.
+# ANTHROPIC_API_KEY is optional and not copied to the crons: a fromService copy of a variable that qt-web does not
+# have fails the whole sync. When it is added on qt-web, add its copy here too. FRED_API_KEY (weekly, monthly),
+# FMP_API_KEY and ALPHAVANTAGE_API_KEY (every cron, set on qt-web 24.10) are copied: each must be set on qt-web
+# before this file syncs.
 # The agents run on ANTHROPIC_API_KEY, or, when it is empty, on CLAUDE_CODE_OAUTH_TOKEN through the Claude Code CLI;
 # the build copies the CLI binary (pinned) into ./bin because Render keeps only the project directory at runtime.
 
@@ -42,6 +43,8 @@ services:
       - key: FRED_API_KEY
         sync: false
       - key: FMP_API_KEY
+        sync: false
+      - key: ALPHAVANTAGE_API_KEY         # 25 calls a day; the second close when FMP is out of reach
         sync: false
       - key: SEC_CONTACT                 # contact email in the SEC User-Agent; SEC answers 403 without one
         sync: false
@@ -124,6 +127,10 @@ services:
         fromService: {type: web, name: qt-web, envVarKey: DASHBOARD_PASSWORD}
       - key: IBKR_HOST
         fromService: {type: pserv, name: qt-ibgateway, property: host}
+      - key: FMP_API_KEY                  # second daily close (verify) and the price fallback when Yahoo fails
+        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
+      - key: ALPHAVANTAGE_API_KEY
+        fromService: {type: web, name: qt-web, envVarKey: ALPHAVANTAGE_API_KEY}
       - key: SEC_CONTACT
         fromService: {type: web, name: qt-web, envVarKey: SEC_CONTACT}
       - key: IBKR_PORT
@@ -158,6 +165,10 @@ services:
         fromService: {type: web, name: qt-web, envVarKey: DASHBOARD_PASSWORD}
       - key: IBKR_HOST
         fromService: {type: pserv, name: qt-ibgateway, property: host}
+      - key: FMP_API_KEY                  # second daily close (verify) and the price fallback when Yahoo fails
+        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
+      - key: ALPHAVANTAGE_API_KEY
+        fromService: {type: web, name: qt-web, envVarKey: ALPHAVANTAGE_API_KEY}
       - key: IBKR_PORT
         value: "4004"
 
@@ -191,6 +202,10 @@ services:
         fromService: {type: web, name: qt-web, envVarKey: DASHBOARD_PASSWORD}
       - key: IBKR_HOST
         fromService: {type: pserv, name: qt-ibgateway, property: host}
+      - key: FMP_API_KEY                  # second daily close (verify) and the price fallback when Yahoo fails
+        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
+      - key: ALPHAVANTAGE_API_KEY
+        fromService: {type: web, name: qt-web, envVarKey: ALPHAVANTAGE_API_KEY}
       - key: IBKR_PORT
         value: "4004"
 
@@ -225,6 +240,10 @@ services:
         fromService: {type: web, name: qt-web, envVarKey: DASHBOARD_PASSWORD}
       - key: IBKR_HOST
         fromService: {type: pserv, name: qt-ibgateway, property: host}
+      - key: FMP_API_KEY                  # second daily close (verify) and the price fallback when Yahoo fails
+        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
+      - key: ALPHAVANTAGE_API_KEY
+        fromService: {type: web, name: qt-web, envVarKey: ALPHAVANTAGE_API_KEY}
       - key: IBKR_PORT
         value: "4004"
 
@@ -259,5 +278,9 @@ services:
         fromService: {type: web, name: qt-web, envVarKey: DASHBOARD_PASSWORD}
       - key: IBKR_HOST
         fromService: {type: pserv, name: qt-ibgateway, property: host}
+      - key: FMP_API_KEY                  # second daily close (verify) and the price fallback when Yahoo fails
+        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
+      - key: ALPHAVANTAGE_API_KEY
+        fromService: {type: web, name: qt-web, envVarKey: ALPHAVANTAGE_API_KEY}
       - key: IBKR_PORT
         value: "4004"
