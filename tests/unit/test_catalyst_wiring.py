@@ -179,7 +179,7 @@ def test_report_shows_chain():
     h = report.render(d)
     for s in ("אופק לפי שרשרת קטליסטים", "2027-03-05 C דוח של מתחרה: BP", "extend the horizon or wait",
               "0001306965-26-000111-index.htm", "Climate change and the energy transition", "https://www.sec.gov/20f.htm",
-              "No transcript: Motley Fool terms forbid automated access", "עד הדוח הבא", "צפוי 2026-10-29",
+              "אין תמלול של שיחת הוועידה", "עד הדוח הבא", "צפוי 2026-10-29",
               "Integrated Gas production is expected"):
         assert s in h, s
 

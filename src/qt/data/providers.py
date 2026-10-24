@@ -6,6 +6,8 @@ Roles (architecture 9.2, updated 20.10):
 - FRED/ALFRED: macro, always with realtime_start/realtime_end so history shows what was known then.
 - SEC EDGAR: filings and XBRL company facts (needs a User-Agent with contact); the source of truth for reported numbers.
 - Alpha Vantage (free key, 25 calls a day): a second daily close when FMP is out of reach.
+FMP and Alpha Vantage are prices and stock data only, never transcripts: the earnings calls come from roic.ai
+(qt.data.transcripts.RoicTranscripts, Ilay 24.10).
 - Zacks: Ilay uploads a monthly screen export (see zacks.py).
 """
 from __future__ import annotations

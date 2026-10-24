@@ -797,6 +797,7 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
             out.append(f'<p class="note">הקוד שינה את {E(o.get("card", ""))} מ-{E(o.get("from", ""))} ל-{E(o.get("to", ""))}: '
                        f'{E(o.get("why", ""))}</p>')
         out.append(_documents(i.get("documents")))
+        out.append(call_box(i))
         rv = c["revisions"]
         out.append(f'<p class="small">דוח הבא: <b>{E(c.get("next_earnings") or "—")}</b> · רוויזיות 30 יום F1: '
                    f'{rv["F1"]["up30"] or 0}↑ {rv["F1"]["down30"] or 0}↓, F2: {rv["F2"]["up30"] or 0}↑ {rv["F2"]["down30"] or 0}↓ · '
@@ -1036,6 +1037,34 @@ def _catalyst_li(x: dict) -> str:
             + "</li>")
 
 
+def call_box(i: dict) -> str:
+    """DC-26: the course's questions to the last earnings call, each with the excerpts code found word for word in
+    the transcript (speaker, management or analyst, prepared remarks or Q&A) and the agent's short answer."""
+    j = i.get("judgment") or {}
+    call = j.get("call")
+    if not call:
+        return f'<p class="small muted">שיחת הוועידה לא נקראה: {E(j["call_error"][:200])}</p>' if j.get("call_error") else ""
+    from qt.research.earnings_call import ROLE_HE, SECTION_HE
+    tag = f'{call.get("year")}Q{call.get("quarter")}'
+    out = [f'<div class="callbox"><p><b>מה שאלנו את שיחת הוועידה האחרונה</b> · {src_link(call.get("url"), tag)} '
+           f'{E(call.get("date") or "")} · roic.ai · {call.get("found", 0)} מתוך {call.get("asked", 0)} שאלות הקורס '
+           f'קיבלו ציטוט שנבדק מילה במילה</p><dl>']
+    for a in call.get("answers") or []:
+        out.append(f'<dt>{E(a["question"])} <span class="ans ans-{"yes" if a["found"] else "no_source"}">'
+                   f'{"נמצא" if a["found"] else "לא נאמר בשיחה"}</span></dt><dd>')
+        if a.get("he"):
+            out.append(f'<p>{E(a["he"])} <small>(סיכום הסוכן, DC-26)</small></p>')
+        for x in a.get("excerpts") or []:
+            out.append(f'<blockquote><p dir="ltr" lang="en">“{E(x["text"])}”</p><footer>{E(x.get("speaker") or "")}, '
+                       f'{E(ROLE_HE.get(x.get("role"), ""))} · {E(SECTION_HE.get(x.get("section"), ""))}</footer></blockquote>')
+        out.append("</dd>")
+    out.append("</dl>")
+    if call.get("dropped"):
+        out.append(f'<p class="small muted">{len(call["dropped"])} ציטוטים או סיכומים נמחקו בבדיקת הקוד '
+                   f'(לא הופיעו מילה במילה בתמלול)</p>')
+    return "".join(out) + "</div>"
+
+
 def _documents(docs: dict | None) -> str:
     """The SEC extracts behind the catalysts (S07-R30, S07-R32): 8-K/6-K list, results outlook, risk headlines."""
     if not docs:
@@ -1069,10 +1098,14 @@ def _documents(docs: dict | None) -> str:
             dl_title = f"{dl.get('form')} ({dl.get('filed')})"
             out.append(f'<p class="small">{src_link(dl.get("url"), dl_title)}: '
                        + ("ללא שינוי מהותי" if dl.get("no_material_change") else "עדכון לגורמי הסיכון") + "</p>")
-    if docs.get("transcript") is None:
-        out.append('<p class="small">No transcript: Motley Fool terms forbid automated access; using SEC results '
-                   'releases (אין תמליל שיחת ועידה: תנאי השימוש של Motley Fool אוסרים גישה אוטומטית; '
-                   'משתמשים בהודעות התוצאות ב-SEC)</p>')
+    tr = docs.get("transcript")
+    if tr:
+        tag = f'{tr.get("year")}Q{tr.get("quarter")}'
+        out.append(f'<p class="small"><b>שיחת הוועידה האחרונה (S07-R32):</b> {src_link(tr.get("url"), tag)} '
+                   f'<small>({E(tr.get("date") or "")} · roic.ai)</small></p>')
+    else:
+        out.append('<p class="small">אין תמלול של שיחת הוועידה (roic.ai לא החזיר שיחה, או ש-ROIC_API_KEY לא מוגדר); '
+                   'דברי ההנהלה מהודעת התוצאות ב-SEC בלבד</p>')
     if docs.get("errors"):
         out.append(f'<p class="small muted">שגיאות במסמכים: {E("; ".join(map(str, docs["errors"]))[:600])}</p>')
     return "".join(out)

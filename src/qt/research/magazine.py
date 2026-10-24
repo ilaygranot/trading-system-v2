@@ -18,7 +18,7 @@ CHAPTERS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
     ("business", "העסק", ("business",), ()),
     ("peers", "מול המתחרים", ("vs_sector", "advantage"), ("peers_table",)),
     ("numbers", "המספרים", ("growth_engines", "reports_trend"), ("quarters", "margins", "cash", "surprises")),
-    ("management", "מה ההנהלה אומרת", ("management",), ("guidance",)),
+    ("management", "מה ההנהלה אומרת", ("management",), ("call", "guidance")),
     ("market", "האם השוק מסכים, ואנחנו", ("market_agrees", "we_agree"), ("multiple", "targets")),
     ("catalysts", "מה יזיז את המניה", ("catalysts",), ("timeline",)),
     ("chart", "הגרף", ("chart",), ("weekly", "rsi", "macd", "adr", "lights")),
@@ -117,6 +117,8 @@ def _extras(i: dict, names: tuple[str, ...], figs: dict[str, str]) -> str:
             out.append(figs[n])
         elif n == "peers_table":
             out.append(peers_table(i))
+        elif n == "call":
+            out.append(R.call_box(i))
         elif n == "guidance":
             res = (i.get("documents") or {}).get("results") or {}
             for g in res.get("guidance") or []:
@@ -256,9 +258,14 @@ blockquote.pull{margin:1rem 0;padding:6px 18px;border-inline-start:4px solid var
 blockquote.pull p{font-family:Georgia,var(--display);font-size:1.15rem;font-style:italic;margin:0;text-align:left}
 blockquote.pull footer{font-size:.85rem;color:var(--muted);margin-top:4px}
 .mag-figs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 24px;margin:1rem 0}
-.mag-figs>.peers,.mag-figs>.tbl,.mag-figs>.timeline,.mag-figs>.breakers,.mag-figs>p,.mag-figs>.lights{grid-column:1/-1}
+.mag-figs>.peers,.mag-figs>.tbl,.mag-figs>.timeline,.mag-figs>.breakers,.mag-figs>p,.mag-figs>.lights,.mag-figs>.callbox{grid-column:1/-1}
 tr.self td{background:var(--accent-soft);font-weight:600} tr.avg td{color:var(--muted);font-style:italic}
 .breakers{border:1px solid var(--line);border-radius:4px;padding:8px 14px;font-size:.9rem}
+.callbox{border:1px solid var(--line);border-radius:4px;padding:8px 14px;font-size:.9rem}
+.callbox dt{font-weight:700;margin-top:.7rem;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline} .callbox dd{margin:0}
+.callbox blockquote{margin:.4rem 0;padding:2px 12px;border-inline-start:3px solid var(--accent)}
+.callbox blockquote p{font-family:Georgia,var(--display);font-style:italic;margin:0;text-align:left;word-break:break-word}
+.callbox blockquote footer{font-size:.78rem;color:var(--muted)}
 .appendix{max-width:820px;margin-inline:auto}
 ol.srcs{font-size:.82rem;padding-inline-start:1.6rem} ol.srcs li{margin:.5rem 0;scroll-margin-top:60px}
 ol.srcs li:target{background:var(--accent-soft)}
