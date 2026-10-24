@@ -73,12 +73,13 @@ def parse_rss(xml: str, default_source: str) -> list[dict]:
 
 
 def fetch_news(as_of: date, get: Callable[[str], str] | None = None) -> dict:
-    """{"items": [...], "errors": {...}}: the headlines of the window, newest first, one per title."""
+    """{"items": [...], "errors": {...}, "empty": [...]}: the headlines of the window, newest first, one per title;
+    the queries a source failed (they block the report) and those both sources answered with nothing (listed)."""
     if get is None:
         from qt.data.macro_auto import Http
         get = Http().text
     after, before = as_of - timedelta(days=DAYS_BACK), as_of + timedelta(days=1)
-    items, errors = [], {}
+    items, errors, empty = [], {}, []
     for q in QUERIES:
         url = GNEWS.format(q=quote_plus(f"{q} after:{after.isoformat()} before:{before.isoformat()}"))
         tried = []
@@ -92,8 +93,11 @@ def fetch_news(as_of: date, get: Callable[[str], str] | None = None) -> dict:
                 tried.append(f"{name}: no headlines in the window")
             except Exception as e:                   # noqa: BLE001 - Bing stands in; both failing is listed
                 tried.append(f"{name}: {type(e).__name__}: {e}")
-        if not got:
-            errors[q] = "; ".join(tried)
+        if not got:                                  # both answered with nothing: a quiet query, listed only
+            if all(t.endswith("no headlines in the window") for t in tried):
+                empty.append(q)
+            else:                                    # a source that failed: the story is short of its headlines
+                errors[q] = "; ".join(tried)
             continue
         items += [dict(x, query=q) for x in got if after.isoformat() <= x["date"] <= as_of.isoformat()][:PER_QUERY]
     try:
@@ -107,7 +111,7 @@ def fetch_news(as_of: date, get: Callable[[str], str] | None = None) -> dict:
         if k not in seen:
             seen.add(k)
             out.append(x)
-    return {"items": out, "errors": errors}
+    return {"items": out, "errors": errors, "empty": empty}
 
 
 def moves(charts: dict) -> list[dict]:
