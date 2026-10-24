@@ -662,9 +662,9 @@ class Judge:
         J["agent_log"] = self.log
         if self.reused:
             J["continued"] = self.reused                          # taken from a run of the same week
-        cut = [s for s, e in (J.get("errors") or {}).items() if e.startswith("BudgetExceeded")]
-        cut += self.selection.get("cut_by_budget") or []
-        cut += [f"{s}:article" for s, j in J["ideas"].items() if "BudgetExceeded" in (j.get("article_error") or "")]
+        # Ilay 24.10: a report with picked stocks unanalysed or without their article is not a finished report
+        cut = list(J.get("errors") or {}) + [s for s in self.selection.get("cut_by_budget") or [] if s not in (J.get("errors") or {})]
+        cut += [f"{s}:article" for s, j in J["ideas"].items() if not j.get("article")]
         if cut:
             J["incomplete"] = cut                                 # the weekly step fails, a resume asks for these
         hot_max = load_policy().watchlist.hot_max                   # S07-R35: 3-4 hot per cycle, a flag

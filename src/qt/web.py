@@ -667,6 +667,26 @@ class App:
             self._dossier = (row["id"], json.loads(up["content"]))
         return self._dossier[1]
 
+    def idea_doc(self, sym: str) -> tuple[dict, dict | None]:
+        """(dossier, idea) of the newest research that analysed the stock (Ilay 24.10: a watchlist stock from an
+        earlier week showed nothing once a newer report came in), else (the newest dossier, None)."""
+        rows = self.db.all("SELECT id FROM uploads WHERE kind = 'dossier' ORDER BY id DESC LIMIT 8")
+        cache = self.__dict__.setdefault("_dossiers", {})
+        newest = None
+        for r in rows:
+            if r["id"] not in cache:
+                up = self.db.one("SELECT content FROM uploads WHERE id = ?", (r["id"],))
+                try:
+                    cache[r["id"]] = json.loads(up["content"])
+                except ValueError:
+                    cache[r["id"]] = {}
+            d = cache[r["id"]]
+            newest = d if newest is None else newest
+            idea = (d.get("ideas") or {}).get(sym)
+            if idea:
+                return d, idea
+        return newest or {}, None
+
     def report_parts(self) -> tuple[list[tuple[str, str]], str, str | None]:
         """(rail, sections, as of) of the newest research report: from its dossier, else cut out of the saved HTML."""
         from qt.research import report
@@ -739,10 +759,12 @@ class App:
         row = self.db.one("SELECT s.output, r.as_of FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE s.step = 'watch' "
                           "AND s.status = 'done' AND r.kind = 'daily' ORDER BY r.started_at DESC LIMIT 1", (), ["output"])
         checks = {c["symbol"]: c for c in ((row or {}).get("output") or {}).get("checks") or []}
-        try:
-            ideas = (self.report_doc() or {}).get("ideas") or {}
-        except Exception:                                               # noqa: BLE001 - the list stands without it
-            ideas = {}
+        ideas = {}
+        for e in entries:
+            try:
+                ideas[e["symbol"]] = self.idea_doc(e["symbol"])[1]
+            except Exception:                                           # noqa: BLE001 - the list stands without it
+                pass
         bucket = {"enter": ("כניסה", "ok"), "conditional": ("מותנה בטריגר", "warn"), "watch": ("מעקב", "")}
         order = {"enter": 0, "conditional": 1, "watch": 2}
         hot = {"opportunity": 0, "ready": 0, "recheck": 1, "waiting": 2}
@@ -993,9 +1015,10 @@ class App:
         from qt.daily import STATUS_HE
         from qt.research import report
         sym = symbol.upper()
-        d = self.report_doc() or {}
-        idea = (d.get("ideas") or {}).get(sym)
-        timing = next((t for t in d.get("timing") or [] if t.get("sym") == sym), None)
+        latest = self.report_doc() or {}
+        d, idea = self.idea_doc(sym)
+        timing = next((t for t in latest.get("timing") or [] if t.get("sym") == sym), None)
+        older = bool(idea) and (d.get("meta") or {}).get("as_of") != (latest.get("meta") or {}).get("as_of")
         entry = next((x for x in (watchlist(self.db) or {}).get("entries") or [] if x["symbol"] == sym), None)
         row = self.db.one("SELECT s.output FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE s.step = 'watch' "
                           "AND s.status = 'done' AND r.kind = 'daily' ORDER BY r.started_at DESC LIMIT 1", (), ["output"])
@@ -1044,8 +1067,10 @@ class App:
         # what the research found: the whole dossier of the idea, as in the report
         if idea:
             checks = [r for r in (d.get("verification") or {}).get("checks", []) if r["subject"] == sym]
+            note = (f"<p class=note>מהמחקר של {_e(d['meta']['as_of'])}: המניה לא נותחה במחקר האחרון "
+                    f"({_e((latest.get('meta') or {}).get('as_of'))}).</p>" if older else "")
             out += ui.section(f"מה המחקר מצא ({_e(d['meta']['as_of'])})",
-                              "<div class=rep>" + self.rep_links(report.article_html(idea, checks, d["meta"]["as_of"]))
+                              note + "<div class=rep>" + self.rep_links(report.article_html(idea, checks, d["meta"]["as_of"]))
                               + "</div>")
             if sym in ((d.get("portfolio") or {}).get("syms") or []):      # S11: how it sits with the other trades
                 out += f"<div class=rep>{self.rep_links(report._portfolio(d))}</div>"

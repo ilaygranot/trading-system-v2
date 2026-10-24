@@ -113,3 +113,17 @@ def test_a_big_blob_goes_in_parts_and_a_half_written_one_reads_as_nothing(db, mo
     assert st.get("stage:u.pkl")["parts"] > 5 and st.get_blob("stage:u.pkl") == big
     db.execute("DELETE FROM research_state WHERE key = ?", ("stage:u.pkl#0001",))
     assert st.get_blob("stage:u.pkl") is None
+
+
+def test_a_missing_article_or_a_failed_idea_is_not_a_finished_report(db):
+    """Ilay 24.10: the 23.10 report had 4 of 12 stocks and no article, and went out as done."""
+    class Flaky(AgentRunner):
+        def decide(self, agent, card_id, *a, subject=None, **k):
+            if card_id == "DC-25" and subject == "S0":
+                raise ValueError("bad answer")
+            if card_id == "DC-10" and subject == "S2":
+                raise RuntimeError("yahoo down")
+            return super().decide(agent, card_id, *a, subject=subject, **k)
+    J = JG.Judge(Flaky(db, CardClient()))(_stages(3), _deep_dive([]))
+    assert sorted(J["incomplete"]) == ["S0:article", "S2"]
+    assert "incomplete" not in JG.Judge(AgentRunner(db, CardClient()))(_stages(2), _deep_dive([]))
