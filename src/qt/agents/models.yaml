@@ -29,3 +29,7 @@ budget:
   daily_usd: 10               # over it, only A7 and the Critic keep running, and Ilay gets a message
   weekly_research_usd: 25     # the Saturday research run (A1, A3, A4, A6 + Critic), instead of the daily cap (not from course)
   always_run: [A7, C]
+eval:                         # the course test set, `qt eval agents` (runtime plan 8.3; Ilay 24.10, not from course)
+  limit_usd: 40               # one cap over the whole run, at list price (on the subscription it is not billed)
+  pass_share: 0.8             # at least 80% hit or near, and no miss on a card that needs Ilay's approval
+  models: [opus, sonnet]

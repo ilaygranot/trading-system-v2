@@ -1,5 +1,5 @@
 """Command line: `qt check trade.yaml`, `qt macro stance.yaml`, `qt rules`, `qt replay`,
-`qt run daily|premarket|open|weekly|monthly|resume|status [--scheduled]`, `qt research`, `qt web`, `qt set-webhook`."""
+`qt run daily|premarket|open|weekly|monthly|resume|status [--scheduled]`, `qt research`, `qt eval agents`, `qt web`, `qt set-webhook`."""
 from __future__ import annotations
 
 import argparse
@@ -195,6 +195,14 @@ def _macro_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _eval(args: argparse.Namespace) -> int:
+    """The course test set on the agents (qt.agents.eval): a blind Playbook, every case once per model."""
+    from qt.agents.eval import main
+    from qt.agents.runner import config
+    models = args.models.split(",") if args.models else config()["eval"]["models"]
+    return main(Path(args.out), models, args.case or None, not args.no_traps, args.limit)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="qt")
     sub = ap.add_subparsers(required=True)
@@ -232,6 +240,14 @@ def main(argv: list[str] | None = None) -> int:
     vf.add_argument("--cache", help="HTTP cache (SQLite path)")
     vf.add_argument("--no-fetch", action="store_true", help="do not open source pages to check quotes")
     vf.set_defaults(fn=_verify)
+    ev = sub.add_parser("eval", help="the course test set: `qt eval agents` (cases from lessons 098-102)")
+    ev.add_argument("what", choices=["agents"])
+    ev.add_argument("--models", help="comma separated: opus,sonnet (default models.yaml eval.models)")
+    ev.add_argument("--case", action="append", help="a case id, its prefix (E2E-3) or a card (DC-10); repeatable")
+    ev.add_argument("--no-traps", action="store_true", help="skip the Critic traps")
+    ev.add_argument("--limit", type=float, help="the run's cap in USD at list price (default models.yaml eval.limit_usd)")
+    ev.add_argument("--out", default="eval-out", help="where report.md, report.json and eval.sqlite go")
+    ev.set_defaults(fn=_eval)
     w = sub.add_parser("web", help="the dashboard and Telegram webhook (local; gunicorn qt.web:application in the cloud)")
     w.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)))
     w.set_defaults(fn=_web)

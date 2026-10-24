@@ -22,7 +22,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-qt = ["data/macro_seed.yaml", "policy.yaml", "status.yaml", "agents/*.yaml", "agents/*.md", "static/*"]
+qt = ["data/macro_seed.yaml", "policy.yaml", "status.yaml", "agents/*.yaml", "agents/*.md", "agents/eval_cases/*.yaml", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
