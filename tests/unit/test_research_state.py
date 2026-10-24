@@ -101,3 +101,15 @@ def test_yahoo_waits_out_a_429_on_the_crumb(tmp_path, monkeypatch):
         return NS(status_code=c, text="abc ", raise_for_status=lambda: None)
     monkeypatch.setattr(y.s, "get", get)
     assert y.crumb() == "abc" and codes == []
+
+
+def test_a_big_blob_goes_in_parts_and_a_half_written_one_reads_as_nothing(db, monkeypatch):
+    import os
+
+    from qt.research import state as S
+    monkeypatch.setattr(S, "BLOB_PART", 1000)
+    st, big = State(db, AS_OF), {"x": os.urandom(5000)}
+    st.put_blob("stage:u.pkl", big)
+    assert st.get("stage:u.pkl")["parts"] > 5 and st.get_blob("stage:u.pkl") == big
+    db.execute("DELETE FROM research_state WHERE key = ?", ("stage:u.pkl#0001",))
+    assert st.get_blob("stage:u.pkl") is None

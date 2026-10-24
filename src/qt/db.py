@@ -30,7 +30,9 @@ class DB:
         if is_postgres(url):
             import psycopg
             from psycopg.rows import dict_row
-            self.conn = psycopg.connect(url, row_factory=dict_row, autocommit=True)
+            self._connect = lambda: psycopg.connect(url, row_factory=dict_row, autocommit=True, keepalives=1,
+                                                    keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
+            self.conn = self._connect()
             self.dialect = "postgres"
             self.error: tuple[type[Exception], ...] = (psycopg.Error,)
         else:
@@ -58,16 +60,22 @@ class DB:
         return q.replace("?", "%s") if self.pg else q
 
     def execute(self, q: str, params: Sequence[Any] = ()) -> Any:
-        cur = self.conn.execute(self._sql(q), tuple(params))
+        try:
+            cur = self.conn.execute(self._sql(q), tuple(params))
+        except self.error:
+            if not (self.pg and self.conn.closed):
+                raise
+            self.conn = self._connect()               # 24.10: the server dropped an idle connection mid-run
+            cur = self.conn.execute(self._sql(q), tuple(params))
         if not self.pg:
             self.conn.commit()
         return cur
 
     def all(self, q: str, params: Sequence[Any] = (), json_cols: Iterable[str] = ()) -> list[dict]:
-        return [decode(dict(r), json_cols) for r in self.conn.execute(self._sql(q), tuple(params)).fetchall()]
+        return [decode(dict(r), json_cols) for r in self.execute(q, params).fetchall()]
 
     def one(self, q: str, params: Sequence[Any] = (), json_cols: Iterable[str] = ()) -> dict | None:
-        r = self.conn.execute(self._sql(q), tuple(params)).fetchone()
+        r = self.execute(q, params).fetchone()
         return decode(dict(r), json_cols) if r is not None else None
 
     def insert(self, table: str, row: Mapping[str, Any], returning: str | None = "id") -> int | None:

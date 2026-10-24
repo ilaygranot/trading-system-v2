@@ -42,6 +42,7 @@ class Yahoo:
         self._crumb: str | None = None
         self._lock = threading.Lock()
 
+    WAITS_429 = (5, 15, 45, 120, 300)              # 24.10: after the universe, Yahoo's limit took minutes to pass
     CRUMB_WAITS = (15, 30, 60, 120, 240)          # 429 on the first request (24.10): Yahoo's limit passes in minutes
 
     def crumb(self) -> str:
@@ -64,7 +65,7 @@ class Yahoo:
         if f.exists() and time.time() - f.stat().st_mtime < self.max_age:
             return json.loads(f.read_text())
         last = None
-        for attempt in range(4):
+        for attempt in range(len(self.WAITS_429) + 1):
             sep = "&" if "?" in url else "?"
             full = f"{url}{sep}crumb={self.crumb()}"
             try:
@@ -75,7 +76,8 @@ class Yahoo:
                 continue
             if r.status_code in (429, 500, 502, 503):
                 last = f"HTTP {r.status_code}"
-                time.sleep(2 ** (attempt + 1))
+                if attempt < len(self.WAITS_429):
+                    time.sleep(self.WAITS_429[attempt] if r.status_code == 429 else 2 ** (attempt + 1))
                 continue
             if r.status_code == 401:
                 self._crumb = None

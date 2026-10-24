@@ -387,8 +387,7 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     docs_memo: dict[str, dict] = {}
     docs = documents_source(sec, as_of, docs_memo, calls)
     on_wl = _watchlist_symbols(watchlist)
-    # the universe stays in the work dir only: tens of MB in one row dropped the Postgres connection (24.10)
-    u = _cached(work / "universe.pkl", lambda: U.fetch(y), binary=True)
+    u = cached("universe.pkl", lambda: U.fetch(y), binary=True)   # a resume does not ask Yahoo for it again
     breadth = U.breadth_pct(u["quotes"])
     spx = y.bars("^GSPC", as_of - timedelta(days=3650), as_of)
     macro = cached("macro.json", lambda: macro_stage.run(

@@ -1,8 +1,8 @@
 """What a weekly research has finished, in the database, so a run that stops (the agents' budget, a crash, a new
 container) continues where it stopped instead of starting again (Ilay 24.10: "חיוני הכל מחדש?").
 
-Keyed by the week (as_of), not the run: a new run for the same week continues too. The stages (the screens, the
-traffic light; not the universe, too big for one row) and each agent piece (A1, the DC-09 pick, each idea's cards,
+Keyed by the week (as_of), not the run: a new run for the same week continues too. The stages (the universe, the
+screens, the traffic light) and each agent piece (A1, the DC-09 pick, each idea's cards,
 each article) are saved as they finish. QT_RESEARCH_FRESH=1 starts the week from nothing.
 """
 from __future__ import annotations
@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS research_state (
   PRIMARY KEY (as_of, key)
 );
 """
+
+
+BLOB_PART = 2_000_000                              # characters of base64 per row
 
 
 class State:
@@ -48,11 +51,22 @@ class State:
         self._put_raw(key, json.dumps(value, default=str, ensure_ascii=False))
 
     def get_blob(self, key: str) -> Any:
-        raw = self._raw(key)
-        return None if raw is None else pickle.loads(zlib.decompress(base64.b64decode(raw)))
+        head = self.get(key)
+        if not head:
+            return None
+        parts = [self._raw(f"{key}#{n:04d}") for n in range(head["parts"])]
+        if any(p is None for p in parts):
+            return None
+        return pickle.loads(zlib.decompress(base64.b64decode("".join(parts))))
 
     def put_blob(self, key: str, value: Any) -> None:
-        self._put_raw(key, base64.b64encode(zlib.compress(pickle.dumps(value), 6)).decode())
+        """In rows of BLOB_PART: the universe in one row (tens of MB) dropped the Postgres connection (24.10). The
+        head row goes last, so a write cut halfway reads as nothing."""
+        raw = base64.b64encode(zlib.compress(pickle.dumps(value), 6)).decode()
+        parts = [raw[i:i + BLOB_PART] for i in range(0, len(raw), BLOB_PART)] or [""]
+        for n, part in enumerate(parts):
+            self._put_raw(f"{key}#{n:04d}", part)
+        self.put(key, {"parts": len(parts), "bytes": len(raw)})
 
     def keys(self) -> list[str]:
         return [r["key"] for r in self.db.all("SELECT key FROM research_state WHERE as_of = ? ORDER BY key", (self.as_of,))]
