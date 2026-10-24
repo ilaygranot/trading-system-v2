@@ -236,11 +236,16 @@ def carry_forward(d: dict, prev_upload: dict | None) -> None:
         J["carried"] = {"from": when, "what": carried}
 
 
+class ResearchIncomplete(RuntimeError):
+    """The agents' budget cut the research: the step fails after the partial report, and a resume (the bot's
+    button, the second cron firing, or a new run of the week) asks only for what is missing (qt.research.state)."""
+
+
 def _run_research(as_of: date, judge, manual_text: str, fred) -> dict:
     from qt.research import run as R
     work = Path(os.environ.get("QT_WORK_DIR", "/tmp/qt-research")) / as_of.isoformat()
     work.mkdir(parents=True, exist_ok=True)
-    return R.run(as_of, work, None, None, work / "yahoo", fred, judge=judge, manual_text=manual_text)
+    return R.run(as_of, work, None, None, work / "yahoo", fred, judge=judge, manual_text=manual_text, state=judge.state)
 
 
 def research(ctx: RunContext, _: str) -> dict:
@@ -262,9 +267,19 @@ def research(ctx: RunContext, _: str) -> dict:
     from qt.agents.runner import config
     from qt.research import report
     from qt.research.judge import Judge
+    from qt.research.state import State, fresh, seed_from_dossier
+    state = State(ctx.db, ctx.as_of)
+    if fresh():
+        state.clear()
+    else:                                     # a week's report from before the state, or whose state is gone
+        last = q.latest_upload("dossier")
+        try:
+            seed_from_dossier(state, json.loads(last["content"]) if last else None)
+        except ValueError:
+            pass
     prev, runner.limit_usd = runner.limit_usd, config()["budget"]["weekly_research_usd"]
     try:
-        d = (ctx.services.get("research_run") or _run_research)(ctx.as_of, Judge(runner, run_id=ctx.run_id),
+        d = (ctx.services.get("research_run") or _run_research)(ctx.as_of, Judge(runner, run_id=ctx.run_id, state=state),
                                                                  manual["content"], fred)
     finally:
         runner.limit_usd = prev
@@ -283,10 +298,13 @@ def research(ctx: RunContext, _: str) -> dict:
              for s, i in d["ideas"].items()]
     sc = (d.get("sectors") or {}).get("scorecard") or {}
     growth = {e: dict(v["growth"], total=v.get("total"), bucket=v.get("bucket")) for e, v in sc.items() if v.get("growth")}
+    if J.get("incomplete"):                    # the partial report is up; the run is not done
+        raise ResearchIncomplete(f"agent budget cut the research: {', '.join(J['incomplete'])} missing; "
+                                 f"resume the run to finish them (report {rid})")
     return {"report_id": rid, "ideas": ideas, "watchlist_n": len(wl["entries"]), "sector_growth": growth,
             "rejected_on_list": [x["symbol"] for x in ideas if x["bucket"] == "reject" and x["symbol"] in on_list],
             "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {}),
-            "macro_auto": auto}
+            "continued": J.get("continued") or [], "macro_auto": auto}
 
 
 # ---------------------------------------------------------------- the message

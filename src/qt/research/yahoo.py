@@ -42,11 +42,18 @@ class Yahoo:
         self._crumb: str | None = None
         self._lock = threading.Lock()
 
+    CRUMB_WAITS = (15, 30, 60, 120, 240)          # 429 on the first request (24.10): Yahoo's limit passes in minutes
+
     def crumb(self) -> str:
         with self._lock:
-            if self._crumb is None:
+            for wait in (*self.CRUMB_WAITS, None):
+                if self._crumb is not None:
+                    break
                 self.s.get("https://fc.yahoo.com/", timeout=30)
                 r = self.s.get(f"{BASE}/v1/test/getcrumb", timeout=30)
+                if r.status_code in (429, 500, 502, 503) and wait is not None:
+                    time.sleep(wait)
+                    continue
                 r.raise_for_status()
                 self._crumb = r.text.strip()
             return self._crumb

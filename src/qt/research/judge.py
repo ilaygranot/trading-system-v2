@@ -315,13 +315,38 @@ def unexplained_greens(timing: list[dict], analysed, skipped: dict | None) -> li
             and not str(skipped.get(t["sym"]) or "").strip()]
 
 
+def _world_from(j: dict, t: dict) -> dict:
+    """What the article's card sees of the idea's other cards, rebuilt from a judgment saved without it (a report
+    from before qt.research.state)."""
+    return {"symbol": t["sym"], "direction": t["dir"], "etf": t["etf"], "traffic_light": t.get("combined"),
+            "write_in": LANGUAGE, "DC-10": {"option": j.get("story_type"), "reasoning": j.get("story")},
+            "DC-11": {"option": (j.get("premium") or {}).get("choice")},
+            "DC-12": {"thesis_breakers": j.get("breakers") or []}, "DC-13": {"option": j.get("heat")},
+            **({"DC-17": {"option": j["trigger"].get("choice"), "level": j["trigger"].get("level")}}
+               if j.get("trigger") else {})}
+
+
 class Judge:
     """Calls the cards for one research run and assembles the judgments dict."""
 
-    def __init__(self, runner, run_id: str | None = None, max_deep: int = MAX_DEEP, step: str = "research"):
-        self.runner, self.run_id, self.max_deep, self.step = runner, run_id, max_deep, step
+    def __init__(self, runner, run_id: str | None = None, max_deep: int = MAX_DEEP, step: str = "research",
+                 state=None):
+        """state: qt.research.state.State. What a run of the same week finished is taken from it and not asked
+        again; each piece is saved as it finishes."""
+        self.runner, self.run_id, self.max_deep, self.step, self.state = runner, run_id, max_deep, step, state
         self.log: list[dict] = []
         self.selection: dict[str, Any] = {}
+        self.reused: list[str] = []
+
+    def _saved(self, key: str) -> Any:
+        got = self.state.get(f"agents:{key}") if self.state is not None else None
+        if got is not None:
+            self.reused.append(key)
+        return got
+
+    def _save(self, key: str, value: Any) -> None:
+        if self.state is not None:
+            self.state.put(f"agents:{key}", value)
 
     def _decide(self, agent: str, card: str, fs: FactSheet, world: dict, subject: str) -> dict:
         r = self.runner.decide(agent, card, fs, world, run_id=self.run_id, step=self.step, subject=subject)
@@ -464,6 +489,10 @@ class Judge:
         """DC-25 after every other card of the idea: the ten questions in prose, each sentence checked by code
         (qt.research.article). A failure leaves the trade card without an article, never without the idea."""
         sym = d["sym"]
+        saved = self._saved(f"article:{sym}")
+        if saved:
+            j["article"] = saved["article"]
+            return
         try:
             fs = article_facts(d, macro, as_of, j, sectors)
             w = {k: v for k, v in world.items() if k not in ("DC-14",)} | {
@@ -476,6 +505,7 @@ class Judge:
                 return
             j["article"] = AR.build(o, fs, as_of)
             j["article"]["status"] = o.get("status")
+            self._save(f"article:{sym}", {"article": j["article"]})
         except Exception as e:                           # noqa: BLE001 - the budget or a bad answer: the card stands
             j["article_error"] = f"{type(e).__name__}: {e}"
 
@@ -583,14 +613,39 @@ class Judge:
         return j, d, world
 
     # ---------------------------------------------------------------- the run
+    def _picked(self, timing: list[dict], macro: dict, as_of: date) -> list[dict]:
+        """The DC-09 pick, or the one a run of the same week made (on the same traffic light)."""
+        sel = self._saved("A3")
+        if sel:
+            by = {t["sym"]: t for t in candidates(timing)}
+            self.selection = {**sel, "skipped": dict(sel.get("skipped") or {})}
+            return [by[s] for s in sel.get("picked") or [] if s in by]
+        picked = self.pick(timing, macro, as_of)
+        self._save("A3", self.selection)
+        return picked
+
+    def _idea(self, t: dict, deep_dive: DeepDive, macro: dict, as_of: date) -> tuple[dict, dict, dict]:
+        saved = self._saved(f"idea:{t['sym']}")
+        if saved:
+            j = {k: v for k, v in saved["j"].items() if k not in ("article", "article_error")}
+            d = deep_dive(t["sym"], t["etf"], t["dir"], dict(j, options=False))      # the facts for the article
+            return j, d, saved.get("world") or _world_from(j, t)
+        j, d, world = self._cards(t, deep_dive, macro, as_of)
+        self._save(f"idea:{t['sym']}", {"j": j, "world": world})
+        return j, d, world
+
     def __call__(self, stages: dict, deep_dive: DeepDive) -> dict:
         as_of, macro = stages["as_of"], stages["macro"]
-        J: dict[str, Any] = {"judged_by": JUDGED_BY, "A1": self.macro(macro, as_of), "ideas": {}}
-        picked = self.pick(stages["timing"], macro, as_of)
+        a1 = self._saved("A1")
+        if not a1:
+            a1 = self.macro(macro, as_of)
+            self._save("A1", a1)
+        J: dict[str, Any] = {"judged_by": JUDGED_BY, "A1": a1, "ideas": {}}
+        picked = self._picked(stages["timing"], macro, as_of)
         done: list[tuple[dict, dict, dict]] = []
         for n, t in enumerate(picked):
             try:
-                j, d, world = self._cards(t, deep_dive, macro, as_of)
+                j, d, world = self._idea(t, deep_dive, macro, as_of)
                 J["ideas"][t["sym"]] = j
                 done.append((j, d, world))
             except Exception as e:                       # noqa: BLE001 - one idea's failure (budget, data) is reported
@@ -605,6 +660,13 @@ class Judge:
             self.article(j, d, macro, as_of, world, stages.get("sectors"))
         J["A3"] = self.selection
         J["agent_log"] = self.log
+        if self.reused:
+            J["continued"] = self.reused                          # taken from a run of the same week
+        cut = [s for s, e in (J.get("errors") or {}).items() if e.startswith("BudgetExceeded")]
+        cut += self.selection.get("cut_by_budget") or []
+        cut += [f"{s}:article" for s, j in J["ideas"].items() if "BudgetExceeded" in (j.get("article_error") or "")]
+        if cut:
+            J["incomplete"] = cut                                 # the weekly step fails, a resume asks for these
         hot_max = load_policy().watchlist.hot_max                   # S07-R35: 3-4 hot per cycle, a flag
         if sum(j.get("heat") == "hot" for j in J["ideas"].values()) > hot_max:
             J.setdefault("warnings", []).append(f"hot_above_{hot_max}")

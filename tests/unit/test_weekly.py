@@ -272,3 +272,35 @@ def test_hindsight_says_when_not_entering_was_wrong_or_right():
     assert W.hindsight(_entry(bucket="enter", price_at_add=100.0, risk_pct_at_add=5.0), 130.0) is None
     s = _entry(direction="short", bucket="watch", price_at_add=100.0, risk_pct_at_add=5.0)
     assert W.hindsight(s, 84.0) == "missed" and W.hindsight(s, 106.0) == "saved"
+
+
+def test_a_research_cut_by_the_budget_fails_the_run_after_the_partial_report(db):
+    """Ilay 24.10: a run the budget cut is not done. The partial report is up, the run fails (the bot offers the
+    resume), and the resume asks the agents only for what is missing (test_research_state)."""
+    import copy
+    import json as _json
+    from pathlib import Path
+
+    from qt.agents import AgentRunner
+    from qt.approvals import Queue
+    from test_judge import CardClient
+
+    fix = _json.loads((Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8"))
+    seen = []
+
+    def cut(as_of, judge, manual_text, fred):
+        seen.append(judge.state.as_of)
+        d = copy.deepcopy(fix)
+        d["judgments"]["incomplete"] = ["EOG", "SHEL:article"]
+        return d
+    Queue(db).upload("manual_macro", "ism.yaml", "ism_pmi: {'2026-09': 49}\n")
+    svc = {**_svc(Bot(), None), "agents": AgentRunner(db, CardClient()), "fred": object(), "research_run": cut}
+    r = Runner(db, PIPELINES, svc)
+    try:
+        r.start("weekly", AS_OF)
+        raise AssertionError("expected the run to fail")
+    except Exception as e:
+        assert "EOG, SHEL:article missing" in str(e)
+    run = db.one("SELECT * FROM runs WHERE kind = 'weekly'")
+    assert run["status"] == "failed" and seen == [AS_OF.isoformat()]
+    assert Queue(db).latest_upload("report") and Queue(db).latest_upload("dossier")     # the partial report is up
