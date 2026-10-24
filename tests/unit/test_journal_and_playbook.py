@@ -1,6 +1,7 @@
 from datetime import date
 
 import pytest
+from pathlib import Path
 
 from qt.calc.portfolio import Portfolio
 from qt.data.zacks import parse
@@ -55,3 +56,14 @@ def test_zacks_import_maps_known_columns_and_reports_the_rest():
     assert imp.rows[0]["ticker"] == "BA" and imp.rows[0]["eps_f2"] == 3.76
     assert imp.rows[0]["market_cap_mil"] == 120000
     assert "Weird Col" in imp.unmapped_headers
+
+
+def test_playbook_found_from_a_regular_install(tmp_path, monkeypatch):
+    """Render installs with `pip install .`: the package is in site-packages and the snapshot is in the checkout."""
+    import pytest
+    from qt import playbook as P
+    monkeypatch.setattr(P, "__file__", str(tmp_path / "site" / "qt" / "playbook.py"))
+    monkeypatch.chdir(Path(__file__).resolve().parents[2])
+    assert P._default_tiers_dir() == Path.cwd() / "playbook_snapshot"
+    with pytest.raises(FileNotFoundError):
+        P.load_playbook(str(tmp_path))                           # no snapshot: loud, never an empty rule set
