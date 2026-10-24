@@ -34,6 +34,7 @@ from qt.policy import load_policy
 from qt.research import article as AR
 from qt.research import catalyst_chain as CC
 from qt.research import earnings_call as EC
+from qt.research import macro_story as MS
 
 MIN_DEEP, MAX_DEEP = 8, 12     # DC-09: up to 12 green and orange stocks all pass; above, the agent ranks and 8 to 12
                                 # go on (Ilay 22.10, to start; the card had 8-15 per direction; not from course)
@@ -634,12 +635,31 @@ class Judge:
         self._save(f"idea:{t['sym']}", {"j": j, "world": world})
         return j, d, world
 
+    def narrative(self, macro: dict, as_of: date, news: dict | None, a1: dict) -> dict:
+        """DC-27: the market story, the Fed and the events, each sentence checked against its facts
+        (qt.research.macro_story). A failure is the narrative's error, and the run is incomplete without it."""
+        fs, by_id = MS.story_sheet(macro_facts(macro, as_of), as_of, news, MS.moves(macro.get("charts") or {}), a1)
+        try:
+            o = self._decide("A1", "DC-27", fs, MS.world(a1), "macro")
+        except Exception as e:                           # noqa: BLE001 - budget or a bad answer: listed, run again
+            return {"error": f"{type(e).__name__}: {e}"}
+        if o.get("option") != "story":
+            return {"error": f"DC-27: {o.get('status')} ({o.get('reasoning', '')})"}
+        return MS.verify(o, fs, by_id) | {"status": o.get("status")}
+
     def __call__(self, stages: dict, deep_dive: DeepDive) -> dict:
         as_of, macro = stages["as_of"], stages["macro"]
         a1 = self._saved("A1")
         if not a1:
             a1 = self.macro(macro, as_of)
             self._save("A1", a1)
+        story = self._saved("A1.narrative")
+        if not story:
+            story = self.narrative(macro, as_of, stages.get("macro_news"), a1)
+            if MS.complete(story):
+                self._save("A1.narrative", story)
+        a1 = {**a1, **{k: story[k] for k in ("story", "fed", "events") if story.get(k)},
+              "narrative": {k: story.get(k) for k in ("status", "stats", "dropped", "error") if story.get(k) is not None}}
         J: dict[str, Any] = {"judged_by": JUDGED_BY, "A1": a1, "ideas": {}}
         picked = self._picked(stages["timing"], macro, as_of)
         done: list[tuple[dict, dict, dict]] = []
@@ -665,6 +685,8 @@ class Judge:
         # Ilay 24.10: a report with picked stocks unanalysed or without their article is not a finished report
         cut = list(J.get("errors") or {}) + [s for s in self.selection.get("cut_by_budget") or [] if s not in (J.get("errors") or {})]
         cut += [f"{s}:article" for s, j in J["ideas"].items() if not j.get("article")]
+        if not MS.complete(story):
+            cut.insert(0, "A1:narrative")
         if cut:
             J["incomplete"] = cut                                 # the weekly step fails, a resume asks for these
         hot_max = load_policy().watchlist.hot_max                   # S07-R35: 3-4 hot per cycle, a flag

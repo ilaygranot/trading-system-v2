@@ -417,7 +417,13 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     def peers(sym: str, etf: str) -> list[dict]:
         return peers_for(u, screens, sym, etf, on_list, as_of)
     if judge is not None:
-        stages = dict(as_of=as_of, macro=macro, sectors=sectors, screens=screens, timing=timing)
+        from qt.research import macro_story as MS
+        news = state.get("stage:macro_news.json") if state is not None else None
+        if not news:                                   # kept only when it holds headlines: an empty fetch is retried
+            news = MS.fetch_news(as_of)
+            if state is not None and news["items"]:
+                state.put("stage:macro_news.json", news)
+        stages = dict(as_of=as_of, macro=macro, sectors=sectors, screens=screens, timing=timing, macro_news=news)
         J = _cached(work / "judgments.json", lambda: judge(stages, lambda sym, etf, dr, j: deep_dive(
             y, u, screens, sym, etf, dr, j, bias, buckets, as_of, docs=docs, peers=peers)))
         if J.get("incomplete"):                         # cut by the budget: the next run asks for what is missing
