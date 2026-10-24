@@ -1,9 +1,9 @@
 """What a weekly research has finished, in the database, so a run that stops (the agents' budget, a crash, a new
 container) continues where it stopped instead of starting again (Ilay 24.10: "חיוני הכל מחדש?").
 
-Keyed by the week (as_of), not the run: a new run for the same week continues too. The stages (the universe, the
-screens, the traffic light) and each agent piece (A1, the DC-09 pick, each idea's cards, each article) are saved as
-they finish. QT_RESEARCH_FRESH=1 starts the week from nothing.
+Keyed by the week (as_of), not the run: a new run for the same week continues too. The stages (the screens, the
+traffic light; not the universe, too big for one row) and each agent piece (A1, the DC-09 pick, each idea's cards,
+each article) are saved as they finish. QT_RESEARCH_FRESH=1 starts the week from nothing.
 """
 from __future__ import annotations
 
