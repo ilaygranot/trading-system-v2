@@ -194,3 +194,27 @@ def test_weekly_research_no_longer_waits_for_the_manual_file(db, monkeypatch):
     import yaml
     up = yaml.safe_load(Queue(db).latest_upload("manual_macro")["content"])
     assert max(str(k) for k in up["ism_pmi"]) >= "2026-09"
+
+
+def test_http_asks_again_after_a_503(monkeypatch):
+    """Google News answered 503 to the dry run of 24.10; a busy server is asked again, a 404 is not."""
+    from qt.data import macro_auto as MA
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    h = MA.Http()
+    seq = iter([503, 503, 200])
+    calls = []
+
+    class R:
+        def __init__(self, code):
+            self.status_code, self.content = code, b"ok"
+
+    def get(url, timeout):
+        calls.append(url)
+        return R(next(seq))
+    monkeypatch.setattr(h.s, "get", get)
+    assert h.text("u") == "ok" and len(calls) == 3
+    seq, calls[:] = iter([404]), []
+    import pytest
+    with pytest.raises(RuntimeError, match="HTTP 404"):
+        h.text("u")
+    assert len(calls) == 1

@@ -343,7 +343,9 @@ def risk_extract(html: str, form: str) -> dict:
 # ---- the business section (S07-R2, S07-R3 questions 3-4, S07-R27): what the company does, its segments, its
 # competition and the metrics it reports itself. Paragraphs are kept verbatim, so a quote can be checked against them.
 
-_BIZ_10K_START = re.compile(r"^\s*item\s*1\s*[.:\-–—]?\s*business\.?\s*$", re.IGNORECASE | re.MULTILINE)
+# "Items 1 and 2. Business and Properties": oil and gas filers put the two together (Talos, 24.10)
+_BIZ_10K_START = re.compile(r"^\s*items?\s*1(?:\s*(?:and|&|,)\s*2)?\s*[.:\-–—]?\s*business(?:\s*(?:and|&)\s*properties)?\.?\s*$",
+                            re.IGNORECASE | re.MULTILINE)
 _BIZ_10K_END = re.compile(r"^\s*item\s*1a\s*[.:\-–—]?\s*risk\s+factors\.?\s*$", re.IGNORECASE | re.MULTILINE)
 _BIZ_20F_START = re.compile(r"^\s*(?:item\s*4\.?\s*)?B\.\s*business\s+overview\.?\s*$", re.IGNORECASE | re.MULTILINE)
 _BIZ_20F_END = re.compile(r"^\s*(?:item\s*4\.?\s*)?C\.\s*organi[sz]ational\s+structure\.?\s*$", re.IGNORECASE | re.MULTILINE)

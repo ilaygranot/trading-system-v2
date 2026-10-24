@@ -413,12 +413,13 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
 
     def peers(sym: str, etf: str) -> list[dict]:
         return peers_for(u, screens, sym, etf, on_list, as_of)
+    news = None
     if judge is not None:
         from qt.research import macro_story as MS
         news = state.get("stage:macro_news.json") if state is not None else None
-        if not news:                                   # kept only when it holds headlines: an empty fetch is retried
+        if not news:                                   # kept only when whole: an empty or partial fetch is retried
             news = MS.fetch_news(as_of)
-            if state is not None and news["items"]:
+            if state is not None and news["items"] and not news["errors"]:
                 state.put("stage:macro_news.json", news)
         stages = dict(as_of=as_of, macro=macro, sectors=sectors, screens=screens, timing=timing, macro_news=news)
         J = _cached(work / "judgments.json", lambda: judge(stages, lambda sym, etf, dr, j: deep_dive(
@@ -461,6 +462,7 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
                   judged_by=J.get("judged_by", "missing"), breadth_pct=breadth, events=run_events,
                   universe={"n": len(u["quotes"]), "errors": {s: x["error"] for s, x in u["summaries"].items()
                                                               if isinstance(x, dict) and "error" in x}},
+                  news=None if news is None else {"n": len(news["items"]), "errors": news["errors"]},
                   documents={"fetched": len(docs_memo),
                              "with_errors": sorted(s for s, x in docs_memo.items() if x.get("errors"))}),
         macro=macro, sectors=sectors, screens=screens, timing=timing, ideas=ideas, funnel=funnel, portfolio=fit,

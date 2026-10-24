@@ -227,11 +227,17 @@ class Http:
                                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"})
         self.timeout = timeout
 
-    def bytes(self, url: str) -> bytes:
-        r = self.s.get(url, timeout=self.timeout)
-        if r.status_code != 200:
-            raise RuntimeError(f"HTTP {r.status_code}")
-        return r.content
+    def bytes(self, url: str, retries: int = 3) -> bytes:
+        """A 429 or 5xx is asked again after 2, 4 s (Google News answered 503 to the dry run of 24.10)."""
+        import time
+        for attempt in range(retries):
+            r = self.s.get(url, timeout=self.timeout)
+            if r.status_code == 200:
+                return r.content
+            if r.status_code != 429 and r.status_code < 500 or attempt == retries - 1:
+                break
+            time.sleep(2 ** (attempt + 1))
+        raise RuntimeError(f"HTTP {r.status_code}")
 
     def text(self, url: str) -> str:
         return self.bytes(url).decode("utf-8", errors="replace")

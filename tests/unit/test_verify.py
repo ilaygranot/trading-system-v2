@@ -151,3 +151,23 @@ def test_report_shows_verification():
                          "fetched_pages": False}
     html = report.render(d)
     assert 'id="verify"' in html and "לטיפול (1)" in html and "נתונים בעייתי" in html
+
+
+def test_nasdaq_second_close(monkeypatch):
+    """nasdaq.com answers every US listing without a key (FMP's free plan: HTTP 402 for TALO, 24.10)."""
+    from datetime import date
+    from qt.data import providers as P
+    seen = {}
+
+    def fake(url, store=None, headers=None, **k):
+        seen["url"] = url
+        return {"data": {"tradesTable": {"rows": [{"date": "10/23/2026", "close": "$1,018.39"},
+                                                  {"date": "10/22/2026", "close": "$17.66"}]}}}
+    monkeypatch.setattr(P, "get_json", fake)
+    closes, src = P.Nasdaq().daily_closes("PBR-A", date(2026, 10, 16), date(2026, 10, 23))
+    assert closes == {"2026-10-23": 1018.39, "2026-10-22": 17.66} and src == "nasdaq:quote/historical"
+    assert "/quote/PBR.A/historical" in seen["url"]
+    monkeypatch.setattr(P, "get_json", lambda *a, **k: {"data": None})
+    import pytest
+    with pytest.raises(P.ProviderError):
+        P.Nasdaq().daily_closes("XXX", date(2026, 10, 16), date(2026, 10, 23))

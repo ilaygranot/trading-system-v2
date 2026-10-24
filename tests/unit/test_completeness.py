@@ -121,8 +121,9 @@ def test_stocks_that_fell_out_on_a_failed_request_block():
     d["timing"].append({"sym": "CCC", "etf": "XLE", "error": "RuntimeError: yahoo chart: HTTP 429"})
     d["timing"].append({"sym": "DDD", "etf": "XLE", "error": "only 120 daily bars"})       # a rule, not a failure
     d["screens"]["XLE"]["dc08"] = {"EEE": {"option": "watch_only", "status": "error", "reason": "RuntimeError"}}
+    d["meta"]["news"] = {"n": 40, "errors": {"FOMC minutes": "RuntimeError: HTTP 503"}}
     c = C.check(d)
-    assert {"universe", "timing", "dc08_error"} <= codes(c)
+    assert {"universe", "timing", "dc08_error", "news"} <= codes(c)
     u = next(x for x in c["blocks"] if x["code"] == "universe")
     assert "1 מניות" in u["text"] and "AAA" in u["text"] and "BBB" not in u["text"]
     t = next(x for x in c["blocks"] if x["code"] == "timing")

@@ -195,6 +195,15 @@ def fmp() -> str:
     return f"SPY עד {bars[-1].day}"
 
 
+def second_price() -> str:
+    """The data check's second close for a small company (FMP's free plan answers only the largest; 24.10)."""
+    from qt.research import verify
+    from qt.schedule import previous_trading_day
+    day = previous_trading_day(date.today())
+    close, src = verify.default_sources(None)["second_close"]("EGY", day)
+    return f"EGY {day}: {close} ({src})"
+
+
 def news() -> str:
     """A1's market story (DC-27): every Google News query and the Fed's press feed answer, with headlines."""
     from qt.research import macro_story as MS
@@ -245,7 +254,7 @@ def cost_estimate() -> str:
 OFFLINE: list[tuple[str, Callable[[], str]]] = [("Playbook", playbook), ("כרטיסים", cards), ("policy", policy)]
 LIVE: list[tuple[str, Callable[[], str]]] = [("מפתחות", keys), ("מסד נתונים", database), ("Claude", claude),
                                              ("Yahoo", yahoo), ("FRED", fred), ("SEC", sec), ("roic.ai", roic),
-                                             ("FMP", fmp), ("חדשות", news), ("מקרו חודשי", macro_sources), ("עלות צפויה", cost_estimate)]
+                                             ("FMP", fmp), ("מחיר שני", second_price), ("חדשות", news), ("מקרו חודשי", macro_sources), ("עלות צפויה", cost_estimate)]
 
 
 def run(offline: bool = False) -> list[Result]:

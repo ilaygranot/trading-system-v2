@@ -124,7 +124,8 @@ def text(res: dict[str, Any]) -> str:
     out.append("בדיקת מוכנות: " + ("הכל תקין" if not bad else "; ".join(f"✗ {p.name}: {p.detail}" for p in bad)))
     for s in res["steps"]:
         mark = "✓" if s["status"] == "done" else "✗"
-        out.append(f"{mark} {s['step']}" + (f": {str(s['error'])[:300]}" if s["status"] != "done" and s["error"] else ""))
+        err = str(s["error"] or "").splitlines()[0][:300] if s["status"] != "done" else ""   # the details follow once
+        out.append(f"{mark} {s['step']}" + (f": {err}" if err else ""))
     if res["error"] and not any(s["status"] == "failed" for s in res["steps"]):
         out.append(f"✗ {res['error'][:300]}")
     if res["completeness"]:
