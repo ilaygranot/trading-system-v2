@@ -53,6 +53,20 @@ def _cached(path: Path, fn, binary: bool = False):
     return out
 
 
+def _stage(work: Path, state, name: str, fn, binary: bool = False):
+    """_cached, and with a state (qt.research.state) the stage is kept in the database too: a run in a new
+    container takes it from there instead of asking Yahoo again."""
+    if state is None:
+        return _cached(work / name, fn, binary)
+    key = f"stage:{name}"
+    got = (state.get_blob if binary else state.get)(key)
+    if got is not None:
+        return _cached(work / name, lambda: got, binary)
+    out = _cached(work / name, fn, binary)
+    (state.put_blob if binary else state.put)(key, out)
+    return out
+
+
 def _rows_by_etf(u: dict) -> dict[str, list]:
     out: dict[str, list] = {}
     for sym, q in u["quotes"].items():
@@ -343,13 +357,18 @@ def _watchlist_symbols(watchlist: dict | None) -> set[str]:
 
 
 def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None, cache: Path, fred,
-        judge=None, manual_text: str | None = None, sec=None, watchlist: dict | None = None, calls=None) -> dict[str, Any]:
+        judge=None, manual_text: str | None = None, sec=None, watchlist: dict | None = None, calls=None,
+        state=None) -> dict[str, Any]:
     """judgments_path: a hand-written judgments file. judge: the agents instead (qt.research.judge.Judge); their
     answers are saved under work/ like every other stage, so a resumed run does not ask again. sec: the SEC filings
     source (default qt.data.filings.SECFilings on SEC_CONTACT); calls: the earnings-call transcripts (default
     qt.data.transcripts.RoicTranscripts on ROIC_API_KEY); watchlist: the current watchlist file (else
-    QT_WATCHLIST) for the peers' on_list."""
+    QT_WATCHLIST) for the peers' on_list. state: qt.research.state.State, the stages kept in the database as well,
+    so a run in a new container continues from them."""
     y = Yahoo(cache)
+
+    def cached(name: str, fn, binary: bool = False):
+        return _stage(work, state, name, fn, binary)
     run_events: list[dict] = []
     if sec is None:
         from qt.data.filings import SECFilings
@@ -368,21 +387,21 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     docs_memo: dict[str, dict] = {}
     docs = documents_source(sec, as_of, docs_memo, calls)
     on_wl = _watchlist_symbols(watchlist)
-    u = _cached(work / "universe.pkl", lambda: U.fetch(y), binary=True)
+    u = cached("universe.pkl", lambda: U.fetch(y), binary=True)
     breadth = U.breadth_pct(u["quotes"])
     spx = y.bars("^GSPC", as_of - timedelta(days=3650), as_of)
-    macro = _cached(work / "macro.json", lambda: macro_stage.run(
+    macro = cached("macro.json", lambda: macro_stage.run(
         fred, manual_text if manual_text is not None else manual_path.read_text(), spx, as_of, breadth))
     st = macro["stage2"]["stance"]
     sc = {x["name"]: x for x in macro["stage2"]["scores"]}
     phase, phase_flags = cycle_phase(sc["ism_pmi"]["cycle_quadrant"], (sc.get("permits") or {}).get("cycle_quadrant"))
     rows = _rows_by_etf(u)
-    sectors = _cached(work / "sectors.json", lambda: sector_screen.run(y, rows, phase, phase_flags, st["zone"], as_of))
-    screens = _cached(work / "screens.json", lambda: sector_screen.screens(rows, sectors["long"], sectors["short"]))
+    sectors = cached("sectors.json", lambda: sector_screen.run(y, rows, phase, phase_flags, st["zone"], as_of))
+    screens = cached("screens.json", lambda: sector_screen.screens(rows, sectors["long"], sectors["short"]))
     if judge is not None and hasattr(judge, "rescue"):            # DC-08 before the traffic light: rescued ideas get one
-        screens = _cached(work / "screens_dc08.json", lambda: judge.rescue(screens, macro, sectors, as_of,
+        screens = cached("screens_dc08.json", lambda: judge.rescue(screens, macro, sectors, as_of,
                                                                            lambda s: price_moves(y, s, as_of)))
-    timing = _cached(work / "timing.json", lambda: stage_timing(y, screens, as_of))
+    timing = cached("timing.json", lambda: stage_timing(y, screens, as_of))
 
     bias = st.get("bias") or "neutral"
     buckets = {e: ("long" if e in sectors["long"] else "short" if e in sectors["short"] else "neutral")
@@ -401,6 +420,8 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
         stages = dict(as_of=as_of, macro=macro, sectors=sectors, screens=screens, timing=timing)
         J = _cached(work / "judgments.json", lambda: judge(stages, lambda sym, etf, dr, j: deep_dive(
             y, u, screens, sym, etf, dr, j, bias, buckets, as_of, docs=docs, peers=peers)))
+        if J.get("incomplete"):                         # cut by the budget: the next run asks for what is missing
+            (work / "judgments.json").unlink(missing_ok=True)
     else:
         J = hand
     strip_turns(docs_memo)
@@ -440,6 +461,6 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
         macro=macro, sectors=sectors, screens=screens, timing=timing, ideas=ideas, funnel=funnel, portfolio=fit,
         judgments={k: v for k, v in J.items() if k != "ideas"})
     from qt.data.store import Store
-    d["verification"] = _cached(work / "verify.json",
-                                lambda: verify.run(d, **verify.default_sources(Store(str(work / "verify.sqlite")))))
+    check = lambda: verify.run(d, **verify.default_sources(Store(str(work / "verify.sqlite"))))  # noqa: E731
+    d["verification"] = check() if J.get("incomplete") else cached("verify.json", check)   # cut: the ideas will change
     return d
