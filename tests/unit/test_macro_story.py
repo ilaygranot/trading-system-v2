@@ -122,3 +122,18 @@ def test_a_run_without_the_story_is_not_finished_and_the_resume_asks_again(db):
     d = {**FIX, "judgments": {**FIX["judgments"], "A1": J["A1"], "carried": {}}}
     html = report._macro(d)
     assert "מה קורה, במילים פשוטות" in html and "הפד מקל." in html and "השוק בשיא" in html and "מהמחקר של" not in html
+
+
+def test_an_empty_answer_is_asked_of_bing_and_listed_when_both_are_empty():
+    """A consent page or an empty feed is HTTP 200 with no headline: not an answer."""
+    empty = "<rss><channel></channel></rss>"
+
+    def get(url):
+        if "FOMC" in url:
+            return BING if "bing.com" in url else empty
+        if "Treasury" in url:
+            return empty
+        return RSS
+    n = MS.fetch_news(date(2026, 10, 23), get)
+    assert [x["publisher"] for x in n["items"] if x["query"] == "FOMC minutes"] == ["MSN"]
+    assert n["errors"] == {"Treasury yields": "google: no headlines in the window; bing: no headlines in the window"}

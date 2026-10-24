@@ -81,14 +81,20 @@ def fetch_news(as_of: date, get: Callable[[str], str] | None = None) -> dict:
     items, errors = [], {}
     for q in QUERIES:
         url = GNEWS.format(q=quote_plus(f"{q} after:{after.isoformat()} before:{before.isoformat()}"))
-        try:
-            got = parse_rss(get(url), "Google News")
-        except Exception as e:                       # noqa: BLE001 - Bing stands in; both failing is listed
-            try:
-                got = parse_rss(get(BING.format(q=quote_plus(q))), "Bing News")
-            except Exception as e2:                  # noqa: BLE001 - one query's failure is listed, the rest stand
-                errors[q] = f"google: {type(e).__name__}: {e}; bing: {type(e2).__name__}: {e2}"
-                continue
+        tried = []
+        got = []
+        for name, u in (("google", url), ("bing", BING.format(q=quote_plus(q)))):
+            try:                                     # an empty answer (a consent page) is a failure too
+                got = [x for x in parse_rss(get(u), f"{name.title()} News")
+                       if after.isoformat() <= x["date"] <= as_of.isoformat()]
+                if got:
+                    break
+                tried.append(f"{name}: no headlines in the window")
+            except Exception as e:                   # noqa: BLE001 - Bing stands in; both failing is listed
+                tried.append(f"{name}: {type(e).__name__}: {e}")
+        if not got:
+            errors[q] = "; ".join(tried)
+            continue
         items += [dict(x, query=q) for x in got if after.isoformat() <= x["date"] <= as_of.isoformat()][:PER_QUERY]
     try:
         items += [dict(x, query="fed_press", publisher="Federal Reserve") for x in parse_rss(get(FED_RSS), "Federal Reserve")
