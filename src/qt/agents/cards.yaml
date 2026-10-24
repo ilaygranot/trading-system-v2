@@ -11,6 +11,7 @@ DC-02: {agent: A1, options: [growth+_inflation+, growth+_inflation-, growth-_inf
         approval: required, extra: {in_six_months: {enum: [growth+_inflation+, growth+_inflation-, growth-_inflation-, growth-_inflation+]}}}
 DC-03: {agent: A1, options: [aligned, correction_in_trend, narrow_rotation, market_against_forecast], undecided: by_direction, approval: flag}
 DC-04: {agent: A1, options: [low, medium, high], undecided: low, approval: flag}
+DC-27: {agent: A1, options: [story], undecided: no_story, approval: journal, extra_from: qt.research.macro_story}
 DC-05: {agent: A2, options: ["0", "3", "6", "9"], undecided: code_default, approval: flag}
 DC-06: {agent: A2, options: [sector_tag, override_defensive, override_cyclical], undecided: sector_tag, approval: flag}
 DC-07: {agent: A2, options: [priority, cyclical_hedge, avoid, no_tag], undecided: no_tag, approval: journal}

@@ -41,6 +41,13 @@ DEFAULTS = {
     "DC-17": _answer("DC-17", "level_break", level=106.7, return_condition="סגירה מעל 106.7"),
     "DC-19": _answer("DC-19", "k_mid"),
     "DC-20": _answer("DC-20", "2", first_size_pct=3, add_conditions=["סגירה מעל 110"]),
+    "DC-27": _answer("DC-27", "story",
+                     story=[{"sentences": [{"text": "הכלכלה צומחת והשוק עולה.", "fact_ids": ["F-001"], "quotes": []}]},
+                            {"sentences": [{"text": "המקרו חם, ולכן מעדיפים מחזוריות.", "fact_ids": ["F-001"], "quotes": []}]}],
+                     fed={"headline": {"text": "הפד מקל.", "fact_ids": ["F-001"], "quotes": []}, "paragraphs": [],
+                          "next": {"text": "ההחלטה הבאה בהמשך החודש.", "fact_ids": ["F-001"], "quotes": []}},
+                     events=[{"date": "2026-10", "title": "השוק בשיא", "charts": ["spx"],
+                              "sentences": [{"text": "השוק עלה לשיא.", "fact_ids": ["F-001"], "quotes": []}]}]),
     "DC-25": _answer("DC-25", "article",
                      headline={"text": "כותרת", "fact_ids": ["F-001"], "quotes": []},
                      dek={"text": "תת-כותרת", "fact_ids": ["F-001"], "quotes": []},
@@ -180,7 +187,7 @@ def test_full_judgment_and_budget_stop(db):
     assert set(J["ideas"]) == {"S0", "S1"} and J["judged_by"].startswith("Agents")
     assert [x["card"] for x in J["agent_log"]][-2:] == ["DC-25", "DC-25"]        # the articles after both ideas' cards
     assert all(j["article"]["status"] == "decided" for j in J["ideas"].values())
-    assert len(J["agent_log"]) == 4 + 2 * (8 + _n_events()) and all(x["status"] == "decided" for x in J["agent_log"])
+    assert len(J["agent_log"]) == 5 + 2 * (8 + _n_events()) and all(x["status"] == "decided" for x in J["agent_log"])
     assert "warnings" not in J
 
     class Broke(AgentRunner):
