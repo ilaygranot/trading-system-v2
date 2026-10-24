@@ -6,7 +6,7 @@ from qt.agents import AgentRunner, load_cards
 from qt.agents.blind import blind, leaks
 from qt.agents.context import playbook_pack
 from qt.agents.eval import evaluate, fact_sheet, load_suite, render, score, summary, CaseResult
-from tests.unit.test_agents import FakeClient, PASS
+from test_agents import FakeClient, PASS
 
 SUITE = load_suite()
 
