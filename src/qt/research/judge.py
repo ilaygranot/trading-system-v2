@@ -6,6 +6,9 @@ change. Order:
   A1  DC-01..DC-04 on the macro stance (grey band, compass, macro vs market, confidence).
   A4  first, per idea with a transcript: DC-26, the course's twelve questions to the last earnings call (roic.ai);
       code keeps only the excerpts found word for word in the call, and they join every later card's sheet.
+  A3  first, after the screen: DC-08 on each stock that failed a default rule while a pattern in code applies
+      (qt.screening.PATTERNS; at most MAX_RESCUE): no / long / short / watch_only. long and short join the screen
+      as a flagged deviation; the screen's short_gate_override rows (S06-J6) are asked too, and leave it on no.
   A3  DC-09 ranks the green and orange stocks when there are more than the deep-dive cap (12); otherwise all pass.
       Red never passes; green always does unless skipped with a reason. J["A3"] keeps who was skipped and why.
   A4  per idea: DC-10 story, DC-11 premium and target method, DC-12 thesis breakers, DC-13 watchlist and heat.
@@ -34,11 +37,13 @@ from qt.research import earnings_call as EC
 
 MIN_DEEP, MAX_DEEP = 8, 12     # DC-09: up to 12 green and orange stocks all pass; above, the agent ranks and 8 to 12
                                 # go on (Ilay 22.10, to start; the card had 8-15 per direction; not from course)
+MAX_RESCUE = 6                 # DC-08 calls per research run (not from course: cost)
+RESCUE_ROW = ("f0", "f1", "f2", "eg1", "eg2", "sg1", "pe1", "ps1", "market_cap", "price", "industry", "short_float")
 K_OPTIONS = {"k_min": 3.0, "k_mid": 4.0, "k_max": 5.0}       # DC-19: 3 (20.10), default 4, 5 inferred from 102
 TARGET_SOURCE = {"hist_3y": "own_multiple_target", "sector": "own_multiple_target", "other": None}
 SRC = "code:research"
 LANGUAGE = "Hebrew for every text field (reasoning, breakers, tldr); codes, ids and tickers as they are"
-JUDGED_BY = "Agents A1, A3, A4, A5, A6 with the Critic (cards DC-01..04, 09..14, 17, 19, 20, 25, 26)"
+JUDGED_BY = "Agents A1, A3, A4, A5, A6 with the Critic (cards DC-01..04, 08..14, 17, 19, 20, 25, 26)"
 
 DeepDive = Callable[[str, str, str, dict], dict]               # (sym, etf, direction, judgment) -> idea
 
@@ -340,6 +345,52 @@ class Judge:
         return out
 
     # ---------------------------------------------------------------- A3
+    def rescue(self, screens: dict, macro: dict, sectors: dict, as_of: date, moves: Callable[[str], dict]) -> dict:
+        """DC-08 on the screen's rescue rows and short_gate_override rows; returns the screens with the agent's
+        long and short added (tag dc08, the deviation in conflicts), the override rows it turned down removed, and
+        every answer under screens[etf]["dc08"]. moves(sym): the price change over 3, 6 and 12 months."""
+        from qt.screening import PATTERNS
+        out = {e: {**s, "long": list(s["long"]), "short": list(s["short"]), "dc08": {}} for e, s in screens.items()}
+        asks = [(e, r, False) for e, s in screens.items() for r in s.get("rescue") or []]
+        asks += [(e, c, True) for e, s in screens.items() for c in s["short"] if "short_gate_override" in c["tags"]]
+        asks.sort(key=lambda a: (-len(a[1].get("patterns") or ["near_zero_jump"]), -(a[1].get("market_cap") or 0)))
+        stance = macro["stage2"]["stance"]
+        for n, (e, r, override) in enumerate(asks):
+            sym = r["ticker"]
+            if n >= MAX_RESCUE:
+                out[e]["dc08"][sym] = {"option": None, "reason": f"לא נשאל: תקרה של {MAX_RESCUE} בריצה"}
+                continue
+            failed = ["S06-R34"] if override else r["failed"]
+            patterns = ["near_zero_jump"] if override else r["patterns"]
+            avg = screens[e]["averages"]
+            fs = FactSheet()
+            add_facts(fs, sym, {k: r.get(k) for k in RESCUE_ROW}, as_of, depth=1)
+            add_facts(fs, f"{e}.group_avg", {k: avg.get(k) for k in ("eg1", "eg2", "sg1", "sg1_threshold", "pe")}, as_of, depth=1)
+            fs.add(f"{sym}.failed_rules", failed, "code:screening", as_of)
+            fs.add(f"{sym}.patterns", [f"{p} ({PATTERNS[p]})" for p in patterns], "code:screening", as_of)
+            add_facts(fs, f"{sym}.move_pct", moves(sym), as_of, "code:yahoo", depth=1)
+            add_facts(fs, "macro.stance", {k: stance.get(k) for k in ("zone", "bias")}, as_of, depth=1)
+            fs.add(f"{e}.bucket", "long" if e in sectors.get("long", []) else "short" if e in sectors.get("short", [])
+                   else "neutral", "code:sectors", as_of)
+            world = {"symbol": sym, "etf": e, "failed": failed, "patterns": {p: PATTERNS[p] for p in patterns},
+                     "headlines": [], "write_in": LANGUAGE}
+            try:
+                o = self._decide("A3", "DC-08", fs, world, sym)
+            except Exception as ex:                       # noqa: BLE001 - budget or API: the card's undecided
+                o = {"option": "watch_only", "reasoning": f"{type(ex).__name__}: {ex}", "status": "error"}
+            opt = o["option"]
+            out[e]["dc08"][sym] = {"option": opt, "reason": o.get("reasoning", ""), "failed": failed,
+                                   "patterns": patterns, "deviations": o.get("deviations", []), "status": o["status"]}
+            dev = f"DC-08: חריגה מ-{', '.join(failed)} לפי {', '.join(PATTERNS[p] for p in patterns)}"
+            if override:
+                if opt != "short":
+                    out[e]["short"] = [c for c in out[e]["short"] if c["ticker"] != sym]
+                continue
+            if opt in ("long", "short"):
+                out[e][opt].append({**r, "side": opt, "profile": None, "tags": list(r.get("tags") or []) + ["dc08"],
+                                    "conflicts": [dev]})
+        return out
+
     def code_order(self, ok: list[dict]) -> list[dict]:
         """DC-09 when undecided: the profile order (decision 12, D-S06-11), green before orange, then R:R to the
         extreme. The card's territory step is not here: the timing rows do not carry it."""

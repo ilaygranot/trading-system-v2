@@ -277,6 +277,38 @@ def loss_to_profit(this_year: float, next_year: float, year_after: float) -> boo
     return this_year < 0 and next_year >= k * abs(this_year) - 1e-9 and year_after > next_year
 
 
+# DC-08: the patterns in code that may turn a default failure around, and the J rule each one opens (decision cards 6).
+# S06-J14 (news that changes the prospect) needs headlines the screen does not have: it is not detected here.
+PATTERNS = {"near_zero_jump": "S06-J6", "extreme_expectations": "S06-R42", "no_profile": "S06-J15"}
+
+
+def rescue_patterns(m: Metrics, failed: list[str], avg: "GroupAverages") -> list[str]:
+    """The DC-08 patterns on a stock that failed a default rule: loss -> profit "on zero" -> huge jump (S06-J6),
+    expectations above the verification threshold (S06-R42, the course gives no number: S06-R21's 200%), and a
+    stock that fits no profile (S06-J15): the profit -> loss -> profit rejection (S06-R41), or no profile while one
+    year grows above the group (the "flying" stock the screen missed; the growth condition is not from course, so
+    every stock below the group does not reach the card)."""
+    out = []
+    if short_gate_conflict(m):
+        out.append("near_zero_jump")
+    v = load_policy().screening.verify_growth_pct
+    if any(x is not None and abs(x) >= v and k not in m.coded for k, x in (("eg1", m.eg1), ("eg2", m.eg2))):
+        out.append("extreme_expectations")
+    above = any(x is not None and x > a for x, a in ((m.eg1, avg.eg1), (m.eg2, avg.eg2)))
+    if failed and (failed[0] == "S06-R41" or (failed[0] == "no_profile" and above)):
+        out.append("no_profile")
+    return out
+
+
+@dataclass
+class Rescue:
+    """A DC-08 candidate: failed a default rule, passed every hard floor, and a pattern applies."""
+    ticker: str
+    failed: list[str]
+    patterns: list[str]
+    metrics: Metrics
+
+
 @dataclass
 class Candidate:
     ticker: str
@@ -295,6 +327,7 @@ class ScreenResult:
     short: list[Candidate]
     tracks: dict[str, list[str]]
     rejected: dict[str, list[str]]
+    rescue: list[Rescue] = field(default_factory=list)
 
 
 def run(rows: list[StockRow]) -> ScreenResult:
@@ -331,6 +364,22 @@ def run(rows: list[StockRow]) -> ScreenResult:
             shorts.append(Candidate(t, "short", None, ["short_gate_override"], m,
                                     conflicts=["S06-R34: growth above the group average, not a short",
                                                "S06-J6: loss -> near-zero profit -> huge jump, consider as a short"]))
+    hard = {r for r, x in _tiers().items() if x == "hard"}
+    passed = {c.ticker for c in longs + shorts}
+    by_t = {m.row.ticker: m for m in metrics}
+    rescue = []
+    for t, failed in rejected.items():
+        if t in passed or hard & set(failed):
+            continue
+        pats = rescue_patterns(by_t[t], failed, avg)
+        if pats:
+            rescue.append(Rescue(t, failed, pats, by_t[t]))
     longs.sort(key=lambda c: rank_key(c.profile, c.tags))
     shorts.sort(key=lambda c: load_policy().screening.short_rank.index(c.profile) if c.profile else 99)
-    return ScreenResult(avg, longs, shorts, tracks, rejected)
+    return ScreenResult(avg, longs, shorts, tracks, rejected, rescue)
+
+
+def _tiers() -> dict[str, str]:
+    """rule id -> tier, for the hard floors a DC-08 candidate must have passed."""
+    from qt.playbook import load_playbook
+    return {rid: r.tier.value for rid, r in load_playbook().rules.items() if rid.startswith("S06-")}

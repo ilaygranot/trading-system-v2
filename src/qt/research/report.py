@@ -629,6 +629,16 @@ def _screen(d: dict) -> str:
                    f'<td class="n">{s["rejected_count"]}</td><td>{E(reasons)}</td>'
                    + "".join(f'<td class="n"><span class="dotc dot-{c}"></span>{cnt[c]}</td>' for c in cnt) + "</tr>")
     out.append("</tbody></table></div>")
+    dc08 = [(e, sym, x) for e, sc in d["screens"].items() for sym, x in (sc.get("dc08") or {}).items()]
+    if dc08:                                          # A3 on the stocks that failed a default rule with a pattern
+        opt = {"no": "לא", "long": "לונג (חריגה)", "short": "שורט (חריגה)", "watch_only": "מעקב בלבד", None: "לא נשאל"}
+        out.append('<h3>הצלה מברירת מחדל (כרטיס DC-08)</h3><div class="tbl"><table><thead><tr><th>מניה</th><th>סקטור</th>'
+                   '<th>נכשלה ב</th><th>דפוס</th><th>החלטה</th><th>נימוק</th></tr></thead><tbody>')
+        for e, sym, x in dc08:
+            out.append(f'<tr><td><b>{E(sym)}</b></td><td>{E(e)}</td><td>{E(", ".join(x.get("failed") or []))}</td>'
+                       f'<td>{E(", ".join(x.get("patterns") or []))}</td><td>{E(opt.get(x.get("option"), x.get("option")))}</td>'
+                       f'<td>{E(x.get("reason") or "")}</td></tr>')
+        out.append("</tbody></table></div>")
     good = [t for t in tm if t.get("combined") == "green" or (t.get("combined") == "orange" and (t.get("rr_extreme") or 0) >= 3)]
     out.append('<h3>מי שעבר את הרמזור: כל הירוקים, והכתומים עם יחס של 3 ומעלה לשיא</h3><div class="tbl"><table><thead><tr>'
                '<th>מניה</th><th>סקטור</th><th>פרופיל</th><th>מניה</th><th>סקטור</th><th>שוק</th><th>משולב</th><th>מקורות אדומים</th>'

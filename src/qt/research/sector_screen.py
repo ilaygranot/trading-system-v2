@@ -76,14 +76,16 @@ def screens(rows_by_etf: dict[str, list[StockRow]], longs: list[str], shorts: li
             long=[_cand(c) for c in r.long] if e in longs else [],
             short=[_cand(c) for c in r.short] if e in shorts else [],
             tracks=r.tracks, rejected_count=len(r.rejected),
+            rescue=[_cand(c) | dict(failed=c.failed, patterns=c.patterns) for c in r.rescue],
             rejected_by_rule=_count_rules(r.rejected))
     return out
 
 
 def _cand(c) -> dict:
     m = c.metrics
-    return dict(ticker=c.ticker, side=c.side, profile=c.profile, tags=c.tags, triple=c.triple_filter,
-                conflicts=c.conflicts, eg1=m.eg1, eg2=m.eg2, sg1=m.sg1, pe1=m.pe1, pe2=m.pe2, ps1=m.ps1, peg=m.peg,
+    return dict(ticker=c.ticker, side=getattr(c, "side", None), profile=getattr(c, "profile", None),
+                tags=getattr(c, "tags", []), triple=getattr(c, "triple_filter", False),
+                conflicts=getattr(c, "conflicts", []), eg1=m.eg1, eg2=m.eg2, sg1=m.sg1, pe1=m.pe1, pe2=m.pe2, ps1=m.ps1, peg=m.peg,
                 flags=m.flags, market_cap=m.row.market_cap, price=m.row.price, industry=m.row.industry,
                 f0=m.row.f0, f1=m.row.f1, f2=m.row.f2, short_float=m.row.short_float)
 

@@ -434,6 +434,57 @@ cases:
     quote: "מעל הממוצע בסקטור... בשנה השנייה היא מאטה, אבל עדיין מעל... מתאימה לפרופיל L3"
     reading: true
 
+  # ---------------------------------------------------------------- DC-08: a default failure with a pattern
+  - id: E2E-1.BA.DC-08
+    scenario: E2E-1
+    card: DC-08
+    subject: BA
+    facts:
+      - [BA.eps, "F0 a large loss -> F1 near zero -> F2 a profit: EG1 coded 99, EG2 in the thousands of percent"]
+      - [BA.failed_rules, "S06-R34: growth above the group average, not a short"]
+      - [BA.patterns, "near_zero_jump (S06-J6)"]
+      - [BA.move_pct, "about +80% from the October 2022 low to the February 2023 high"]
+      - [BA.headlines, "2023-04-13/14: temporarily halted deliveries of some 737 MAX models because of a supplier problem"]
+      - [XLI.bucket, short]
+    world: {symbol: BA, etf: XLI, failed: [S06-R34], patterns: {near_zero_jump: S06-J6}}
+    expect: [short]
+    near: [watch_only]
+    source: "099:203"
+    quote: "למה בחרתי את בואינג לשורט? כי אנחנו מסתכלים על הסינון, אנחנו רואים פה חברה שיש לה ציפיות למעבר חזרה לרווחיות"
+
+  - id: E2E-5.ATRO.DC-08
+    scenario: E2E-5
+    card: DC-08
+    subject: ATRO
+    facts:
+      - [ATRO.eps_history, "2016 1.40; 2017 0.58; 2018 1.41; 2019 1.60; 2020 -3.76; 2021 -0.82; 2022 -1.11 (annual, diluted)"]
+      - [ATRO.estimates, "loss -> small profit -> a larger profit"]
+      - [ATRO.failed_rules, "S06-R41: profit -> loss -> profit in recent years"]
+      - [ATRO.patterns, "no_profile (S06-J15)"]
+      - [industry.avg, "Aerospace: SG1 11.8%, EPS growth 19% (year 1) and 20% (year 2) in the class file"]
+    world: {symbol: ATRO, etf: XLI, failed: [S06-R41], patterns: {no_profile: S06-J15}}
+    expect: ["no"]
+    near: [watch_only]
+    source: "098:229"
+    quote: "אין פה באמת חברה שצומחת לאורך זמן באופן עקבי... המשחקים האלה פחות בשבילי"
+
+  - id: E2E-5.TDG.DC-08
+    scenario: E2E-5
+    card: DC-08
+    subject: TDG
+    facts:
+      - [TDG.eps_growth, "EG1 34%, EG2 15% (above the industry in year 1, below it in year 2)"]
+      - [TDG.sg1, "revenue growth above the industry average (11.8%)"]
+      - [TDG.failed_rules, "no_profile: above the average in year 1 and below it in year 2, no branch of the tree"]
+      - [TDG.patterns, "no_profile (S06-J15)"]
+      - [industry.avg, "Aerospace: SG1 11.8%, EPS growth 19% (year 1) and 20% (year 2) in the class file"]
+    world: {symbol: TDG, etf: XLI, failed: [no_profile], patterns: {no_profile: S06-J15}}
+    expect: [watch_only, long]
+    near: ["no"]
+    source: "098:227"
+    quote: "אולי זאת לא תהיה האפשרות הכי טובה שלנו של לונג... אבל גם פה יש לנו פרופיל סיכון שאנחנו יכולים לתת לה"
+    reading: true
+
   # ---------------------------------------------------------------- 084: the VIX jump (regime card)
   - id: L084.portfolio.DC-22
     scenario: L084
