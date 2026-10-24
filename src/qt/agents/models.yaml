@@ -25,11 +25,14 @@ max_tokens: 16000
 max_tokens_by_card:           # the article writes 13 sections; 21,000 is the SDK's ceiling without streaming (not from course)
   DC-25: 21000
 budget:
-  monthly_usd: 150            # also set as the Anthropic console limit (runtime plan 8.4)
-  daily_usd: 10               # over it, only A7 and the Critic keep running, and Ilay gets a message
-  weekly_research_usd: 25     # the Saturday research run (A1, A3, A4, A6 + Critic), instead of the daily cap (not from course)
+# The agents run on Ilay's subscription (CLAUDE_CODE_OAUTH_TOKEN): the cost is the list price the CLI reports, not a
+# bill. The caps are a guard against a runaway loop, set well above a full run, so a run is never cut short (Ilay
+# 24.10: the first weekly run spent ~$25 at list price before the articles). On the API they would be real money.
+  monthly_usd: 150            # the Anthropic console limit when on the API (runtime plan 8.4); not read by code
+  daily_usd: 40               # over it, only A7 and the Critic keep running, and Ilay gets a message
+  weekly_research_usd: 150    # the Saturday research run (A1, A3, A4, A6 + Critic), instead of the daily cap (not from course)
   always_run: [A7, C]
 eval:                         # the course test set, `qt eval agents` (runtime plan 8.3; Ilay 24.10, not from course)
-  limit_usd: 40               # one cap over the whole run, at list price (on the subscription it is not billed)
+  limit_usd: 100              # one cap over the whole run, at list price (on the subscription it is not billed)
   pass_share: 0.8             # at least 80% hit or near, and no miss on a card that needs Ilay's approval
   models: [opus, sonnet]
