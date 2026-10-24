@@ -672,7 +672,7 @@ class App:
         from qt.research import report
         d = self.report_doc()
         if d is not None:
-            nav, body = report.sections(d)
+            nav, body = report.sections(d, self.ideas_html(d))
             return nav, body, d["meta"]["as_of"]
         row = self.db.one("SELECT name, content FROM uploads WHERE kind = 'report' ORDER BY id DESC LIMIT 1")
         if row is not None and '<nav class="rail">' in row["content"]:
@@ -698,9 +698,38 @@ class App:
         self._rep_cache = (key, (nav, report, as_of))
         return nav, report, as_of
 
+    @staticmethod
+    def overview(entry: dict | None, idea: dict | None, limit: int = 340) -> str:
+        """The stock in two or three sentences for the scannable list: the research's one line (its tldr) and why now,
+        else the thesis or the reason, cut at a sentence end before `limit` characters."""
+        j = (idea or {}).get("judgment") or {}
+        t = j.get("tldr") or {}
+        parts = [t.get("line") or (entry or {}).get("tldr") or j.get("thesis") or j.get("why") or j.get("story") or ""]
+        if t.get("why_now"):
+            parts.append(t["why_now"])
+        text = " ".join(p.strip() for p in parts if p and p.strip())
+        if len(text) <= limit:
+            return text
+        cut = max(text.rfind(". ", 0, limit), text.rfind(": ", 0, limit))
+        return text[:cut + 1] if cut > limit // 3 else text[:limit].rsplit(" ", 1)[0] + "…"
+
+    @staticmethod
+    def stock_row(sym: str, head: str, pills: str, nums: list[tuple[str, str]], text: str, facts: list[tuple[str, str]],
+                  more: str = "", pre: str = "wl") -> str:
+        """One stock in the scannable list (Ilay, 24.10): a row that reads at a glance (ticker, status, the few numbers,
+        a short overview) and opens in place to the plan's numbers, with a link to the stock's full page."""
+        n = "".join(f"<span><i>{k}</i> <b class=num>{v}</b></span>" for k, v in nums if v)
+        f = "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in facts if v not in (None, "", "–"))
+        return (f"<details class=wl id='{pre}-{_e(sym)}'><summary><span class=wl-s><b>{_e(sym)}</b> <span class=note>{head}</span>"
+                f"</span><span class=wl-p>{pills}</span><span class=wl-n>{n}</span>"
+                + (f"<span class=wl-o>{_e(text)}</span>" if text else "") + "</summary>"
+                f"<div class=wl-b>{f'<dl>{f}</dl>' if f else ''}{more}<a class=wl-go href='/stock/{_e(sym)}'>"
+                f"לניתוח המלא של {_e(sym)}: המאמר, הגרפים, החדשות ←</a></div></details>")
+
     def watch_html(self) -> str:
-        """The watchlist: each idea as the research left it (trigger, stop width, target, why) with the latest daily
-        check (close, distance to the trigger, reward:risk, the 078 trend columns)."""
+        """The watchlist as a list to scroll through (Ilay, 24.10): every idea in one row with the latest daily check
+        (status, close, distance to the trigger, reward:risk, 3 months) and two or three sentences; the plan, the
+        trend columns and what breaks the thesis open on a click, and the stock's page has the full analysis."""
         from qt.app import watchlist
         from qt.daily import STATUS_HE
         wl = watchlist(self.db) or {}
@@ -710,28 +739,87 @@ class App:
         row = self.db.one("SELECT s.output, r.as_of FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE s.step = 'watch' "
                           "AND s.status = 'done' AND r.kind = 'daily' ORDER BY r.started_at DESC LIMIT 1", (), ["output"])
         checks = {c["symbol"]: c for c in ((row or {}).get("output") or {}).get("checks") or []}
+        try:
+            ideas = (self.report_doc() or {}).get("ideas") or {}
+        except Exception:                                               # noqa: BLE001 - the list stands without it
+            ideas = {}
         bucket = {"enter": ("כניסה", "ok"), "conditional": ("מותנה בטריגר", "warn"), "watch": ("מעקב", "")}
-        rows = []
-        for e in entries:
+        order = {"enter": 0, "conditional": 1, "watch": 2}
+        hot = {"opportunity": 0, "ready": 0, "recheck": 1, "waiting": 2}
+
+        def key(e: dict) -> tuple:
             c = checks.get(e["symbol"]) or {}
+            return (order.get(e.get("bucket"), 9), hot.get(c.get("status"), 3),
+                    abs(c["dist_to_trigger_pct"]) if c.get("dist_to_trigger_pct") is not None else 1e9, e["symbol"])
+        rows, cur, counts = [], None, {}
+        for e in entries:
+            counts[e.get("bucket")] = counts.get(e.get("bucket"), 0) + 1
+        for e in sorted(entries, key=key):
+            if e.get("bucket") != cur:
+                cur = e.get("bucket")
+                rows.append(f"<div class=wl-g>{_e(bucket.get(cur, (cur or 'אחר', ''))[0])} · {counts.get(cur, 0)}</div>")
+            sym, c, idea = e["symbol"], checks.get(e["symbol"]) or {}, ideas.get(e["symbol"])
             b, bc = bucket.get(e.get("bucket"), (e.get("bucket") or "", ""))
-            status = ("בתיק" if c.get("held") else STATUS_HE.get(c.get("status"), "")) if c else "עוד לא נבדקה"
-            trend = " / ".join(f"{_signed(c.get(k), 1, '%')}" if c.get(k) is not None else "–"
-                               for k in ("trend_1y_pct", "trend_3m_pct", "since_add_pct"))
-            rows.append([f"<b>{ui.sym(e['symbol'])}</b> <span class=note>{'לונג' if e.get('direction') == 'long' else 'שורט'} · "
-                         f"{_e(e.get('etf'))}</span>", ui.pill(b, bc), _e(status),
-                         f"<td class=num>{_n(c.get('close'))}</td>",
-                         f"<td class=num>{_n(e.get('trigger_level'))}"
-                         + (f" <span class=note>({_n(c['dist_to_trigger_pct'], 1)}%)</span>"
-                            if c.get("dist_to_trigger_pct") is not None and not c.get("triggered") else "") + "</td>",
-                         f"<td class=num>{_n(c.get('stop'))}</td>", f"<td class=num>{_n(e.get('target'))}</td>",
-                         f"<td class=num>{_n(c.get('rr'), 1)}</td>", f"<td class=num>{trend}</td>",
-                         f"<td class=t>{_e(c.get('days_on_list', ''))}</td>", f"<td class=t>{_e(e.get('next_earnings'))}</td>",
-                         f"<td class=note style='min-width:260px'>{_e(e.get('tldr'))}</td>"])
+            st = c.get("status")
+            status = ("בתיק" if c.get("held") else STATUS_HE.get(st, st or "")) if c else "עוד לא נבדקה"
+            sc = "ok" if c.get("held") or st in ("opportunity", "ready") else "bad" if st in ("invalidated", "stale") else "mute"
+            name = ((idea or {}).get("profile") or {}).get("name")
+            head = " · ".join(_e(x) for x in (name, "לונג" if e.get("direction") == "long" else "שורט", e.get("etf")) if x)
+            dist = (f" ({_n(c['dist_to_trigger_pct'], 1)}%)" if c.get("dist_to_trigger_pct") is not None
+                    and not c.get("triggered") else "")
+            nums = [("סגירה", _n(c.get("close"))), ("טריגר", f"{_n(e.get('trigger_level'))}{dist}" if e.get("trigger_level") else ""),
+                    ("יחס", _n(c.get("rr"), 1)), ("3ח'", _signed(c.get("trend_3m_pct"), 1, "%"))]
+            trend = " / ".join(_signed(c.get(k), 1, "%") or "–" for k in ("trend_1y_pct", "trend_3m_pct", "since_add_pct"))
+            facts = [("טריגר", _n(e.get("trigger_level"))), ("עצירה", _n(c.get("stop"))), ("יעד", _n(e.get("target"))),
+                     ("יחס סיכוי-סיכון", _n(c.get("rr"), 1)), ("עד היעד", _signed(c.get("potential_pct"), 1, "%")),
+                     ("שנה / 3ח' / מאז ההוספה", trend if c else ""), ("ימים ברשימה", _e(c.get("days_on_list", ""))),
+                     ("דוח הבא", _e(e.get("next_earnings"))), ("רמת ביטול", _n(e.get("invalidate_level"))),
+                     ("עצירת זמן", _e(e.get("time_stop"))), ("נוספה", _e(e.get("added")))]
+            more = ""
+            if e.get("breakers"):
+                more += "<h4>מה ישבור את התזה</h4><ul>" + "".join(
+                    f"<li>{_e(x.get('text') if isinstance(x, dict) else x)}</li>" for x in e["breakers"]) + "</ul>"
+            if c.get("notes"):
+                more += "<p class=note>" + _e("; ".join(map(str, c["notes"])) if isinstance(c["notes"], list) else c["notes"]) + "</p>"
+            rows.append(self.stock_row(sym, head, ui.pill(b, bc) + (ui.pill(status, sc) if status else ""), nums,
+                                       self.overview(e, idea), facts, more))
         when = f"הבדיקה היומית מ-{_e(row['as_of'])}" if row else "עוד לא הייתה בדיקה יומית"
-        return (ui.table(("מניה", "סטטוס", "מצב היום", "סגירה", "טריגר", "עצירה", "יעד", "יחס", "שנה / 3ח' / מאז", "ימים",
-                          "דוח", "למה"), rows)
-                + f"<p class=note>{len(entries)} רעיונות · {_e(wl.get('source') or '')} · {when}</p>")
+        return (f"<div class=wlist>{''.join(rows)}</div>"
+                f"<p class=note>{len(entries)} רעיונות · {_e(wl.get('source') or '')} · {when} · לחיצה על שורה פותחת את "
+                f"התוכנית, והקישור בתוכה את הניתוח המלא</p>")
+
+    def ideas_html(self, d: dict) -> str:
+        """The report's ideas on the overview as the same scannable rows (Ilay, 24.10); each stock's article is on its
+        page (/stock/SYM), so the overview stays a list you can scroll through."""
+        from qt.research import report
+        order = {"enter": 0, "conditional": 1, "watch": 2, "reject": 3}
+        ideas = sorted(d["ideas"].values(), key=lambda i: (order.get(i["bucket"], 9), -(i["plan"].get("rr") or 0)))
+        tone = {"enter": "ok", "conditional": "warn", "reject": "bad"}
+        rows, cur = [], None
+        for i in ideas:
+            if i["bucket"] != cur:
+                cur = i["bucket"]
+                n = sum(1 for x in ideas if x["bucket"] == cur)
+                rows.append(f"<div class=wl-g>{_e(report.BUCKET_HE.get(cur, cur))} · {n}</div>")
+            p, tl = i.get("plan") or {}, i.get("timing") or {}
+            head = " · ".join(_e(x) for x in ((i.get("profile") or {}).get("name"), report.DIR_HE.get(i["direction"]),
+                                               i.get("etf")) if x)
+            pills = (ui.pill(report.BUCKET_HE.get(i["bucket"], i["bucket"]), tone.get(i["bucket"], ""))
+                     + (ui.pill("רמזור " + report.COLOR_HE.get(tl.get("combined"), ""),
+                                {"green": "ok", "orange": "warn", "red": "bad"}.get(tl.get("combined"), "mute"))
+                        if tl.get("combined") else ""))
+            nums = [("כניסה", _n(p.get("entry"))), ("עצירה", _n(p.get("stop"))), ("יעד", _n(p.get("target"))),
+                    ("יחס", _n(p.get("rr"), 1))]
+            j = i.get("judgment") or {}
+            facts = [("סיפור", _e(j.get("story"))), ("תזה", _e(j.get("thesis") or j.get("why"))),
+                     ("שרשרת קטליזטורים", _e(j.get("catalyst_chain"))), ("רמות", _e(j.get("levels_note"))),
+                     ("למה בסל הזה", _e(i.get("bucket_reason")))]
+            rows.append(self.stock_row(i["sym"], head, pills, nums, self.overview(None, i), facts, pre="ir"))
+        fit = report._portfolio(d)
+        return ('<section id="ideas"><h2>רעיונות: שלבים 7–11</h2>'
+                f"<div class=wlist>{''.join(rows)}</div>"
+                + (f"<details class=more><summary>התאמה לתיק (S11)</summary>{fit}</details>" if fit else "")
+                + "</section>")
 
     def summaries_html(self) -> str:
         """What each run last told Ilay in Telegram (its notify step), word for word."""
@@ -1062,9 +1150,9 @@ class App:
             rep = ui.section("דוח המחקר", ui.empty("עוד אין דוח מחקר: הריצה השבועית מפיקה אותו בשבת (צריך מפתח FRED, "
                                                    "קובץ מקרו ו-Claude), או שלח לבוט dossier.json של מחקר"), id="summary")
             sub = "הפוזיציות, התור והריצות מתעדכנים לבד"
-        rail = ([("queue", "מחכה לך")] + list(nav) + [("book", "פוזיציות"), ("watch", "רשימת מעקב"), ("runs", "ריצות ופלט"),
-                                                     ("system", "מצב המערכת")])
-        body = live("top") + rep + live("book") + live("watch") + live("runs") + live("system")
+        rail = ([("queue", "מחכה לך"), ("watch", "רשימת מעקב")] + list(nav) + [("book", "פוזיציות"), ("runs", "ריצות ופלט"),
+                                                                              ("system", "מצב המערכת")])
+        body = live("top") + live("watch") + rep + live("book") + live("runs") + live("system")
         return self._send(start, "200 OK", ui.page("Quantum Trader · לוח בקרה", body, "/", live=True, sub=sub, rail=rail,
                                                    css=ui.report_css() if report else ""))
 
