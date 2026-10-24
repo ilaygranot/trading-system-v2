@@ -19,6 +19,12 @@ def bars():
     return load_bars
 
 
+@pytest.fixture(autouse=True)
+def _offline_transcripts(monkeypatch):
+    """No test reaches roic.ai: a test that wants transcripts passes its own source."""
+    monkeypatch.delenv("ROIC_API_KEY", raising=False)
+
+
 PG_URL = os.environ.get("QT_TEST_DATABASE_URL")
 
 

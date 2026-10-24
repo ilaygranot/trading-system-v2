@@ -4,6 +4,8 @@ The research run (qt.research.run) computes every number; this module asks the c
 judgments dict a person writes by hand (judgments.yaml), so the dossier, the report and the watchlist do not
 change. Order:
   A1  DC-01..DC-04 on the macro stance (grey band, compass, macro vs market, confidence).
+  A4  first, per idea with a transcript: DC-26, the course's twelve questions to the last earnings call (roic.ai);
+      code keeps only the excerpts found word for word in the call, and they join every later card's sheet.
   A3  DC-09 ranks the green and orange stocks when there are more than the deep-dive cap (12); otherwise all pass.
       Red never passes; green always does unless skipped with a reason. J["A3"] keeps who was skipped and why.
   A4  per idea: DC-10 story, DC-11 premium and target method, DC-12 thesis breakers, DC-13 watchlist and heat.
@@ -28,6 +30,7 @@ from qt.facts import FactSheet
 from qt.policy import load_policy
 from qt.research import article as AR
 from qt.research import catalyst_chain as CC
+from qt.research import earnings_call as EC
 
 MIN_DEEP, MAX_DEEP = 8, 12     # DC-09: up to 12 green and orange stocks all pass; above, the agent ranks and 8 to 12
                                 # go on (Ilay 22.10, to start; the card had 8-15 per direction; not from course)
@@ -35,7 +38,7 @@ K_OPTIONS = {"k_min": 3.0, "k_mid": 4.0, "k_max": 5.0}       # DC-19: 3 (20.10),
 TARGET_SOURCE = {"hist_3y": "own_multiple_target", "sector": "own_multiple_target", "other": None}
 SRC = "code:research"
 LANGUAGE = "Hebrew for every text field (reasoning, breakers, tldr); codes, ids and tickers as they are"
-JUDGED_BY = "Agents A1, A3, A4, A5, A6 with the Critic (cards DC-01..04, 09..14, 17, 19, 20, 25)"
+JUDGED_BY = "Agents A1, A3, A4, A5, A6 with the Critic (cards DC-01..04, 09..14, 17, 19, 20, 25, 26)"
 
 DeepDive = Callable[[str, str, str, dict], dict]               # (sym, etf, direction, judgment) -> idea
 
@@ -217,7 +220,11 @@ def event_facts(d: dict, ev: dict, as_of: date, j: dict | None = None, macro: di
         add_facts(fs, "macro.stance", {k: st.get(k) for k in ("zone", "bias")}, as_of, depth=1)
     if _peers_on_list(d):
         fs.add(f"{sym}.peers_on_list", _peers_on_list(d), "code:peers", as_of)
+    EC.call_facts(fs, sym, j.get("call"), as_of, only=EVENT_CALL_QUESTIONS)
     return fs
+
+
+EVENT_CALL_QUESTIONS = ("guidance", "demand", "new_products", "events_ahead")      # what DC-14 needs from the call
 
 
 def _last(xs: list | None) -> Any:
@@ -227,9 +234,11 @@ def _last(xs: list | None) -> Any:
 def article_facts(d: dict, macro: dict, as_of: date, j: dict, sectors: dict | None = None) -> FactSheet:
     """DC-25's sheet: the idea's sheet, plus what the article explains and the deep-dive cards did not need: the
     macro picture and the sector's row (question 1), the statements as series (question 6), the last values of the
-    charts (S09), and the earlier cards' answers as facts of the agent (the article explains them, never changes them)."""
+    charts (S09), the call's excerpts (DC-26), and the earlier cards' answers as facts of the agent (the article
+    explains them, never changes them)."""
     fs = idea_facts(d, macro, as_of)
     sym, etf = d["sym"], d.get("etf")
+    EC.call_facts(fs, sym, j.get("call"), as_of)
     st = macro.get("stage2") or {}
     stance = st.get("stance") or {}
     for part in ("activity", "fed", "inflation", "labor", "ism"):
@@ -419,11 +428,33 @@ class Judge:
         except Exception as e:                           # noqa: BLE001 - the budget or a bad answer: the card stands
             j["article_error"] = f"{type(e).__name__}: {e}"
 
+    def call(self, j: dict, d: dict, as_of: date) -> None:
+        """DC-26 on the last earnings call, when the documents hold one: j["call"] keeps the verified answers. A
+        failure leaves the idea on the SEC documents alone (j["call_error"])."""
+        tr = (d.get("documents") or {}).get("transcript") or {}
+        if not tr.get("turns"):
+            return
+        sym = d["sym"]
+        try:
+            fs, by_id = EC.call_sheet(sym, tr, as_of)
+            o = self._decide("A4", "DC-26", fs, EC.world(sym, tr), sym)
+            if o.get("option") != "answers":
+                j["call_error"] = f"DC-26: {o.get('status')} ({o.get('reasoning', '')})"
+                return
+            j["call"] = EC.verify(o, by_id, tr)
+            j["call"]["status"] = o.get("status")
+        except Exception as e:                           # noqa: BLE001 - one source's failure; the budget stops the run
+            if type(e).__name__ == "BudgetExceeded":
+                raise
+            j["call_error"] = f"{type(e).__name__}: {e}"
+
     def _cards(self, t: dict, deep_dive: DeepDive, macro: dict, as_of: date) -> tuple[dict, dict, dict]:
         sym, etf, dr = t["sym"], t["etf"], t["dir"]
         j: dict[str, Any] = {"etf": etf, "direction": dr}
         d = deep_dive(sym, etf, dr, dict(j, options=False))      # the facts; the option chains come at the end
+        self.call(j, d, as_of)
         fs = idea_facts(d, macro, as_of)
+        EC.call_facts(fs, sym, j.get("call"), as_of)
         world: dict[str, Any] = {"symbol": sym, "direction": dr, "etf": etf, "traffic_light": t.get("combined"),
                                  "write_in": LANGUAGE}
 

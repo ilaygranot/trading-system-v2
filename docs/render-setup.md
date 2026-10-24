@@ -7,7 +7,7 @@
 1. **בוט טלגרם:** ב-BotFather שולחים `/newbot`, מקבלים טוקן. שולחים לבוט החדש הודעה כלשהי, ואז פותחים
    `https://api.telegram.org/bot<הטוקן>/getUpdates` ומעתיקים את `chat.id` (זה ה-chat id שלך).
 2. **מפתח Anthropic API** מ-console.anthropic.com (חיוב נפרד ממנוי Claude). תקרה חודשית: 150$ (הוגדרה גם בקוד: 10$ ליום).
-3. **מפתח FRED** (חינם) ו-**FMP** (גיבוי למחירים). אין עדיין מפתח (FMP, FRED, או Anthropic)? משאירים את השדה ריק, לא `none`: בלי `ANTHROPIC_API_KEY` הריצות רצות בלי ה-Agents, ובלי FRED בלי נתוני המקרו. מוסיפים אחר כך ב-Environment של qt-web ועושים Manual Sync.
+3. **מפתח FRED** (חינם), **FMP** ו-**Alpha Vantage** (מחירים ונתוני מניות בלבד, לא תמלולים), ו-**ROIC_API_KEY** של roic.ai (תמלולי שיחות הוועידה לניתוח העומק; בתוכנית החינמית 5 בקשות לדקה, והריצה ממתינה ביניהן). אין עדיין מפתח (FMP, FRED, או Anthropic)? משאירים את השדה ריק, לא `none`: בלי `ANTHROPIC_API_KEY` הריצות רצות בלי ה-Agents, ובלי FRED בלי נתוני המקרו. מוסיפים אחר כך ב-Environment של qt-web ועושים Manual Sync.
 4. **סיסמה ללוח הבקרה** (משמשת גם לחתימת קישורי "פרטים"). ממציאים אחת חזקה.
 5. **משתמש API ב-IBKR** (פירוט בסעיף IBKR למטה): שם משתמש וסיסמה של חשבון ה-paper.
 
@@ -15,7 +15,7 @@
 
 1. ב-Render: New → Blueprint → בוחרים את הריפו `trading-system-v2`. Render קורא את `render.yaml`.
 2. Render מבקש את הערכים שמסומנים `sync: false`, **פעם אחת בלבד**:
-   - ב-`qt-web`: `ANTHROPIC_API_KEY` או `CLAUDE_CODE_OAUTH_TOKEN` (אחד מהם, השני נשאר ריק), `FRED_API_KEY`, `FMP_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_PASSWORD`.
+   - ב-`qt-web`: `ANTHROPIC_API_KEY` או `CLAUDE_CODE_OAUTH_TOKEN` (אחד מהם, השני נשאר ריק), `FRED_API_KEY`, `FMP_API_KEY`, `ROIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_PASSWORD`.
      ארבע משימות ה-cron מעתיקות אותם מ-`qt-web` לבד.
    - ב-`qt-ibgateway`: `TWS_USERID`, `TWS_PASSWORD`.
    הסוכנים רצים על `ANTHROPIC_API_KEY` אם הוא מלא. אחרת הם רצים על `CLAUDE_CODE_OAUTH_TOKEN`, המנוי שלך ב-Claude, דרך Claude Code.

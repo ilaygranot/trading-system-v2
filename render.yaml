@@ -6,7 +6,8 @@
 # The IBKR login is entered on qt-ibgateway only. No secret is in this file.
 # Optional keys (ANTHROPIC_API_KEY, FMP_API_KEY) are not copied to the crons: a fromService copy of a variable that
 # qt-web does not have fails the whole sync. When one is added on qt-web, add its copy here too. FRED_API_KEY is
-# copied to the weekly and monthly crons: it must be set on qt-web before this file syncs.
+# copied to the weekly and monthly crons: it must be set on qt-web before this file syncs. ROIC_API_KEY (roic.ai,
+# the earnings-call transcripts of the deep dive) and SEC_CONTACT are copied to qt-weekly, which runs the research.
 # The agents run on ANTHROPIC_API_KEY, or, when it is empty, on CLAUDE_CODE_OAUTH_TOKEN through the Claude Code CLI;
 # the build copies the CLI binary (pinned) into ./bin because Render keeps only the project directory at runtime.
 
@@ -44,6 +45,8 @@ services:
       - key: FMP_API_KEY
         sync: false
       - key: SEC_CONTACT                 # contact email in the SEC User-Agent; SEC answers 403 without one
+        sync: false
+      - key: ROIC_API_KEY                # roic.ai: earnings-call transcripts for the deep dive (prices stay Yahoo/FMP)
         sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
@@ -227,6 +230,10 @@ services:
         fromService: {type: pserv, name: qt-ibgateway, property: host}
       - key: IBKR_PORT
         value: "4004"
+      - key: SEC_CONTACT                  # the deep dive's 8-K/6-K, results release and 10-K
+        fromService: {type: web, name: qt-web, envVarKey: SEC_CONTACT}
+      - key: ROIC_API_KEY                 # the deep dive's last earnings call (DC-26)
+        fromService: {type: web, name: qt-web, envVarKey: ROIC_API_KEY}
 
   - type: cron
     name: qt-monthly                      # the Saturday in days 8-14 (after the first week, S13), 10:00 New York

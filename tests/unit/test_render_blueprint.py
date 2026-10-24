@@ -10,6 +10,8 @@ SECRETS = {"CLAUDE_CODE_OAUTH_TOKEN", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", 
 OPTIONAL = {"ANTHROPIC_API_KEY", "FMP_API_KEY"}
 # read by the macro stance and the weekly research only; set on qt-web before this file syncs
 FRED_CRONS = {"qt-weekly", "qt-monthly"}
+# the research run's documents: the SEC filings and the roic.ai earnings call (set on qt-web 24.10)
+RESEARCH_KEYS = {"SEC_CONTACT", "ROIC_API_KEY"}
 
 
 def _services():
@@ -23,7 +25,10 @@ def _env(service):
 def test_blueprint_parses_and_every_cron_gets_the_secrets_from_qt_web():
     services = _services()
     web = _env(services["qt-web"])
-    assert all(web[k].get("sync") is False for k in SECRETS | OPTIONAL | {"FRED_API_KEY"})
+    assert all(web[k].get("sync") is False for k in SECRETS | OPTIONAL | RESEARCH_KEYS | {"FRED_API_KEY"})
+    weekly = _env(services["qt-weekly"])
+    for k in RESEARCH_KEYS:
+        assert weekly[k]["fromService"] == {"type": "web", "name": "qt-web", "envVarKey": k}, k
     crons = [s for s in services.values() if s["type"] == "cron"]
     assert {c["name"] for c in crons} == {"qt-daily", "qt-premarket", "qt-open", "qt-weekly", "qt-monthly"}
     for c in crons:

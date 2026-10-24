@@ -27,6 +27,7 @@ import yaml
 from qt.calc import indicators as I
 from qt.calc import trade as T
 from qt.calc.volatility import adr
+from qt.data.http import redact
 from qt.policy import load_policy
 from qt.research import idea, macro_stage, sector_screen, universe as U, verify
 from qt.research.judge import MAX_DEEP, candidates, unexplained_greens
@@ -298,17 +299,32 @@ def portfolio_fit(y: Yahoo, ideas: dict, as_of: date) -> dict[str, Any]:
                 total_size_pct=sum(x["allowed_pct"] for x in sz), total_risk_pct=sum(x["risk_pct_of_equity"] for x in sz))
 
 
-def documents_source(sec, as_of: date, memo: dict[str, dict]) -> Callable[[str], dict]:
+def documents_source(sec, as_of: date, memo: dict[str, dict], calls=None) -> Callable[[str], dict]:
     """The SEC extracts per deep-dive stock, fetched once per symbol per run (both deep-dive passes share the memo).
-    Without SEC_CONTACT the stock gets {"errors": ["SEC_CONTACT not set"]} and the run goes on with Yahoo events."""
+    Without SEC_CONTACT the stock gets {"errors": ["SEC_CONTACT not set"]} and the run goes on with Yahoo events.
+    calls: the transcript source (qt.data.transcripts.RoicTranscripts); its latest call before as_of goes under
+    "transcript", with every turn for DC-26 (strip_turns drops them once the agents are done)."""
     def get(sym: str) -> dict:
         if sym not in memo:
             try:
                 memo[sym] = sec.documents(sym, as_of)
             except Exception as e:                                       # noqa: BLE001 - documents() should never raise
                 memo[sym] = {"symbol": sym, "transcript": None, "errors": [f"{type(e).__name__}: {e}"[:300]]}
+            if calls is not None and calls.ok():
+                try:
+                    memo[sym]["transcript"] = calls.latest(sym, as_of)
+                except Exception as e:                                   # noqa: BLE001 - the SEC documents stand alone
+                    memo[sym].setdefault("errors", []).append(f"transcript: {redact(str(e))[:300]}")
         return memo[sym]
     return get
+
+
+def strip_turns(memo: dict[str, dict]) -> None:
+    """The call's turns are for DC-26 only; the dossier keeps the call's date, source and link (and DC-26's answers)."""
+    for docs in memo.values():
+        tr = docs.get("transcript")
+        if tr and tr.get("turns"):
+            tr["turns_n"] = len(tr.pop("turns"))
 
 
 def _watchlist_symbols(watchlist: dict | None) -> set[str]:
@@ -318,10 +334,11 @@ def _watchlist_symbols(watchlist: dict | None) -> set[str]:
 
 
 def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None, cache: Path, fred,
-        judge=None, manual_text: str | None = None, sec=None, watchlist: dict | None = None) -> dict[str, Any]:
+        judge=None, manual_text: str | None = None, sec=None, watchlist: dict | None = None, calls=None) -> dict[str, Any]:
     """judgments_path: a hand-written judgments file. judge: the agents instead (qt.research.judge.Judge); their
     answers are saved under work/ like every other stage, so a resumed run does not ask again. sec: the SEC filings
-    source (default qt.data.filings.SECFilings on SEC_CONTACT); watchlist: the current watchlist file (else
+    source (default qt.data.filings.SECFilings on SEC_CONTACT); calls: the earnings-call transcripts (default
+    qt.data.transcripts.RoicTranscripts on ROIC_API_KEY); watchlist: the current watchlist file (else
     QT_WATCHLIST) for the peers' on_list."""
     y = Yahoo(cache)
     run_events: list[dict] = []
@@ -332,8 +349,15 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     if hasattr(sec, "ok") and not sec.ok():
         run_events.append({"level": "warn", "where": "documents", "text": "SEC_CONTACT not set: no SEC 8-K, results "
                            "release or risk factors; catalysts from Yahoo only"})
+    if calls is None:
+        from qt.data.store import Store
+        from qt.data.transcripts import RoicTranscripts
+        calls = RoicTranscripts(Store(str(work / "transcripts.sqlite")))
+    if not calls.ok():
+        run_events.append({"level": "warn", "where": "documents", "text": "ROIC_API_KEY not set: no earnings-call "
+                           "transcript; management's words from the SEC results release only"})
     docs_memo: dict[str, dict] = {}
-    docs = documents_source(sec, as_of, docs_memo)
+    docs = documents_source(sec, as_of, docs_memo, calls)
     on_wl = _watchlist_symbols(watchlist)
     u = _cached(work / "universe.pkl", lambda: U.fetch(y), binary=True)
     breadth = U.breadth_pct(u["quotes"])
@@ -367,6 +391,7 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
             y, u, screens, sym, etf, dr, j, bias, buckets, as_of, docs=docs, peers=peers)))
     else:
         J = hand
+    strip_turns(docs_memo)
     missing = unexplained_greens(timing, set(J.get("ideas") or {}), (J.get("A3") or {}).get("skipped"))
     if missing:                                         # Ilay 22.10: a green stock is analysed or skipped with a reason
         raise ValueError(f"green stocks with no deep dive and no reason under A3.skipped: {', '.join(missing)}")

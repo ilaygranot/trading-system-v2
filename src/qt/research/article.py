@@ -215,7 +215,7 @@ def check_sentence(s: dict, facts: FactSheet) -> str | None:
     return None
 
 
-SOURCE_HE = (("sec:", "SEC"), ("yahoo:", "Yahoo"), ("agent:", "שיקול הדעת של הסוכן"), ("code:", "חישוב הקוד"))
+SOURCE_HE = (("sec:", "SEC"), ("roic:", "roic.ai"), ("yahoo:", "Yahoo"), ("agent:", "שיקול הדעת של הסוכן"), ("code:", "חישוב הקוד"))
 
 
 def source_label(source: str) -> str:
