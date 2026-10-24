@@ -92,3 +92,19 @@ def test_big_answers_go_out_gzipped(site):
     assert out["headers"]["Content-Encoding"] == "gzip" and int(out["headers"]["Content-Length"]) == len(body)
     assert 'id="macro"' in gzip.decompress(body).decode()
     assert _call(site, "/health")[2] == "ok"
+
+
+def test_a_stock_from_an_earlier_research_keeps_its_analysis(site, db):
+    """Ilay 24.10: the 23.10 report analysed 4 stocks; the 11 still on the watchlist from 20.10 showed nothing."""
+    old = json.loads(FIX)
+    new = json.loads(FIX)
+    new["meta"]["as_of"] = "2026-10-23"
+    keep = next(iter(new["ideas"]))
+    new["ideas"] = {keep: new["ideas"][keep]}
+    Queue(db).upload("dossier", "dossier-2026-10-23.json", json.dumps(new))
+    gone = next(s for s in old["ideas"] if s != keep)
+    page = _call(site, f"/stock/{gone}")[2]
+    assert f'id="idea-{gone}"' in page and "מהמחקר של 2026-10-20" in page and "לא נותחה במחקר האחרון" in page
+    page = _call(site, f"/stock/{keep}")[2]
+    assert f'id="idea-{keep}"' in page and "לא נותחה במחקר האחרון" not in page
+    assert "לא הופיעה" in _call(site, "/stock/ZZZZ")[2]
