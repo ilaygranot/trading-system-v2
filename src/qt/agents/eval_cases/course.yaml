@@ -85,6 +85,16 @@ scenarios:
       - [sectors.ism_march, "only 2 of 6 large manufacturing industries grew; 70% of production contracting"]
       - [sectors.sp_global, "banking, real estate and construction contracting; services and software, health care and technology expanding"]
 
+  L084:
+    lesson: "084"
+    as_of: 2020-02-27
+    facts:
+      - [market.vix, "from about 15 to about 30 in days: more than double, far above +40% from its recent low"]
+      - [portfolio.regime, "tactical: the code detected the switch today"]
+      - [portfolio.equity, 100000]
+      - [portfolio.daily_move, "a book that usually moves about $1,000 a day now moves several times that"]
+      - [portfolio.positions, "high-beta and speculative names, names breaking their moving averages, and names holding momentum"]
+
 cases:
   # ---------------------------------------------------------------- 099: AXON, BA, BBY (E2E-1)
   - id: E2E-1.BA.DC-10
@@ -422,6 +432,18 @@ cases:
     near: [unclear]
     source: "098:205-209"
     quote: "מעל הממוצע בסקטור... בשנה השנייה היא מאטה, אבל עדיין מעל... מתאימה לפרופיל L3"
+    reading: true
+
+  # ---------------------------------------------------------------- 084: the VIX jump (regime card)
+  - id: L084.portfolio.DC-22
+    scenario: L084
+    card: DC-22
+    subject: portfolio
+    world: {state: b, regime: tactical, regime_changed: true}
+    expect: [switch]
+    near: []
+    source: "084"
+    quote: "the lecturer: get out of high beta, speculative names and those breaking their averages, or cut 20%-40% of the positions"
     reading: true
 
 traps:

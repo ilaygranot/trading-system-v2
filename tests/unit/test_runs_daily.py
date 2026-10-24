@@ -157,7 +157,8 @@ def test_news_classifies_once_and_an_adverse_headline_reaches_a7(db):
     sent, ag = [], FakeAgents()
     r = _runner(db, prices=NewsPrices(), notifier=sent.append, agents=ag)
     r.start("daily", AS_OF)
-    assert [c[:2] for c in ag.calls] == [("DC-14", "BA"), ("DC-21", "BA")]     # the old headline is skipped
+    asked = [c[:2] for c in ag.calls if c[0] in ("DC-14", "DC-21")]
+    assert asked == [("DC-14", "BA"), ("DC-21", "BA")]                         # the old headline is skipped
     assert "FAA halts" in ag.calls[1][2]["event"]
     assert "FAA halts 737 deliveries" in sent[-1] and "A7" in sent[-1]
     row = db.one("SELECT klass, direction FROM news_seen WHERE link = 'https://x/1'")
@@ -346,3 +347,78 @@ def test_day_61_review_runs_once_even_after_a_missed_day(db):
     rid = Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "watchlist": wl, "agents": ag}).start("daily", AS_OF)
     check = next(c for c in _watch_out(db, rid)["checks"] if c["symbol"] == "BA")
     assert "day_61" not in check["dc15"] and not ag.calls
+
+
+class RiskAgents:
+    """A7's cards: DC-21 hold, DC-22 and DC-23 as given. Records the cards and fact sheets."""
+    def __init__(self, dc22="switch", dc23="half"):
+        self.calls, self.dc22, self.dc23 = [], dc22, dc23
+
+    def decide(self, agent, card, fs, world, **kw):
+        from types import SimpleNamespace as NS
+        self.calls.append((card, kw.get("subject"), dict(world), fs.render()))
+        opt = {"DC-22": self.dc22, "DC-23": self.dc23}.get(card, "hold")
+        out = {"reasoning": "r", "cut_method": "order_084", "cut_order": ["BA"]} if card == "DC-22" else {"reasoning": "r"}
+        return NS(option=opt, output=out, status="decided", decision_id=None, critic=None, for_ilay=True, cost_usd=0.0)
+
+
+def test_dc22_on_the_day_the_vix_jump_starts(db):
+    ag = RiskAgents()
+    _runner(db, agents=ag).start("daily", AS_OF)
+    card, subject, world, facts = next(c for c in ag.calls if c[0] == "DC-22")
+    assert subject == "portfolio" and world["state"] == "a" and world["regime"] == "portfolio"
+    assert "market.vix_vs_recent_low = 1.4" in facts and "BA.weight_pct" in facts
+    item = db.one("SELECT kind, status, payload FROM approval_queue WHERE rule_id='DC-22'", (), ["payload"])
+    assert (item["kind"], item["status"]) == ("block_new_risk", "pending") and "order_084" in item["payload"]["detail"]
+
+
+def test_dc22_stay_queues_nothing(db):
+    _runner(db, agents=RiskAgents(dc22="stay")).start("daily", AS_OF)
+    assert not db.all("SELECT id FROM approval_queue WHERE rule_id='DC-22'")
+
+
+def test_dc23_on_profit_flags_and_not_again_for_five_days(db, monkeypatch):
+    import qt.timing
+    monkeypatch.setattr(qt.timing, "profit_flags", lambda bars, d: {"rsi_turn": 74.2, "extended_days": 25})
+    ag = RiskAgents(dc22="stay")
+    from qt.journal import Decision, Journal
+    _runner(db, agents=ag).start("daily", AS_OF)
+    card, subject, world, facts = next(c for c in ag.calls if c[0] == "DC-23")
+    assert subject == "BA" and world["flags"] == ["extended_days", "rsi_turn"]
+    assert "BA.flag.rsi_turn = 74.2" in facts and "BA.pnl_pct" in facts and "BA.open_r" in facts
+    item = db.one("SELECT kind, status, payload FROM approval_queue WHERE rule_id='DC-23'", (), ["payload"])
+    assert (item["kind"], item["status"], item["payload"]["qty"]) == ("sell", "pending", 50.0)
+    Journal(db).record(Decision(decided_by="agent:A7", subject="BA", choice="half", playbook_version="x", card_id="DC-23"))
+    ag.calls.clear()
+    _runner(db, agents=ag).start("daily", AS_OF + timedelta(days=1))
+    assert "DC-23" not in [c[0] for c in ag.calls]
+
+
+def test_dc23_not_on_a_losing_position(db, monkeypatch):
+    import qt.timing
+    monkeypatch.setattr(qt.timing, "profit_flags", lambda bars, d: {"rsi_turn": 74.2})
+    pf = {**PF, "positions": [{**PF["positions"][0], "entry": 400.0, "entry_stop": 100.0, "stop": 100.0}]}
+    ag = RiskAgents(dc22="stay")
+    Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "agents": ag}).start("daily", AS_OF)
+    assert "DC-23" not in [c[0] for c in ag.calls]
+
+
+def test_dc21_gets_the_position_facts(db):
+    ag = RiskAgents(dc22="stay", dc23="none")
+    pf = {**PF, "positions": [{**PF["positions"][0], "adverse_catalyst": True, "event": "guidance cut",
+                               "thesis_breakers": ["deliveries halted again"], "target": 260.0}]}
+    Runner(db, PIPELINES, {"prices": Prices(), "portfolio": pf, "agents": ag}).start("daily", AS_OF)
+    facts = next(c for c in ag.calls if c[0] == "DC-21")[3]
+    for key in ("BA.close", "BA.entry = 150.0", "BA.pnl_pct", "BA.to_stop_pct", "BA.to_target_pct", "BA.open_r",
+                "BA.weight_pct", "BA.thesis_breakers", "BA.event = guidance cut", "portfolio.regime", "market.atr_20_60_pct"):
+        assert key in facts, key
+
+
+def test_profit_flags_on_a_steady_rise():
+    from qt.timing import profit_flags
+    start = date(2022, 1, 3)
+    up = [Bar(start + timedelta(days=i), 100 + i, 101 + i, 99.5 + i, 100.8 + i) for i in range(120)]
+    f = profit_flags(up)
+    assert f["extended_days"] > 21 and "high_intervals_red" not in f
+    assert profit_flags(up[:30]) == {}                                   # too little history
+    assert "extended_days" not in profit_flags(up, "short")
