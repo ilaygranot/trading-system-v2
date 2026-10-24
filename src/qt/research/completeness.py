@@ -209,6 +209,9 @@ def check(d: dict) -> dict[str, Any]:
     b, f = _verification(d.get("verification"))
     blocks += b
     flags += f
+    quiet = (((d.get("meta") or {}).get("news")) or {}).get("empty") or []
+    if quiet:
+        flags.append(_item("news_quiet", "macro", "שאילתות חדשות בלי כותרת בחלון (שני המקורות ענו): " + ", ".join(quiet)))
     shaky = [x for x in J.get("agent_log") or [] if x.get("status") not in (None, "decided")]
     if shaky:
         flags.append(_item("agents_undecided", "agents", f"{len(shaky)} החלטות של הסוכנים לא הוכרעו או נדחו: "

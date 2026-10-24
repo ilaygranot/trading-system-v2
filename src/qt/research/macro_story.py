@@ -26,6 +26,9 @@ from qt.facts import FactSheet
 from qt.research import article as AR
 
 GNEWS = "https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+# Google News answers 503 to Render's shared address for hours (the dry runs of 24.10): Bing's feed stands in for a
+# query Google did not answer. It has no date operator; the window is applied to its items like to Google's.
+BING = "https://www.bing.com/news/search?q={q}&format=rss&setlang=en-US"
 FED_RSS = "https://www.federalreserve.gov/feeds/press_monetary.xml"
 # what moves the course's macro picture (S01-S03): the Fed, inflation, jobs, activity, credit, oil, the market
 QUERIES = (
@@ -43,6 +46,7 @@ MIN_STORY, MIN_EVENTS = 2, 1   # below these the narrative is incomplete: the ru
 _ITEM = re.compile(r"<item>(.*?)</item>", re.S)
 _TAG = lambda tag: re.compile(rf"<{tag}[^>]*>(.*?)</{tag}>", re.S)  # noqa: E731
 _TITLE, _LINK, _PUB, _SRC = _TAG("title"), _TAG("link"), _TAG("pubDate"), _TAG("source")
+_BING_SRC = _TAG("News:Source")
 
 
 def _text(m: re.Match | None) -> str:
@@ -57,7 +61,10 @@ def parse_rss(xml: str, default_source: str) -> list[dict]:
             day = parsedate_to_datetime(pub).date()
         except (TypeError, ValueError):
             continue
-        src = _text(_SRC.search(it)) or default_source
+        src = _text(_SRC.search(it)) or _text(_BING_SRC.search(it)) or default_source
+        if "bing.com/news/apiclick" in link:            # Bing wraps the article's address in its click link
+            from urllib.parse import parse_qs, urlparse
+            link = (parse_qs(urlparse(link).query).get("url") or [link])[0]
         if src and title.endswith(f" - {src}"):
             title = title[: -len(src) - 3].strip()
         if title and link:
@@ -66,18 +73,31 @@ def parse_rss(xml: str, default_source: str) -> list[dict]:
 
 
 def fetch_news(as_of: date, get: Callable[[str], str] | None = None) -> dict:
-    """{"items": [...], "errors": {...}}: the headlines of the window, newest first, one per title."""
+    """{"items": [...], "errors": {...}, "empty": [...]}: the headlines of the window, newest first, one per title;
+    the queries a source failed (they block the report) and those both sources answered with nothing (listed)."""
     if get is None:
         from qt.data.macro_auto import Http
         get = Http().text
     after, before = as_of - timedelta(days=DAYS_BACK), as_of + timedelta(days=1)
-    items, errors = [], {}
+    items, errors, empty = [], {}, []
     for q in QUERIES:
         url = GNEWS.format(q=quote_plus(f"{q} after:{after.isoformat()} before:{before.isoformat()}"))
-        try:
-            got = parse_rss(get(url), "Google News")
-        except Exception as e:                       # noqa: BLE001 - one query's failure is listed, the rest stand
-            errors[q] = f"{type(e).__name__}: {e}"
+        tried = []
+        got = []
+        for name, u in (("google", url), ("bing", BING.format(q=quote_plus(q)))):
+            try:                                     # an empty answer (a consent page) is a failure too
+                got = [x for x in parse_rss(get(u), f"{name.title()} News")
+                       if after.isoformat() <= x["date"] <= as_of.isoformat()]
+                if got:
+                    break
+                tried.append(f"{name}: no headlines in the window")
+            except Exception as e:                   # noqa: BLE001 - Bing stands in; both failing is listed
+                tried.append(f"{name}: {type(e).__name__}: {e}")
+        if not got:                                  # both answered with nothing: a quiet query, listed only
+            if all(t.endswith("no headlines in the window") for t in tried):
+                empty.append(q)
+            else:                                    # a source that failed: the story is short of its headlines
+                errors[q] = "; ".join(tried)
             continue
         items += [dict(x, query=q) for x in got if after.isoformat() <= x["date"] <= as_of.isoformat()][:PER_QUERY]
     try:
@@ -91,7 +111,7 @@ def fetch_news(as_of: date, get: Callable[[str], str] | None = None) -> dict:
         if k not in seen:
             seen.add(k)
             out.append(x)
-    return {"items": out, "errors": errors}
+    return {"items": out, "errors": errors, "empty": empty}
 
 
 def moves(charts: dict) -> list[dict]:

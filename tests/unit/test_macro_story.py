@@ -44,8 +44,28 @@ def test_fetch_news_keeps_the_window_once_per_title_and_lists_failures():
     titles = [x["title"] for x in n["items"]]
     assert "Too new" not in titles and titles.count("Fed raises rates by a quarter point") == 1
     assert "Oil jumps 13% as Hormuz closes & LNG halts" not in titles     # before the window (120 days)
-    assert n["errors"] == {"Treasury yields": "RuntimeError: HTTP 503"}
-    assert len(calls) == len(MS.QUERIES) + 1 and "before%3A2026-10-24" in calls[0]
+    assert n["errors"] == {"Treasury yields": "google: RuntimeError: HTTP 503; bing: RuntimeError: HTTP 503"}
+    assert len(calls) == len(MS.QUERIES) + 2 and "before%3A2026-10-24" in calls[0]
+
+
+BING = """<rss xmlns:News="https://www.bing.com/news/search?q=x&amp;format=rss"><channel>
+<item><title>Most Fed officials saw another rate hike as likely: FOMC minutes</title>
+<link>http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;aid=&amp;url=https%3a%2f%2fwww.msn.com%2fen-us%2fmoney%2ffomc&amp;c=1</link>
+<pubDate>Wed, 07 Oct 2026 18:30:00 GMT</pubDate><News:Source>MSN</News:Source></item>
+</channel></rss>"""
+
+
+def test_bing_stands_in_for_a_query_google_did_not_answer():
+    """Google News answered 503 to Render for hours (the dry runs of 24.10)."""
+    def get(url):
+        if "news.google.com" in url and "FOMC" in url:
+            raise RuntimeError("HTTP 503")
+        return BING if "bing.com" in url else RSS
+    n = MS.fetch_news(date(2026, 10, 23), get)
+    assert n["errors"] == {}
+    fomc = [x for x in n["items"] if x["query"] == "FOMC minutes"]
+    assert fomc == [{"date": "2026-10-07", "title": "Most Fed officials saw another rate hike as likely: FOMC minutes",
+                     "publisher": "MSN", "url": "https://www.msn.com/en-us/money/fomc", "query": "FOMC minutes"}]
 
 
 def test_moves_are_the_largest_steps_one_per_month():
@@ -102,3 +122,18 @@ def test_a_run_without_the_story_is_not_finished_and_the_resume_asks_again(db):
     d = {**FIX, "judgments": {**FIX["judgments"], "A1": J["A1"], "carried": {}}}
     html = report._macro(d)
     assert "מה קורה, במילים פשוטות" in html and "הפד מקל." in html and "השוק בשיא" in html and "מהמחקר של" not in html
+
+
+def test_an_empty_answer_is_asked_of_bing_and_a_quiet_query_is_listed():
+    """A consent page or an empty feed is HTTP 200 with no headline: not an answer."""
+    empty = "<rss><channel></channel></rss>"
+
+    def get(url):
+        if "FOMC" in url:
+            return BING if "bing.com" in url else empty
+        if "Treasury" in url:
+            return empty
+        return RSS
+    n = MS.fetch_news(date(2026, 10, 23), get)
+    assert [x["publisher"] for x in n["items"] if x["query"] == "FOMC minutes"] == ["MSN"]
+    assert n["errors"] == {} and n["empty"] == ["Treasury yields"]          # a quiet query is listed, not a failure
