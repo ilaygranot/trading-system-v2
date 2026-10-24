@@ -145,7 +145,8 @@ def _svc(bot, watchlist):
 def test_weekly_run_end_to_end_and_rank_moves_from_last_week(db):
     wl = {"entries": [vars(_entry(symbol="ABC", added="2026-10-12"))]}
     bot = Bot()
-    r = Runner(db, PIPELINES, _svc(bot, wl))
+    from dossiers import research_services
+    r = Runner(db, PIPELINES, {**_svc(bot, wl), **research_services(db)})
     r.start("weekly", AS_OF - timedelta(days=7))
     rid = r.start("weekly", AS_OF)
     st = [x for x in r.status() if x["id"] == rid][0]
@@ -155,7 +156,7 @@ def test_weekly_run_end_to_end_and_rank_moves_from_last_week(db):
     text = bot.sent[-2] + bot.sent[-1]
     for s in ("זירת סקטורים", "XLK 11", "XLU 1", "פוזיציות:", "• XLE", "רשימת מעקב: 1 (1 לונג, 0 שורט)",
               "פחות מ-2 רעיונות חדשים", "שבועיים קדימה: 10-29 דוח ABC", "בהכנה החודשית", "תפעול", "לא נבדקו",
-              "מחקר שבועי לא רץ: חסר Claude (ANTHROPIC_API_KEY או CLAUDE_CODE_OAUTH_TOKEN), FRED_API_KEY, קובץ המקרו החודשי"):
+              "מחקר שבועי: 3 רעיונות נבדקו", "✅ דוח מלא: 3/3 מניות, 3 מאמרים"):
         assert s in text, s
     arena = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='arena'", (rid,), ["output"])["output"]
     assert all(x["rank_change"] is not None for x in arena["rows"])   # last week's run is found
@@ -184,6 +185,7 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
     from qt.approvals import Queue
     from qt.telegram import sign_report
     from qt.web import App
+    from dossiers import complete
     from test_judge import CardClient
 
     fix = _json.loads((Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8"))
@@ -194,9 +196,9 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
 
     def fake_research(as_of, judge, manual_text, fred):
         seen.update(as_of=as_of, manual=manual_text, limit=judge.runner.limit_usd, run_id=judge.run_id)
-        d = copy.deepcopy(fix)
-        d["judgments"]["agent_log"] = [{"card": "DC-10", "cost": 0.25}, {"card": "DC-13", "cost": 0.5}]
-        d["judgments"]["errors"] = {"XYZ": "BudgetExceeded: agent budget $25 reached"}
+        d = complete(fix)                                              # a finished report (dossiers.complete)
+        d["judgments"]["agent_log"] = [{"card": "DC-10", "cost": 0.25, "status": "decided"},
+                                       {"card": "DC-13", "cost": 0.5, "status": "decided"}]
         return d
 
     first = next(iter(fix["ideas"]))
@@ -208,7 +210,7 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
     assert seen["as_of"] == AS_OF and "ism_pmi" in seen["manual"] and seen["limit"] == config()["budget"]["weekly_research_usd"] and seen["run_id"] == rid
     assert runner.limit_usd is None                                    # the daily cap is back after the run
     out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='research'", (rid,), ["output"])["output"]
-    assert out["cost_usd"] == 0.75 and "XYZ" in out["errors"]
+    assert out["cost_usd"] == 0.75 and out["completeness"]["status"] == "complete"
     wl = yaml.safe_load(Queue(db).latest_upload("watchlist")["content"])
     by = {e["symbol"]: e for e in wl["entries"]}
     assert "KEEP" in by and len(by) == out["watchlist_n"]
@@ -218,7 +220,7 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
     text = bot.sent[-2]
     link = f"https://qt.example/report/{rep['id']}?sig={sign_report(rep['id'], 'pw')}"
     assert f"מחקר שבועי: {len(fix['ideas'])} רעיונות נבדקו · עלות הסוכנים 0.75$ · הדוח: {link}" in text
-    assert "רשימת המעקב עודכנה" in text and "לא הושלמו: XYZ" in text
+    assert "רשימת המעקב עודכנה" in text and f"✅ דוח מלא: {len(fix['ideas'])}/{len(fix['ideas'])} מניות" in text
     for sym, i in fix["ideas"].items():
         if i["bucket"] in ("enter", "conditional"):
             assert f"• {sym} " in text
@@ -283,6 +285,7 @@ def test_a_research_cut_by_the_budget_fails_the_run_after_the_partial_report(db)
 
     from qt.agents import AgentRunner
     from qt.approvals import Queue
+    from dossiers import complete
     from test_judge import CardClient
 
     fix = _json.loads((Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8"))
@@ -290,8 +293,9 @@ def test_a_research_cut_by_the_budget_fails_the_run_after_the_partial_report(db)
 
     def cut(as_of, judge, manual_text, fred):
         seen.append(judge.state.as_of)
-        d = copy.deepcopy(fix)
+        d = complete(fix)
         d["judgments"]["incomplete"] = ["EOG", "SHEL:article"]
+        del d["ideas"]["SHEL"]["judgment"]["article"]
         return d
     Queue(db).upload("manual_macro", "ism.yaml", "ism_pmi: {'2026-09': 49}\n")
     svc = {**_svc(Bot(), None), "agents": AgentRunner(db, CardClient()), "fred": object(), "research_run": cut}
@@ -300,7 +304,7 @@ def test_a_research_cut_by_the_budget_fails_the_run_after_the_partial_report(db)
         r.start("weekly", AS_OF)
         raise AssertionError("expected the run to fail")
     except Exception as e:
-        assert "EOG, SHEL:article missing" in str(e)
+        assert "EOG: לא הושלם" in str(e) and "SHEL: אין מאמר" in str(e) and "דוח חלקי" in str(e)
     run = db.one("SELECT * FROM runs WHERE kind = 'weekly'")
     assert run["status"] == "failed" and seen == [AS_OF.isoformat()]
     assert Queue(db).latest_upload("report") and Queue(db).latest_upload("dossier")     # the partial report is up

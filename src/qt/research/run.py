@@ -79,10 +79,7 @@ def _rows_by_etf(u: dict) -> dict[str, list]:
 
 def price_moves(y: Yahoo, sym: str, as_of: date) -> dict:
     """DC-08's input: the price change over 3, 6 and 12 months (about 63, 126 and 252 sessions)."""
-    try:
-        c = [b.close for b in y.bars(sym, as_of - timedelta(days=400), as_of)]
-    except Exception:                                                   # noqa: BLE001 - a missing input, not a crash
-        return {}
+    c = [b.close for b in y.bars(sym, as_of - timedelta(days=400), as_of)]   # a failure fails DC-08's card (completeness)
     return {f"{m}m": round((c[-1] / c[-1 - n] - 1) * 100, 1) for m, n in ((3, 63), (6, 126), (12, 252)) if len(c) > n}
 
 
@@ -462,6 +459,8 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
         meta=dict(as_of=as_of.isoformat(), generated_at=datetime.now(timezone.utc).isoformat(timespec="minutes"),
                   equity=idea.EQUITY, playbook_version=load_policy().playbook_version, history_years=HISTORY_DAYS // 365,
                   judged_by=J.get("judged_by", "missing"), breadth_pct=breadth, events=run_events,
+                  universe={"n": len(u["quotes"]), "errors": {s: x["error"] for s, x in u["summaries"].items()
+                                                              if isinstance(x, dict) and "error" in x}},
                   documents={"fetched": len(docs_memo),
                              "with_errors": sorted(s for s, x in docs_memo.items() if x.get("errors"))}),
         macro=macro, sectors=sectors, screens=screens, timing=timing, ideas=ideas, funnel=funnel, portfolio=fit,

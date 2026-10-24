@@ -18,3 +18,20 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -e '.[dev,postgres]'
       - run: pytest
+  package:
+    # Render runs `pip install .`, not -e: the Playbook shipped empty from 22.10 to 24.10 and the editable install
+    # above never saw it. Install the same way, run from outside the checkout, and check every data file shipped.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install '.[postgres]'
+      - name: every tracked data file under src/qt is in the installed package
+        run: |
+          git ls-files src/qt | grep -v '\.py$' | sed 's#^src/qt/##' | sort > want.txt
+          cd /tmp && python -c "import qt, pathlib; r = pathlib.Path(qt.__file__).parent; print('\n'.join(sorted(str(p.relative_to(r)) for p in r.rglob('*') if p.is_file() and p.suffix not in ('.py', '.pyc'))))" > have.txt
+          missing=$(comm -23 "$GITHUB_WORKSPACE/want.txt" /tmp/have.txt)
+          if [ -n "$missing" ]; then echo "not in the package:"; echo "$missing"; exit 1; fi
+      - name: the offline pre-flight from the installed package
+        run: cd /tmp && qt preflight --offline

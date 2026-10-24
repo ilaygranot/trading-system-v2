@@ -280,8 +280,10 @@ def test_weekly_report_counts_discipline_and_cost(db):
     q.add("r", d, _action(symbol="B"), 1.0)
     q.expire(datetime(2026, 10, 22, tzinfo=UTC))
     bot = Bot()
-    Runner(db, PIPELINES, {"telegram": bot, "now": lambda: datetime(2026, 10, 24, 14, 0, tzinfo=UTC)}) \
-        .start("weekly", date(2026, 10, 23))
+    from dossiers import research_services
+    from test_weekly import Prices
+    Runner(db, PIPELINES, {"telegram": bot, "prices": Prices(), "now": lambda: datetime(2026, 10, 24, 14, 0, tzinfo=UTC),
+                           **research_services(db)}).start("weekly", date(2026, 10, 23))
     rep = db.one("SELECT output FROM run_steps WHERE step='report'", json_cols=["output"])["output"]
     assert rep["not_reviewed"] == 2 and rep["not_reviewed_pct"] == 100.0
     assert "לא נבדקו (פגו): 2" in bot.sent[-1][1]
@@ -325,7 +327,10 @@ def test_monthly_without_fred_says_so(db):
 
 def test_scheduled_runs_once_skips_done_and_auto_resumes_a_failure(db):
     bot = Bot()
-    svc = {"telegram": bot, "now": lambda: datetime(2026, 10, 24, 14, 5, tzinfo=UTC)}
+    from dossiers import research_services
+    from test_weekly import Prices
+    svc = {"telegram": bot, "prices": Prices(), "now": lambda: datetime(2026, 10, 24, 14, 5, tzinfo=UTC),
+           **research_services(db)}
     sat = datetime(2026, 10, 24, 14, 5, tzinfo=UTC)
     assert A.scheduled("weekly", db, svc, datetime(2026, 10, 24, 16, 0, tzinfo=UTC)) == "not due: weekly"
     rid = A.scheduled("weekly", db, svc, sat)

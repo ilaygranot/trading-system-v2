@@ -9,7 +9,7 @@
 | Module | What it does | Playbook |
 |---|---|---|
 | `qt/policy.yaml` | Every enforced number, with its source | decisions.md א, ד |
-| `qt/playbook.py` | Rule tiers from `playbook_snapshot/` (copy of `playbook/tiers`) | tiers/README.md |
+| `qt/playbook.py` | Rule tiers from `qt/playbook_snapshot/` (package data) (copy of `playbook/tiers`) | tiers/README.md |
 | `qt/calc/volatility.py` | ADR60, ATR 20-60 regime with ±0.325% hysteresis, VIX jump (flag only), σ conversions | S11-R24, S12-R24, S12-R25 |
 | `qt/calc/trade.py` | k×ADR stop, reward:risk, vertical spreads, single options, sizing, horizon | S10, S11 |
 | `qt/calc/portfolio.py` | Gross/net, options caps, sectors, latched 15% portfolio stop, 60/40, winner rebalance | S11, S12 |
@@ -53,6 +53,16 @@ writes the same judgments a person would (`qt/research/judge.py`); a run has its
 The scheduled weekly run ends with that research (`qt/weekly.py`, step `research`): the report is saved and linked in
 Telegram (`/report/<id>`, signed), and its ideas are merged into the watchlist the daily pass checks.
 
+A report is whole or the run fails (`qt/research/completeness.py`, Ilay 24.10): every picked stock analysed with its
+cards, plan and article, A1's market story, the data check run with its sources, no stock dropped on a failed request.
+A partial report is still uploaded and opens with what is missing; the run fails and a resume finishes it. Missing
+data or keys fail the step; nothing is copied from an earlier week. `qt completeness <dossier.json>` checks a saved one.
+
+Before Saturday: `qt preflight` tries every key, the database, the Claude CLI and one live request per data source
+(`--offline` for the code-only checks CI runs from the installed package). `qt dry-run` (cron `qt-dryrun`, Friday
+after the close) runs the whole weekly run in the schema `qt_dry` with two deep dives, sends one verdict to Telegram
+and hands a clean universe to Saturday's research.
+
 Not yet: the course test set for the agents (Opus vs Sonnet), A2 / A8, L drafting the monthly change proposals (code lists the candidates), the shadow run of a new Playbook version (7.4 step 6), the case library (7.5), and writing the journal into the Drive sheet itself (today: the `/journal` page and its CSV files).
 
 ## Run
@@ -67,4 +77,4 @@ qt replay
 qt rules
 ```
 
-Updating the Playbook: copy `playbook/tiers/*.csv` into `playbook_snapshot/`, update `policy.yaml` if a number changed, run the tests. The playbook version in every journal entry is a hash of the snapshot.
+Updating the Playbook: copy `playbook/tiers/*.csv` into `src/qt/playbook_snapshot/`, update `policy.yaml` if a number changed, run the tests. The playbook version in every journal entry is a hash of the snapshot.

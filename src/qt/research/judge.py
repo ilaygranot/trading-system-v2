@@ -331,10 +331,11 @@ class Judge:
     """Calls the cards for one research run and assembles the judgments dict."""
 
     def __init__(self, runner, run_id: str | None = None, max_deep: int = MAX_DEEP, step: str = "research",
-                 state=None):
+                 state=None, max_rescue: int = MAX_RESCUE):
         """state: qt.research.state.State. What a run of the same week finished is taken from it and not asked
         again; each piece is saved as it finishes."""
         self.runner, self.run_id, self.max_deep, self.step, self.state = runner, run_id, max_deep, step, state
+        self.max_rescue = max_rescue                     # the dry run asks fewer (qt.dryrun)
         self.log: list[dict] = []
         self.selection: dict[str, Any] = {}
         self.reused: list[str] = []
@@ -383,8 +384,8 @@ class Judge:
         stance = macro["stage2"]["stance"]
         for n, (e, r, override) in enumerate(asks):
             sym = r["ticker"]
-            if n >= MAX_RESCUE:
-                out[e]["dc08"][sym] = {"option": None, "reason": f"לא נשאל: תקרה של {MAX_RESCUE} בריצה"}
+            if n >= self.max_rescue:
+                out[e]["dc08"][sym] = {"option": None, "reason": f"לא נשאל: תקרה של {self.max_rescue} בריצה"}
                 continue
             failed = ["S06-R34"] if override else r["failed"]
             patterns = ["near_zero_jump"] if override else r["patterns"]

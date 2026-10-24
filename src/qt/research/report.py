@@ -1245,6 +1245,9 @@ h1{font-size:2.1rem;margin:0} h2{font-size:1.6rem;margin:2.4rem 0 .8rem;padding-
 h3{font-size:1.2rem;margin:1.6rem 0 .6rem} h4{font-size:1rem;margin:1.4rem 0 .5rem;font-family:var(--body);font-weight:700}
 .masthead{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:end;padding-block:20px 12px}
 .masthead p{margin:0;color:var(--muted)}
+.verdict{border:1px solid var(--line);border-inline-start:5px solid var(--g);background:var(--g-bg);border-radius:8px;padding:10px 14px;margin:8px 0 12px}
+.verdict.partial{border-inline-start-color:var(--r);background:var(--r-bg)}
+.verdict ul{margin:6px 0 0;padding-inline-start:20px} .verdict li.flag{color:var(--o)} .verdict li.block{color:var(--r)}
 .rail{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
   display:flex;gap:4px;overflow-x:auto;padding-block:8px}
 .rail a{white-space:nowrap;text-decoration:none;color:var(--muted);padding:4px 10px;border-radius:4px;font-size:.9rem}
@@ -1391,6 +1394,18 @@ def sections(d: dict[str, Any], ideas: str | None = None) -> tuple[list[tuple[st
                  f"{_method(d)}")
 
 
+def verdict(c: dict | None) -> str:
+    """The report's first lines: complete or partial (qt.research.completeness), with every block and flag."""
+    if not c:
+        return ""
+    from qt.research.completeness import line
+    ok = c["status"] == "complete"
+    items = [("block", x) for x in c["blocks"]] + [("flag", x) for x in c["flags"]]
+    li = "".join(f'<li class="{k}">{E(x["text"])}</li>' for k, x in items)
+    return (f'<section class="verdict {"ok" if ok else "partial"}" id="verdict"><b>{"✓" if ok else "✗"} {E(line(c))}</b>'
+            + (f"<ul>{li}</ul>" if li else "") + "</section>")
+
+
 def render(d: dict[str, Any]) -> str:
     m = d["meta"]
     as_of = date.fromisoformat(m["as_of"])
@@ -1405,6 +1420,7 @@ def render(d: dict[str, Any]) -> str:
 <div class="masthead"><div><h1>מחקר שוק · {as_of:%d.%m.%Y}</h1>
 <p>ריצה מלאה של שלבים 0–11 על נתונים חיים · פלייבוק {E(m["playbook_version"])} · סגירה של {E(m["as_of"])}</p></div>
 <p class="note">שיקול דעת: {E(m["judged_by"])}</p></div>
+{verdict(d.get("completeness"))}
 <nav class="rail">{"".join(f'<a href="#{k}">{E(v)}</a>' for k, v in nav)}</nav>
 {body}
 </div>"""

@@ -24,25 +24,52 @@ def is_postgres(url: str) -> bool:
 
 
 class DB:
-    def __init__(self, url: str | Path | None = None):
+    def __init__(self, url: str | Path | None = None, schema: str | None = None):
+        """schema: a Postgres schema of its own (the dry run, qt.dryrun), created when missing; every table of this
+        connection lives there and nothing it writes reaches the production tables."""
         url = str(url if url is not None else os.environ.get("QT_DATABASE_URL", ":memory:"))
-        self.url = url
+        self.url, self.schema = url, schema
+        if schema is not None and (not schema.isidentifier() or schema.lower() in ("public", "pg_catalog")):
+            raise ValueError(f"not a schema of its own: {schema}")
         if is_postgres(url):
             import psycopg
             from psycopg.rows import dict_row
-            self._connect = lambda: psycopg.connect(url, row_factory=dict_row, autocommit=True, keepalives=1,
-                                                    keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
+
+            def connect():
+                c = psycopg.connect(url, row_factory=dict_row, autocommit=True, keepalives=1,
+                                    keepalives_idle=30, keepalives_interval=10, keepalives_count=5)
+                if schema:
+                    c.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+                    c.execute(f"SET search_path TO {schema}")
+                return c
+            self._connect = connect
             self.conn = self._connect()
             self.dialect = "postgres"
             self.error: tuple[type[Exception], ...] = (psycopg.Error,)
         else:
             path = url.removeprefix("sqlite:///").removeprefix("sqlite://")
+            if schema and path != ":memory:":
+                path = f"{path}.{schema}"                     # SQLite: a file of its own
             if path != ":memory:":
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
             self.conn = sqlite3.connect(path)
             self.conn.row_factory = sqlite3.Row
             self.dialect = "sqlite"
             self.error = (sqlite3.DatabaseError,)
+
+    def drop_schema(self) -> None:
+        """Empty this connection's own schema (the dry run starts clean). Never the production tables."""
+        if not self.schema:
+            raise ValueError("no schema of its own: refusing to drop production tables")
+        if self.pg:
+            self.conn.execute(f"DROP SCHEMA IF EXISTS {self.schema} CASCADE")
+            self.conn.execute(f"CREATE SCHEMA {self.schema}")
+            self.conn.execute(f"SET search_path TO {self.schema}")
+        else:
+            for (t,) in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table' "
+                                          "AND name NOT LIKE 'sqlite_%'").fetchall():
+                self.conn.execute(f"DROP TABLE IF EXISTS {t}")
+            self.conn.commit()
 
     @property
     def pg(self) -> bool:

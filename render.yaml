@@ -64,7 +64,8 @@ services:
       - key: IBKR_PORT
         value: "4004"                     # paper API (socat relay of 4002 inside the image)
 
-  # IB Gateway, headless, always on (Ilay 22.10). Image: gnzsnz/ib-gateway (IB Gateway + IBC + Xvfb + socat),
+  # IB Gateway, headless (Ilay 22.10). Suspended 24.10 (Ilay approved): nothing reads it until the broker stage;
+  # kept here so the IBKR_HOST copies resolve. Resume it in the dashboard when that stage starts. Image: gnzsnz/ib-gateway (IB Gateway + IBC + Xvfb + socat),
   # pinned to a version so a redeploy never changes it by surprise. Private service: reachable only from the
   # other services here, never from the internet. Paper only and read-only until stage 9 (real money).
   - type: pserv
@@ -220,6 +221,49 @@ services:
     schedule: "0 14,15 * * 6"
     buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: qt run weekly --scheduled
+    envVars:
+      - key: QT_PUBLIC_URL
+        fromService: {type: web, name: qt-web, envVarKey: RENDER_EXTERNAL_URL}
+      - key: QT_DATABASE_URL
+        fromDatabase: {name: qt-db, property: connectionString}
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: CLAUDE_CODE_OAUTH_TOKEN
+        fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
+      - key: DISABLE_AUTOUPDATER
+        value: "1"
+      - key: FRED_API_KEY                 # the macro stance (monthly) and the weekly research
+        fromService: {type: web, name: qt-web, envVarKey: FRED_API_KEY}
+      - key: QT_START_EQUITY
+        value: "10000"                    # the paper book's cash until the first portfolio or fill exists
+      - key: TELEGRAM_BOT_TOKEN
+        fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
+      - key: TELEGRAM_CHAT_ID
+        fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_CHAT_ID}
+      - key: DASHBOARD_PASSWORD
+        fromService: {type: web, name: qt-web, envVarKey: DASHBOARD_PASSWORD}
+      - key: IBKR_HOST
+        fromService: {type: pserv, name: qt-ibgateway, property: host}
+      - key: FMP_API_KEY                  # second daily close (verify) and the price fallback when Yahoo fails
+        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
+      - key: ALPHAVANTAGE_API_KEY
+        fromService: {type: web, name: qt-web, envVarKey: ALPHAVANTAGE_API_KEY}
+      - key: IBKR_PORT
+        value: "4004"
+      - key: SEC_CONTACT                  # the deep dive's 8-K/6-K, results release and 10-K
+        fromService: {type: web, name: qt-web, envVarKey: SEC_CONTACT}
+      - key: ROIC_API_KEY                 # the deep dive's last earnings call (DC-26)
+        fromService: {type: web, name: qt-web, envVarKey: ROIC_API_KEY}
+
+  - type: cron
+    name: qt-dryrun                       # Friday after the close: the weekly run rehearsed (Ilay 24.10)
+    runtime: python
+    region: virginia
+    plan: standard                        # 2 GB: the research run holds the whole universe (~100 MB pickled) in memory
+    schedule: "0 22 * * 5"                # 18:00 New York in summer, 17:00 in winter: after the close either way
+    buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
+    startCommand: qt dry-run                # qt.dryrun: pre-flight, then the weekly run in schema qt_dry with two deep
+                                          # dives; one verdict to Telegram; hands a clean universe to Saturday's run
     envVars:
       - key: QT_PUBLIC_URL
         fromService: {type: web, name: qt-web, envVarKey: RENDER_EXTERNAL_URL}

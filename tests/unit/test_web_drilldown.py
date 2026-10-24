@@ -11,7 +11,6 @@ from qt.approvals import Queue
 from qt.calc.volatility import Bar
 from qt.research import report
 from qt.runs import SCHEMA
-from qt.weekly import carry_forward
 from qt.web import App
 from test_web_positions import _call
 
@@ -63,21 +62,12 @@ def test_an_old_report_says_so(site):
     assert "המחקר השבועי לא הפיק" in site.stale((date.today() - timedelta(days=12)).isoformat())
 
 
-def test_what_the_agents_do_not_write_stays_from_the_last_research():
-    prev = json.loads(FIX)
-    prev["judgments"]["A1"].update(story=["הסיפור של השבוע"], fed={"headline": "הפד מקל"},
-                                   events=[{"date": "2026-10-01", "title": "אירוע", "text": "טקסט", "charts": []}])
+def test_nothing_is_copied_from_an_earlier_research():
+    """Ilay 24.10: the 23.10 report showed the market story of 20.10. A report shows only what its own run wrote."""
+    import qt.weekly as WK
+    assert not hasattr(WK, "carry_forward")
     new = json.loads(FIX)
-    new["judgments"]["A1"]["notes"] = "A1 note"                            # the agents write one line, not a list
-    new["judgments"].pop("A2", None)
-    new["meta"]["as_of"] = "2026-10-24"
-    carry_forward(new, {"content": json.dumps(prev)})
-    J = new["judgments"]
-    assert J["A1"]["story"] == prev["judgments"]["A1"]["story"] and J["A2"] == prev["judgments"]["A2"]
-    assert J["carried"]["from"] == prev["meta"]["as_of"]
-    html = report.render(new)
-    assert f"מהמחקר של {prev['meta']['as_of']}" in html and "הסיפור של השבוע" in html and "הפד מקל" in html and "• A1 note" in html and "• A<" not in html
-    carry_forward(new, None)                                               # nothing before it: nothing changes
+    assert "מהמחקר של" not in report.render(new)
 
 
 def test_big_answers_go_out_gzipped(site):

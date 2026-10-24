@@ -1,5 +1,6 @@
 """Command line: `qt check trade.yaml`, `qt macro stance.yaml`, `qt rules`, `qt replay`,
-`qt run daily|premarket|open|weekly|monthly|resume|status [--scheduled]`, `qt research`, `qt eval agents`, `qt web`, `qt set-webhook`."""
+`qt run daily|premarket|open|weekly|monthly|resume|status [--scheduled]`, `qt research`, `qt eval agents`, `qt web`, `qt set-webhook`, `qt preflight [--offline]`, `qt dry-run`,
+`qt completeness <dossier.json>`."""
 from __future__ import annotations
 
 import argparse
@@ -195,6 +196,27 @@ def _macro_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _preflight(args: argparse.Namespace) -> int:
+    """Every service and source the weekly research needs, tried for real (qt.preflight); exit 1 on a failure."""
+    from qt import preflight
+    return preflight.main(args.offline, args.notify)
+
+
+def _dry_run(args: argparse.Namespace) -> int:
+    """The weekly run in a schema of its own with two deep dives (qt.dryrun); exit 1 when Saturday would not be whole."""
+    from datetime import date
+    from qt import dryrun
+    return dryrun.main(date.fromisoformat(args.as_of) if args.as_of else None, not args.no_notify, not args.no_share)
+
+
+def _completeness(args: argparse.Namespace) -> int:
+    """The whole-report contract on a saved dossier (qt.research.completeness); exit 1 when it is partial."""
+    from qt.research import completeness
+    c = completeness.check(json.loads(Path(args.dossier).read_text(encoding="utf-8")))
+    print("\n".join(completeness.lines(c, limit=200)))
+    return 0 if c["status"] == "complete" else 1
+
+
 def _eval(args: argparse.Namespace) -> int:
     """The course test set on the agents (qt.agents.eval): a blind Playbook, every case once per model."""
     from qt.agents.eval import main
@@ -256,6 +278,18 @@ def main(argv: list[str] | None = None) -> int:
     mf.add_argument("--save", action="store_true", help="write the merged file as the manual_macro upload")
     mf.add_argument("--db")
     mf.set_defaults(fn=_macro_fetch)
+    pf = sub.add_parser("preflight", help="try every key, service and data source the weekly research needs")
+    pf.add_argument("--offline", action="store_true", help="only the checks without network or keys (CI)")
+    pf.add_argument("--notify", action="store_true", help="send the result to Telegram")
+    pf.set_defaults(fn=_preflight)
+    dr = sub.add_parser("dry-run", help="the weekly run in its own schema, two deep dives, one verdict to Telegram")
+    dr.add_argument("--as-of", help="default: the as-of of the coming Saturday's run")
+    dr.add_argument("--no-notify", action="store_true")
+    dr.add_argument("--no-share", action="store_true", help="do not hand the universe to Saturday's research")
+    dr.set_defaults(fn=_dry_run)
+    cp = sub.add_parser("completeness", help="is a saved dossier a whole report (exit 1 when partial)")
+    cp.add_argument("dossier")
+    cp.set_defaults(fn=_completeness)
     sub.add_parser("set-webhook", help="point the Telegram bot at the web service").set_defaults(fn=_webhook)
     sub.choices["set-webhook"].add_argument("--url")
     args = ap.parse_args(argv)

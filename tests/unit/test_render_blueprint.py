@@ -11,7 +11,7 @@ OPTIONAL = {"ANTHROPIC_API_KEY"}
 # the second daily close and the price fallback; set on qt-web 24.10, copied to every cron
 PRICE_KEYS = {"FMP_API_KEY", "ALPHAVANTAGE_API_KEY"}
 # read by the macro stance and the weekly research only; set on qt-web before this file syncs
-FRED_CRONS = {"qt-weekly", "qt-monthly"}
+FRED_CRONS = {"qt-weekly", "qt-dryrun", "qt-monthly"}
 # the research run's documents: the SEC filings and the roic.ai earnings call (set on qt-web 24.10)
 RESEARCH_KEYS = {"SEC_CONTACT", "ROIC_API_KEY"}
 
@@ -28,11 +28,12 @@ def test_blueprint_parses_and_every_cron_gets_the_secrets_from_qt_web():
     services = _services()
     web = _env(services["qt-web"])
     assert all(web[k].get("sync") is False for k in SECRETS | OPTIONAL | PRICE_KEYS | RESEARCH_KEYS | {"FRED_API_KEY"})
-    weekly = _env(services["qt-weekly"])
-    for k in RESEARCH_KEYS:
-        assert weekly[k]["fromService"] == {"type": "web", "name": "qt-web", "envVarKey": k}, k
+    for name in ("qt-weekly", "qt-dryrun"):
+        weekly = _env(services[name])
+        for k in RESEARCH_KEYS:
+            assert weekly[k]["fromService"] == {"type": "web", "name": "qt-web", "envVarKey": k}, (name, k)
     crons = [s for s in services.values() if s["type"] == "cron"]
-    assert {c["name"] for c in crons} == {"qt-daily", "qt-premarket", "qt-open", "qt-weekly", "qt-monthly"}
+    assert {c["name"] for c in crons} == {"qt-daily", "qt-premarket", "qt-open", "qt-weekly", "qt-dryrun", "qt-monthly"}
     for c in crons:
         env = _env(c)
         for k in SECRETS | PRICE_KEYS:
@@ -67,3 +68,13 @@ def test_every_service_that_runs_agents_installs_the_pinned_claude_cli():
         if s.get("runtime") == "python":
             assert "install.sh | bash -s 2.1.308" in s["buildCommand"] and "bin/claude" in s["buildCommand"], s["name"]
             assert _env(s)["DISABLE_AUTOUPDATER"]["value"] == "1"
+
+
+def test_the_dry_run_is_the_weekly_job_a_day_before():
+    """Same build, plan and keys as qt-weekly (a rehearsal on another machine proves nothing), Friday after the close."""
+    s = _services()
+    dry, weekly = s["qt-dryrun"], s["qt-weekly"]
+    assert dry["startCommand"].split("#")[0].strip() == "qt dry-run"
+    assert dry["schedule"].split()[-1] == "5" and int(dry["schedule"].split()[1]) >= 21     # after 16:00 New York
+    for k in ("buildCommand", "plan", "runtime", "region", "envVars"):
+        assert dry[k] == weekly[k], k
