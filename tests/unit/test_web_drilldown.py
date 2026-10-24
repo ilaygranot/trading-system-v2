@@ -43,8 +43,8 @@ def test_every_idea_has_its_page_with_the_whole_dossier(site):
 
 
 def test_overview_links_tickers_to_their_pages(site):
-    assert "rep-slot" in _call(site, "/")[2]                              # the report comes in after the live parts
-    page = _call(site, "/", query="part=report")[2]
+    assert "rep-slot" in _call(site, "/research")[2]                      # the report comes in after the page paints
+    page = _call(site, "/research", query="part=report")[2]
     assert 'href="#idea-' not in page and 'href="/stock/SHEL"' in page
     assert "id='ir-SHEL'" in page and "href='/stock/SHEL'" in page      # the idea's row opens its page
     assert 'href="/sectors">XLE' in page and 'href="/stock/XLE"' not in page
