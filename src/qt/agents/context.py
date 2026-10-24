@@ -13,9 +13,8 @@ from typing import Any
 from qt.agents.blind import blind as _blind
 from qt.agents.cards import Card
 from qt.facts import FactSheet
-from qt.playbook import DEFAULT_TIERS_DIR, Tier, load_playbook
+from qt.playbook import Tier, _tiers_dir, load_playbook
 
-CHAPTERS = DEFAULT_TIERS_DIR / "chapters"
 
 STAGES = {"A1": ["S01", "S02", "S03"], "A2": ["S04", "S05"], "A3": ["S06"], "A4": ["S07"], "A5": ["S08"],
           "A6": ["S09", "S10"], "A7": ["S11", "S12"], "A8": ["S13"]}
@@ -69,15 +68,16 @@ def playbook_pack(agent: str, blind: bool = False) -> tuple[str, str]:
     The Critic gets the pack of the agent it checks (pass that agent's id); L gets every stage.
     blind: without the course's worked examples (the test set, qt.agents.eval)."""
     pb = load_playbook()
+    chapters = _tiers_dir() / "chapters"
     stages = STAGES.get(agent) or sorted({s for v in STAGES.values() for s in v})
     parts = []
     for s in stages:
-        for f in sorted(CHAPTERS.glob(f"{s}-*.md")):
+        for f in sorted(chapters.glob(f"{s}-*.md")):
             parts.append(f"<chapter id=\"{s}\">\n{f.read_text(encoding='utf-8')}\n</chapter>")
         tiers = [f"{r.rule_id}: {r.tier.value}" for rid, r in sorted(pb.rules.items()) if rid.startswith(s + "-")
                  and r.tier is not Tier.JUDGMENT]
         parts.append(f"<tiers stage=\"{s}\">\n" + "\n".join(tiers) + "\n</tiers>")
-    parts.append(f"<decisions>\n{(CHAPTERS / 'decisions.md').read_text(encoding='utf-8')}\n</decisions>")
+    parts.append(f"<decisions>\n{(chapters / 'decisions.md').read_text(encoding='utf-8')}\n</decisions>")
     text = "\n\n".join(parts)
     if blind:
         text = _blind(text)[0]

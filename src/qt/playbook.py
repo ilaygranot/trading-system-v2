@@ -14,7 +14,14 @@ from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
-DEFAULT_TIERS_DIR = Path(__file__).resolve().parents[2] / "playbook_snapshot"
+def _default_tiers_dir() -> Path:
+    """The repo's playbook_snapshot: next to src/ in a checkout or an editable install; in a regular install (Render
+    builds with `pip install .`) the package sits in site-packages, so the checkout in the working directory."""
+    here = Path(__file__).resolve().parents[2] / "playbook_snapshot"
+    return here if here.exists() else Path.cwd() / "playbook_snapshot"
+
+
+DEFAULT_TIERS_DIR = _default_tiers_dir()
 
 
 class Tier(str, Enum):
@@ -58,6 +65,8 @@ def _tiers_dir() -> Path:
 def load_playbook(tiers_dir: str | None = None) -> Playbook:
     d = Path(tiers_dir) if tiers_dir else _tiers_dir()
     files = sorted(d.glob("S*.csv")) + [d / "_fixes.csv", d / "_scope.csv"]
+    if not d.is_dir() or not any(d.glob("S*.csv")):
+        raise FileNotFoundError(f"no Playbook snapshot at {d}: set QT_TIERS_DIR or run from the repo checkout")
     rules: dict[str, Rule] = {}
     digest = hashlib.sha256()
     for path in files:
