@@ -217,6 +217,19 @@ def _completeness(args: argparse.Namespace) -> int:
     return 0 if c["status"] == "complete" else 1
 
 
+def _void(args: argparse.Namespace) -> int:
+    """Take decisions recorded wrongly out of the counts (qt.journal.voids); the rows themselves stay."""
+    from qt.db import DB
+    from qt.journal import Journal
+    url = args.db or os.environ.get("QT_DATABASE_URL")
+    if not url:
+        print("set QT_DATABASE_URL (or --db)")
+        return 1
+    done = Journal(DB(url)).void(args.ids, args.status, args.reason)
+    print(f"voided {len(done)} of {len(args.ids)}: {done}")
+    return 0
+
+
 def _eval(args: argparse.Namespace) -> int:
     """The course test set on the agents (qt.agents.eval): a blind Playbook, every case once per model."""
     from qt.agents.eval import main
@@ -290,6 +303,12 @@ def main(argv: list[str] | None = None) -> int:
     cp = sub.add_parser("completeness", help="is a saved dossier a whole report (exit 1 when partial)")
     cp.add_argument("dossier")
     cp.set_defaults(fn=_completeness)
+    vd = sub.add_parser("void", help="take decisions recorded wrongly out of the counts; the journal rows stay")
+    vd.add_argument("ids", nargs="+", type=int)
+    vd.add_argument("--status", required=True, help="what the rows really were, e.g. agent_unavailable")
+    vd.add_argument("--reason", required=True)
+    vd.add_argument("--db")
+    vd.set_defaults(fn=_void)
     sub.add_parser("set-webhook", help="point the Telegram bot at the web service").set_defaults(fn=_webhook)
     sub.choices["set-webhook"].add_argument("--url")
     args = ap.parse_args(argv)

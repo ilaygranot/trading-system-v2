@@ -70,3 +70,41 @@ def test_playbook_ships_in_the_package_and_never_loads_empty(tmp_path, monkeypat
     assert len(pb.rules) > 400 and len(pb.hard_rules()) >= 40
     with pytest.raises(FileNotFoundError):
         P.load_playbook(str(tmp_path))                           # no snapshot: loud, never an empty rule set
+
+
+def test_a_wrong_decision_is_voided_beside_the_journal_not_in_it(db):
+    """25.10: 41 cards were recorded "refused" after Claude stopped answering. The rows stay; a void takes them
+    out of the weekly count, the learning's critic count and the predictions to check."""
+    from qt.journal import Decision
+    from qt.pipelines import report
+    j = Journal(db)
+    mk = lambda st, pred=None: j.record(Decision(decided_by="agent:A4", subject="PAA", choice="x", status=st,  # noqa: E731
+                                                 playbook_version="1", card_id="DC-25", prediction=pred,
+                                                 check_on=date(2026, 10, 1) if pred else None))
+    real, wrong = mk("decided"), mk("refused", "up 5%")
+    assert j.void([wrong, wrong], "agent_unavailable", "Claude stopped answering 25.10 06:39") == [wrong]
+    with pytest.raises(KeyError):
+        j.void([999], "agent_unavailable", "x")
+    assert j.get(wrong)["status"] == "refused"                                       # the row is untouched
+    with pytest.raises(db.error, match="append-only"):
+        j.db.execute("DELETE FROM voids")
+    assert j.due_predictions(date(2026, 10, 2)) == []
+
+    from qt import approvals, runs
+
+    class Ctx:
+        as_of = date.today()
+    Ctx.db = db
+    db.ddl(runs.SCHEMA)
+    db.ddl(approvals.SCHEMA)
+    assert report(Ctx, "")["agents"] == {"decided": 1} and real
+
+
+def test_qt_void_cli(tmp_path):
+    from qt.cli import main
+    from qt.journal import Decision
+    p = tmp_path / "j.sqlite"
+    j = Journal(p)
+    did = j.record(Decision(decided_by="agent:A4", subject="S", choice="x", status="refused", playbook_version="1"))
+    assert main(["void", str(did), "--status", "agent_unavailable", "--reason", "test", "--db", str(p)]) == 0
+    assert Journal(p).db.one("SELECT status FROM voids WHERE decision_id = ?", (did,))["status"] == "agent_unavailable"
