@@ -396,3 +396,40 @@ def test_dc17_world_has_catalyst_code(db):
 def test_more_than_four_hot_warns(db):
     J = _judge(db, CardClient())({"as_of": AS_OF, "macro": FIX["macro"], "timing": _timing(5)}, _deep_dive([]))
     assert sum(j["heat"] == "hot" for j in J["ideas"].values()) == 5 and J["warnings"] == ["hot_above_4"]
+
+
+def test_claude_unavailable_mid_run_stops_and_says_why(db):
+    """The run of 25.10: Claude stopped answering after the eighth idea. The run stops there (the rest cut, a resume
+    continues) and the report says the agents stopped, instead of 81 cards marked refused and no article."""
+    from qt.agents.runner import AgentUnavailable
+    from qt.research import completeness as C
+    n = []
+
+    class Down(AgentRunner):
+        def decide(self, agent, card_id, *a, **k):
+            if card_id == "DC-11":
+                n.append(card_id)
+                if len(n) > 1:
+                    raise AgentUnavailable("Claude did not answer: Claude AI usage limit reached")
+            return super().decide(agent, card_id, *a, **k)
+    J = JG.Judge(Down(db, CardClient()))({"as_of": AS_OF, "macro": FIX["macro"], "timing": _timing(3)}, _deep_dive([]))
+    assert list(J["ideas"]) == ["S0"] and "usage limit" in J["errors"]["S1"]
+    assert J["A3"]["cut_by_budget"] == ["S2"] and "usage limit" in J["A3"]["stopped"]
+    d = {"judgments": J, "ideas": {}, "meta": {}}
+    assert "agents_down" in {x["code"] for x in C.check(d)["blocks"]}
+
+
+def test_an_idea_with_a_refused_card_is_not_kept_for_the_resume(db):
+    """A resume reuses the saved ideas; one with a refused card would carry the card's fallback forever."""
+    from qt.research.state import State
+
+    class Refuses(AgentRunner):
+        def decide(self, agent, card_id, *a, **k):
+            r = super().decide(agent, card_id, *a, **k)
+            if card_id == "DC-12" and k.get("subject") == "S1":
+                r.status = "refused"
+            return r
+    st = State(db, AS_OF)
+    JG.Judge(Refuses(db, CardClient()), state=st)({"as_of": AS_OF, "macro": FIX["macro"], "timing": _timing(2)},
+                                                  _deep_dive([]))
+    assert st.get("agents:idea:S0") and st.get("agents:idea:S1") is None

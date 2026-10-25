@@ -189,6 +189,8 @@ def check(d: dict) -> dict[str, Any]:
             blocks.append(_item("incomplete", s, f"{s}: לא הושלם (נחתך או נכשל)"))
     for s, e in (J.get("errors") or {}).items():
         blocks.append(_item("error", s, f"{s}: הניתוח נכשל: {str(e)[:160]}"))
+    if sel.get("stopped"):                             # Claude stopped answering (usage limit, token): resume later
+        blocks.append(_item("agents_down", "agents", f"הסוכנים הפסיקו לענות באמצע הריצה: {str(sel['stopped'])[:200]}"))
     for s in sel.get("cut_by_budget") or []:
         blocks.append(_item("cut_by_budget", s, f"{s}: נחתך בתקרת העלות"))
     for s in picked:

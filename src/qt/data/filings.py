@@ -122,7 +122,7 @@ def ex99(rows: list[dict]) -> list[dict]:
 
 
 _RF_10K_START = re.compile(r"^\s*item\s*1a\.?\s*[-–—:.]?\s*risk\s+factors\.?\s*$", re.IGNORECASE | re.MULTILINE)
-_RF_10K_END = re.compile(r"^\s*item\s*(1b|1c|2|3|4|5|6)\s*[.:\-–—]?\s*[A-Za-z][^\n]{3,80}$", re.IGNORECASE | re.MULTILINE)
+_RF_10K_END = re.compile(r"^\s*item\s*(1b|1c|2|3|4|5|6)\s*[.:]?\s*[\-–—]?\s*[A-Za-z][^\n]{3,80}$", re.IGNORECASE | re.MULTILINE)
 _RF_20F_START = re.compile(r"^\s*risk factors and risk management\s*\n(?:\s*\n)*\s*risk factors\s*$", re.IGNORECASE | re.MULTILINE)
 _RF_20F_END = re.compile(r"^\s*Risk management\s*$", re.MULTILINE)
 _RF_20F_STD_START = re.compile(r"^\s*(?:item\s*3\.?\s*)?D\.\s*risk\s+factors\s*$", re.IGNORECASE | re.MULTILINE)
@@ -344,9 +344,9 @@ def risk_extract(html: str, form: str) -> dict:
 # competition and the metrics it reports itself. Paragraphs are kept verbatim, so a quote can be checked against them.
 
 # "Items 1 and 2. Business and Properties": oil and gas filers put the two together (Talos, 24.10)
-_BIZ_10K_START = re.compile(r"^\s*items?\s*1(?:\s*(?:and|&|,)\s*2)?\s*[.:\-–—]?\s*business(?:\s*(?:and|&)\s*properties)?\.?\s*$",
+_BIZ_10K_START = re.compile(r"^\s*items?\s*1(?:\s*(?:and|&|,)\s*2)?\s*[.:]?\s*[\-–—]?\s*business(?:\s*(?:and|&)\s*properties)?\.?\s*$",
                             re.IGNORECASE | re.MULTILINE)
-_BIZ_10K_END = re.compile(r"^\s*item\s*1a\s*[.:\-–—]?\s*risk\s+factors\.?\s*$", re.IGNORECASE | re.MULTILINE)
+_BIZ_10K_END = re.compile(r"^\s*item\s*1a\s*[.:]?\s*[\-–—]?\s*risk\s+factors\.?\s*$", re.IGNORECASE | re.MULTILINE)
 _BIZ_20F_START = re.compile(r"^\s*(?:item\s*4\.?\s*)?B\.\s*business\s+overview\.?\s*$", re.IGNORECASE | re.MULTILINE)
 _BIZ_20F_END = re.compile(r"^\s*(?:item\s*4\.?\s*)?C\.\s*organi[sz]ational\s+structure\.?\s*$", re.IGNORECASE | re.MULTILINE)
 _NOISE = re.compile(r"^(table of contents|index|item\s*\d+[a-z]?\.?(\s.{0,60})?|part\s+[ivx]+\.?|page \d+|\d{1,3}|"
