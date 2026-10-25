@@ -202,8 +202,12 @@ def check(d: dict) -> dict[str, Any]:
     if not picked and sel.get("candidates"):
         blocks.append(_item("no_pick", "A3", f"{sel['candidates']} מועמדות ואף מניה לא נבחרה"))
     dd = next((f.get("n") for f in d.get("funnel") or [] if f.get("stage") == "deep_dive"), None)
-    if dd is not None and dd != len(ideas):
-        blocks.append(_item("funnel", "funnel", f"המשפך אומר {dd} ניתוחי עומק, בדוח יש {len(ideas)}"))
+    own = sum(not i.get("backfill") for i in ideas.values())
+    if dd is not None and dd != own:
+        blocks.append(_item("funnel", "funnel", f"המשפך אומר {dd} ניתוחי עומק, בדוח יש {own}"))
+    b, f = _watchlist(meta, ideas)
+    blocks += b
+    flags += f
 
     for sym, i in ideas.items():
         b, f = _idea(sym, i)
@@ -222,9 +226,34 @@ def check(d: dict) -> dict[str, Any]:
         flags.append(_item("agents_undecided", "agents", f"{len(shaky)} החלטות של הסוכנים לא הוכרעו או נדחו: "
                            + ", ".join(sorted({f"{x.get('card')} {x.get('subject')}" for x in shaky}))[:200]))
 
-    with_article = sum(1 for i in ideas.values() if (i.get("judgment") or {}).get("article"))
+    with_article = sum(1 for i in ideas.values() if (i.get("judgment") or {}).get("article") and not i.get("backfill"))
     return {"status": "partial" if blocks else "complete", "blocks": blocks, "flags": flags,
-            "counts": {"picked": len(picked), "analysed": len(ideas), "articles": with_article}}
+            "counts": {"picked": len(picked), "analysed": own, "articles": with_article,
+                       "backfill": len(ideas) - own}}
+
+
+def _watchlist(meta: dict, ideas: dict) -> tuple[list[dict], list[dict]]:
+    """Ilay 25.10: every stock on the watchlist has a full analysis with its article, from this report or an earlier
+    one. A stock that cannot be analysed (no quote, its sector not screened) is a flag that proposes removing it."""
+    w = meta.get("watchlist")
+    if not w:
+        return [], []
+    before = w.get("analysed_before") or {}
+    errs = (meta.get("backfill") or {}).get("errors") or {}
+    deferred = set(w.get("deferred") or [])
+    blocks, flags = [], []
+    for s in w.get("symbols") or []:
+        art = ((ideas.get(s) or {}).get("judgment") or {}).get("article")
+        if s in before or art:
+            continue
+        if s in deferred:
+            flags.append(_item("watchlist_deferred", s, f"{s}: ברשימת המעקב בלי ניתוח מלא (נדחה בריצת הניסיון)"))
+        elif s in errs and ("לא ביקום" in errs[s] or "לא נסרק" in errs[s]):
+            flags.append(_item("watchlist_gone", s, f"{s}: ברשימת המעקב ואי אפשר לנתח אותה השבוע ({errs[s]}): להוציא?"))
+        else:
+            why = f" ({str(errs[s])[:120]})" if s in errs else ""
+            blocks.append(_item("watchlist_unanalysed", s, f"{s}: ברשימת המעקב בלי ניתוח עומק מלא{why}"))
+    return blocks, flags
 
 
 def line(c: dict) -> str:
@@ -232,6 +261,8 @@ def line(c: dict) -> str:
     n = c["counts"]
     head = (f"דוח מלא: {n['analysed']}/{n['picked']} מניות, {n['articles']} מאמרים" if c["status"] == "complete"
             else f"דוח חלקי: {len(c['blocks'])} חוסרים · {n['analysed']}/{n['picked']} מניות, {n['articles']} מאמרים")
+    if n.get("backfill"):
+        head += f" · {n['backfill']} מרשימת המעקב"
     return head + (f" · {len(c['flags'])} אזהרות" if c["flags"] else "")
 
 

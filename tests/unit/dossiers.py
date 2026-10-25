@@ -52,5 +52,16 @@ def research_services(db) -> dict:
     from qt.approvals import Queue
     from test_judge import CardClient
     Queue(db).upload("manual_macro", "ism.yaml", "ism_pmi: {'2026-09': 49}\n")
-    return {"agents": AgentRunner(db, CardClient()), "fred": object(),
-            "research_run": lambda as_of, judge, manual_text, fred: complete()}
+    return {"agents": AgentRunner(db, CardClient()), "fred": object(), "research_run": backfilled}
+
+
+def backfilled(as_of, judge, manual_text, fred, d: dict | None = None) -> dict:
+    """A finished report, with the watchlist stocks the weekly step asked to fill analysed as the first idea is
+    (as the judge does: a stock analysed this week anyway is not analysed twice)."""
+    import copy
+    d = d or complete()
+    first = next(iter(d["ideas"].values()))
+    for w in getattr(judge, "backfill_wanted", None) or []:
+        if w["sym"] not in d["ideas"]:
+            d["ideas"][w["sym"]] = copy.deepcopy(first) | {"sym": w["sym"], "backfill": {"failed": []}}
+    return d

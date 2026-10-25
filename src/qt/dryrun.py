@@ -21,9 +21,10 @@ from qt.approvals import Queue
 from qt.db import DB
 
 DRY_SCHEMA = "qt_dry"
-LIMITS = {"max_deep": 2, "max_rescue": 2}          # cost only: every stage and card still runs (not from course)
+LIMITS = {"max_deep": 2, "max_rescue": 2, "max_backfill": 1}   # cost only: every stage and card still runs (not from course)
 COPY = ("portfolio", "watchlist", "manual_macro")
 UNIVERSE = "stage:universe.pkl"
+DOSSIERS = 8
 
 
 class Collector:
@@ -55,6 +56,11 @@ def prepare(prod: DB, dry: DB) -> list[str]:
         if up:
             dst.upload(kind, up["name"], up["content"])
             copied.append(f"{kind}: {up['name']}")
+    olds = prod.all("SELECT name, content FROM uploads WHERE kind = 'dossier' ORDER BY id DESC LIMIT ?", (DOSSIERS,))
+    for up in reversed(olds):                          # which watchlist stocks have a full analysis (weekly.analysed)
+        dst.upload("dossier", up["name"], up["content"])
+    if olds:
+        copied.append(f"dossier: {len(olds)} דוחות קודמים")
     return copied
 
 
@@ -86,6 +92,7 @@ def run(prod: DB, as_of: date, dry: DB | None = None, services: Callable[[DB], d
     pre = (checks or preflight.run)()
     dry = dry or DB(prod.url, schema=DRY_SCHEMA)
     copied = prepare(prod, dry)
+    before = (dry.one("SELECT MAX(id) AS m FROM uploads") or {}).get("m") or 0
     svc = (services or app.services)(dry)
     bot = Collector()
     svc.update(telegram=bot, research_limits=LIMITS)
@@ -106,7 +113,7 @@ def run(prod: DB, as_of: date, dry: DB | None = None, services: Callable[[DB], d
     r = app.runner(dry, svc).status(1)
     steps = r[0]["steps"] if r else []
     dossier = Queue(dry).latest_upload("dossier")
-    d = json.loads(dossier["content"]) if dossier else None
+    d = json.loads(dossier["content"]) if dossier and dossier["id"] > before else None   # not a copied one
     rep = Queue(dry).latest_upload("report")
     report_id = Queue(prod).upload("dry_report", rep["name"], rep["content"]) if rep else None
     shared = share_universe(dry, prod, as_of, d) if share else "היקום לא הועבר (--no-share)"

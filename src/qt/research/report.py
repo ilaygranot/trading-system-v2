@@ -701,6 +701,10 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
     vchip = vbadge(worst, "נתונים " + VSTAT_HE[worst]) if checks else ""
     full = i["bucket"] in ("enter", "conditional") or j.get("thesis")
     story_chip = f'<span class="chip">{E(STORY_HE.get(j["story_type"], j["story_type"]))}</span>' if j.get("story_type") else ""
+    if i.get("backfill") is not None:                  # Ilay 25.10: a watchlist stock analysed to fill the list
+        failed = (i["backfill"] or {}).get("failed") or []
+        story_chip += (f'<span class="chip" title="{E("לא עברה את הסינון השבוע: " + ", ".join(failed)) if failed else ""}">'
+                       f'מרשימת המעקב{" · לא עברה את הסינון" if failed else ""}</span>')
     out = [f'<article class="idea idea-{E(i["bucket"])}" id="idea-{E(i["sym"])}">']
     out.append(f'<header><div class="i-title"><h3>{E(i["sym"])} <span>{E(i["profile"]["name"])}</span></h3>'
                f'<p>{E(i["profile"].get("industry") or "")} · {E(i["profile"].get("country") or "")} · שווי {money(i["row"]["market_cap"])}$ · '

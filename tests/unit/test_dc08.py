@@ -99,3 +99,33 @@ def test_report_shows_the_dc08_answers():
                                                            "patterns": ["no_profile"]}}}}}
     html = report._screen(d)
     assert "DC-08" in html and "אין עקביות" in html and "S06-R41" in html
+
+
+def test_a_watchlist_stock_is_screened_with_its_group_and_says_what_it_failed():
+    """Ilay 25.10: a stock analysed to fill the watchlist gets its row from its group's screen of the week."""
+    rows = [row(f"G{i}", 1.0, 1.1, 1.2, 1e9, 1.05e9) for i in range(6)]
+    rows += [row("FAST", 1.0, 2.0, 3.0, 1e9, 1.5e9), row("SLOW", 1.0, 0.9, 0.8, 1e9, 0.9e9)]
+    fast = sector_screen.backfill_cand(rows, "FAST", "long")
+    assert fast["ticker"] == "FAST" and fast["profile"] and fast["backfill_failed"] == []
+    slow = sector_screen.backfill_cand(rows, "SLOW", "long")
+    assert slow["ticker"] == "SLOW" and slow["backfill_failed"] and slow["eg1"] < 0
+    gap = sector_screen.backfill_cand(rows + [row("NODATA", None, None, None, None, None)], "NODATA", "long")
+    assert gap["profile"] is None and "missing_data" in gap["backfill_failed"]
+
+
+def test_a_watchlist_stock_that_cannot_be_analysed_says_why():
+    from qt.research import run as R
+
+    class Y:
+        def bars(self, sym, start, end):
+            return []
+    q = dict(symbol="ACME", exchange="NYSE", market_cap=5e9, price=50.0, etf="XLE", name="Acme")
+    s = {"earningsTrend": {"trend": []}}
+    u = {"quotes": {"ACME": q, "TECH": q | {"symbol": "TECH", "etf": "XLK"}}, "summaries": {"ACME": s, "TECH": s}}
+    rows = [row("ACME", 1.0, 1.1, 1.2, 1e9, 1.05e9)]
+    screens = sector_screen.screens({"XLE": rows}, ["XLE"], [])
+    extra, timing, errors = R.backfill(Y(), u, screens, [dict(sym="GONE", etf="XLE", dir="long"),
+                                                        dict(sym="TECH", etf="XLK", dir="long"),
+                                                        dict(sym="ACME", etf="XLE", dir="long")], date(2026, 10, 23))
+    assert "לא ביקום" in errors["GONE"] and "XLK" in errors["TECH"] and "daily bars" in errors["ACME"]
+    assert timing == [] and "ACME" in extra

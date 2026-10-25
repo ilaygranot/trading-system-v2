@@ -81,6 +81,25 @@ def screens(rows_by_etf: dict[str, list[StockRow]], longs: list[str], shorts: li
     return out
 
 
+def backfill_cand(rows: list[StockRow], sym: str, side: str) -> dict:
+    """A watchlist stock with no full analysis (Ilay 25.10: every stock on the list has one), as its group's screen
+    sees it this week: its own row when it passed, else the same fields with the rules it failed, so the cards
+    judge it on this week's facts and the failure is said, not hidden."""
+    from qt.screening import Candidate, classify_long, classify_short, compute, universe_failures
+    r = screen(rows)
+    hit = next((c for c in (r.long if side == "long" else r.short) if c.ticker == sym), None)
+    if hit is not None:
+        return _cand(hit) | {"backfill_failed": []}
+    m = compute(next(x for x in rows if x.ticker == sym))
+    prof = None
+    if m.track != "missing_data":
+        a = r.averages
+        prof = classify_long(m.eg1, m.eg2, a.eg1, a.eg2, m.row.f0, m.row.f1, m.row.f2)[0] if side == "long" \
+            else classify_short(m.eg1, m.eg2, a.eg1, a.eg2)
+    failed = universe_failures(m.row, side) + list(r.rejected.get(sym) or []) + ([m.track] if m.track else [])
+    return _cand(Candidate(sym, side, prof, list(m.flags), m)) | {"backfill_failed": list(dict.fromkeys(failed))}
+
+
 def _cand(c) -> dict:
     m = c.metrics
     return dict(ticker=c.ticker, side=getattr(c, "side", None), profile=getattr(c, "profile", None),

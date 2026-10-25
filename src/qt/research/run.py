@@ -89,29 +89,55 @@ def stage_timing(y: Yahoo, screens: dict, as_of: date) -> list[dict]:
     start = as_of - timedelta(days=HISTORY_DAYS)
     spy = y.bars("SPY", start, as_of)
     etfb = {e: y.bars(e, start, as_of) for e in screens}
-    k = load_policy().stop.k_default
     jobs = [(e, c) for e, s in screens.items() for c in s["long"] + s["short"]]
-
-    def one(j):
-        e, c = j
-        s, dr = c["ticker"], c["side"]
-        try:
-            b = y.bars(s, start, as_of)
-            if len(b) < 260:
-                return dict(etf=e, sym=s, dir=dr, profile=c["profile"], error=f"only {len(b)} daily bars")
-            tl = idea.timing(b, etfb[e], spy, dr)
-            px, a = b[-1].close, adr(b)
-            ext = max(x.high for x in b) if dr == "long" else min(x.low for x in b)
-            st = T.stop_price(px, a, k, dr)                                 # type: ignore[arg-type]
-            rr = T.reward_risk(px, st, ext, dr) if (ext > px) == (dr == "long") else None  # type: ignore[arg-type]
-            return dict(etf=e, sym=s, dir=dr, profile=c["profile"], stock=tl["stock"]["overall"],
-                        sector=tl["sector"]["overall"], market=tl["market"]["overall"], combined=tl["combined"],
-                        sources=tl["stock"]["sources"], flags=tl["stock"]["flags"], adr=a, price=px, extreme=ext,
-                        rr_extreme=rr)
-        except Exception as ex:                                              # noqa: BLE001 - reported per stock
-            return dict(etf=e, sym=s, dir=dr, profile=c["profile"], error=f"{type(ex).__name__}: {ex}")
     with ThreadPoolExecutor(8) as ex:
-        return list(ex.map(one, jobs))
+        return list(ex.map(lambda j: timing_row(y, j[0], j[1], as_of, spy, etfb[j[0]]), jobs))
+
+
+def timing_row(y: Yahoo, e: str, c: dict, as_of: date, spy: list, etf_bars: list) -> dict:
+    """One stock's S09 row (stage_timing), for a screen survivor or a watchlist stock analysed to fill the list."""
+    s, dr = c["ticker"], c["side"]
+    try:
+        b = y.bars(s, as_of - timedelta(days=HISTORY_DAYS), as_of)
+        if len(b) < 260:
+            return dict(etf=e, sym=s, dir=dr, profile=c["profile"], error=f"only {len(b)} daily bars")
+        tl = idea.timing(b, etf_bars, spy, dr)
+        px, a = b[-1].close, adr(b)
+        ext = max(x.high for x in b) if dr == "long" else min(x.low for x in b)
+        st = T.stop_price(px, a, load_policy().stop.k_default, dr)          # type: ignore[arg-type]
+        rr = T.reward_risk(px, st, ext, dr) if (ext > px) == (dr == "long") else None  # type: ignore[arg-type]
+        return dict(etf=e, sym=s, dir=dr, profile=c["profile"], stock=tl["stock"]["overall"],
+                    sector=tl["sector"]["overall"], market=tl["market"]["overall"], combined=tl["combined"],
+                    sources=tl["stock"]["sources"], flags=tl["stock"]["flags"], adr=a, price=px, extreme=ext,
+                    rr_extreme=rr)
+    except Exception as ex:                                                  # noqa: BLE001 - reported per stock
+        return dict(etf=e, sym=s, dir=dr, profile=c["profile"], error=f"{type(ex).__name__}: {ex}")
+
+
+def backfill(y: Yahoo, u: dict, screens: dict, wanted: list[dict], as_of: date) -> tuple[dict, list[dict], dict]:
+    """The watchlist stocks with no full analysis (Ilay 25.10): their screen rows (by the group's screen of this week,
+    with what they failed), their S09 rows, and the ones that cannot be analysed with the reason."""
+    rows_by = _rows_by_etf(u)
+    start = as_of - timedelta(days=HISTORY_DAYS)
+    spy = y.bars("SPY", start, as_of)
+    extra, timing, errors = {}, [], {}
+    for w in wanted:
+        sym, dr = w["sym"], w["dir"]
+        e = w.get("etf") if any(r.ticker == sym for r in rows_by.get(w.get("etf"), [])) else (u["quotes"].get(sym) or {}).get("etf")
+        if e is None or not any(r.ticker == sym for r in rows_by.get(e, [])):
+            errors[sym] = "לא ביקום של השבוע (אין ציטוט או תחזיות ב-Yahoo)"
+            continue
+        if e not in screens:
+            errors[sym] = f"הסקטור {e} לא נסרק השבוע"
+            continue
+        c = sector_screen.backfill_cand(rows_by[e], sym, dr)
+        extra[sym] = c
+        t = timing_row(y, e, c, as_of, spy, y.bars(e, start, as_of))
+        if t.get("error"):
+            errors[sym] = t["error"]
+            continue
+        timing.append(t | {"backfill": True, "backfill_failed": c["backfill_failed"]})
+    return extra, timing, errors
 
 
 def _target_options(price: float, direction: str, ext: float, val: dict, levels: dict) -> list[dict]:
@@ -181,11 +207,12 @@ def _rows_with_ids(rows: list | None) -> list[dict] | None:
 
 def deep_dive(y: Yahoo, u: dict, screens: dict, sym: str, etf: str, direction: str, j: dict, macro_bias: str,
               buckets: dict, as_of: date, docs: Callable[[str], dict] | None = None,
-              peers: Callable[[str, str], list] | None = None) -> dict[str, Any]:
-    """docs: the SEC extracts for the stock (qt.data.filings, memoised per run); peers: its peers (S08-J25)."""
+              peers: Callable[[str, str], list] | None = None, extra: dict | None = None) -> dict[str, Any]:
+    """docs: the SEC extracts for the stock (qt.data.filings, memoised per run); peers: its peers (S08-J25);
+    extra: the screen rows of watchlist stocks analysed to fill the list (backfill)."""
     start = as_of - timedelta(days=HISTORY_DAYS)
     scr = screens[etf]
-    row = dict(next(c for c in scr["long"] + scr["short"] if c["ticker"] == sym))
+    row = dict(next((c for c in scr["long"] + scr["short"] if c["ticker"] == sym), None) or (extra or {})[sym])
     s, q = u["summaries"][sym], u["quotes"][sym]
     t0, t1 = U.trend(s, "0y"), U.trend(s, "+1y")
     row.update(sales=raw(t0.get("revenueEstimate"), "yearAgoRevenue"), sales_f1=raw(t0.get("revenueEstimate"), "avg"),
@@ -414,6 +441,10 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     def peers(sym: str, etf: str) -> list[dict]:
         return peers_for(u, screens, sym, etf, on_list, as_of)
     news = None
+    extra, bf_timing, bf_errors = {}, [], {}
+    wanted = list(getattr(judge, "backfill_wanted", None) or [])
+    if wanted:                                         # Ilay 25.10: every watchlist stock has a full analysis
+        extra, bf_timing, bf_errors = backfill(y, u, screens, wanted, as_of)
     if judge is not None:
         from qt.research import macro_story as MS
         news = state.get("stage:macro_news.json") if state is not None else None
@@ -422,9 +453,9 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
             if state is not None and news["items"] and not news["errors"]:
                 state.put("stage:macro_news.json", news)
         stages = dict(as_of=as_of, macro=macro, sectors=sectors, screens=screens, timing=timing, macro_news=news,
-                      watchlist=sorted(on_wl))
+                      watchlist=sorted(on_wl), backfill=bf_timing)
         J = _cached(work / "judgments.json", lambda: judge(stages, lambda sym, etf, dr, j: deep_dive(
-            y, u, screens, sym, etf, dr, j, bias, buckets, as_of, docs=docs, peers=peers)))
+            y, u, screens, sym, etf, dr, j, bias, buckets, as_of, docs=docs, peers=peers, extra=extra)))
         if J.get("incomplete"):                         # cut by the budget: the next run asks for what is missing
             (work / "judgments.json").unlink(missing_ok=True)
     else:
@@ -436,11 +467,14 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     ideas = {}
     for sym, j in (J.get("ideas") or {}).items():
         etf = j["etf"]
-        ideas[sym] = deep_dive(y, u, screens, sym, etf, j["direction"], j, bias, buckets, as_of, docs=docs, peers=peers)
+        ideas[sym] = deep_dive(y, u, screens, sym, etf, j["direction"], j, bias, buckets, as_of, docs=docs, peers=peers,
+                               extra=extra)
+        if j.get("backfill"):
+            ideas[sym]["backfill"] = {"failed": (extra.get(sym) or {}).get("backfill_failed") or []}
         ideas[sym]["bucket"], ideas[sym]["bucket_reason"] = classify(ideas[sym])
         ideas[sym]["exit"] = exit_plan(ideas[sym]["plan"], j["direction"], ideas[sym]["bucket"], as_of,
                                        ideas[sym]["catalysts"].get("next_earnings"), j)
-    assert len(docs_memo) <= MAX_DEEP + len(J.get("ideas") or {}), "SEC documents fetched beyond the deep-dive cap"
+    assert len(docs_memo) <= MAX_DEEP + len(wanted) + len(J.get("ideas") or {}), "SEC documents fetched beyond the deep-dive cap"
     fit = portfolio_fit(y, ideas, as_of)
 
     surv = sum(len(s["long"]) + len(s["short"]) for s in screens.values())
@@ -452,7 +486,10 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
         dict(stage="screen", label="עברו את סינון S06 (פרופיל צמיחה/תמחור)", n=surv),
         dict(stage="timing", label="רמזור S09 (ירוק / כתום / אדום)",
              n=surv, split=dict(Counter(t.get("combined", "error") for t in timing))),
-        dict(stage="deep_dive", label=f"נבחרו ל-deep dive (מתוך {n_ok} ירוקים וכתומים)", n=len(ideas)),
+        dict(stage="deep_dive", label=f"נבחרו ל-deep dive (מתוך {n_ok} ירוקים וכתומים)",
+             n=sum(not i.get("backfill") for i in ideas.values())),
+        *([dict(stage="backfill", label="מניות מרשימת המעקב בלי ניתוח מלא, שנותחו השבוע",
+                n=sum(bool(i.get("backfill")) for i in ideas.values()))] if wanted else []),
         dict(stage="trades", label="מוכנות לכניסה / מותנות טריגר",
              n=sum(i["bucket"] in ("enter", "conditional") for i in ideas.values()),
              split=dict(Counter(i["bucket"] for i in ideas.values()))),
@@ -465,6 +502,7 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
                                                               if isinstance(x, dict) and "error" in x}},
                   news=None if news is None else {"n": len(news["items"]), "errors": news["errors"],
                                                   "empty": news.get("empty") or []},
+                  backfill={"wanted": [w["sym"] for w in wanted], "errors": bf_errors},
                   documents={"fetched": len(docs_memo),
                              "with_errors": sorted(s for s, x in docs_memo.items() if x.get("errors"))}),
         macro=macro, sectors=sectors, screens=screens, timing=timing, ideas=ideas, funnel=funnel, portfolio=fit,
