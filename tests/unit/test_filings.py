@@ -427,10 +427,73 @@ def test_6k_titled_by_its_period_end_is_a_results_release():
 
 
 @pytest.mark.parametrize("head", ["Item 1. Business", "Items 1 and 2. Business and Properties", "ITEMS 1 & 2. BUSINESS AND PROPERTIES",
-                                  "Item 1. — Business"])
+                                  "Item 1. — Business", "ITEMS 1. AND 2. BUSINESS AND PROPERTIES"])
 def test_the_business_section_under_its_10k_headings(head):
     """Talos files "Items 1 and 2. Business and Properties" (the dry run of 24.10 found no business section)."""
     body = "We explore for and produce oil and natural gas in the Gulf of America. " * 5
     text = f"Table of Contents\n{head}\n1\nItem 1A. Risk Factors\n2\n\nPART I\n{head}\nOverview\n{body}\nItem 1A. Risk Factors\nRisks."
     biz = F.cut_business(text, "10-K")
     assert biz.splitlines()[0] == head and "Gulf of America" in biz and "Risks." not in biz
+
+
+def test_20f_risk_factors_right_under_key_information():
+    """Eni's 20-F has "Item 3. KEY INFORMATION" then "RISK FACTORS", with no "D." (the run of 25.10 found none)."""
+    body = "Eni is exposed to the effects of changing commodity prices and margins. " * 4
+    text = (f"Item 3.\nRisk factors\nItem 4.\n\nItem 3. KEY INFORMATION\n\nRISK FACTORS\n\n{body}\n\n"
+            "Item 4. INFORMATION ON THE COMPANY\nWe are an energy company.")
+    rf = F.cut_risk_factors(text, "20-F")
+    assert "commodity prices" in rf and "energy company" not in rf
+
+
+ENI_BUNDLE = """FORM 6-K
+For the month of July 2026
+Eni S.p.A.
+Form 20-F X Form 40-F
+Table
+of contents
+\u00b7
+Approval of the first tranche of the provision
+in place of 2026 dividend: \u20ac 0.27 per share
+\u00b7
+Eni: results for the second quarter and half year 2026
+SIGNATURES
+Pursuant to the requirements of the Securities Exchange Act of 1934 ...
+Eni S.p.A.
+Eni\u2019s Board of Directors
+Approval of the first tranche of the provision
+in place of 2026 dividend: \u20ac 0.27 per share
+San Donato Milanese, 28 July 2026 \u2013 Eni\u2019s Board of Directors approved the first tranche of the dividend for the year.
+Eni: results for the second quarter and half year 2026
+San Donato Milanese, 24 July 2026 \u2013 Eni\u2019s Board of Directors approved the results for the second quarter of 2026, with adjusted operating profit up on the quarter before.
+"""
+
+
+def test_6k_bundle_contents_and_its_results_release():
+    """Eni files one 6-K a week holding every release of the week, no EX-99: the results release is found by the
+    contents list on the cover and cut from the body at the next listed release."""
+    assert F.bundle_toc(ENI_BUNDLE) == ["Approval of the first tranche of the provision in place of 2026 dividend: \u20ac 0.27 per share",
+                                        "Eni: results for the second quarter and half year 2026"]
+    b = F.bundle_extract(ENI_BUNDLE)
+    assert [x["title"] for x in b["results"]] == ["Eni: results for the second quarter and half year 2026"]
+    assert "adjusted operating profit" in b["results"][0]["lead"] and "dividend for the year" not in b["results"][0]["lead"]
+    assert F.bundle_toc("FORM 6-K\nTable of contents\nno signature block follows") == []
+    assert F.bundle_extract("Eni: results for the second quarter\nno contents list")["results"] == []
+
+
+def test_results_from_weekly_6k_bundles_one_per_quarter():
+    """No 8-K 2.02 or period-dated 6-K: the bundles give the latest and the previous quarter, the press release
+    before the full interim report filed beside it."""
+    f, _ = sec({})
+    rel = lambda t: {"title": t, "lead": "Eni results lead.", "outlook": [], "guidance": []}  # noqa: E731
+    bundles = {"a": [rel("Interim Consolidated Report as of June 30, 2026")],
+               "b": [rel("Eni: results for the second quarter and half year 2026")], "c": [],
+               "d": [rel("Eni: results for the first quarter 2026")], "e": [rel("Eni: results for the fourth quarter 2025")]}
+    f._bundle = lambda url: {"toc": [], "doc": {}, "results": bundles[url[-1]]}
+    rows = [{"cik": 1002242, "accessionNumber": f"0001-26-{k}", "form": "6-K", "filingDate": d, "reportDate": d,
+             "primaryDocument": k, "size": 1000}
+            for k, d in (("a", "2026-08-06"), ("b", "2026-08-04"), ("c", "2026-07-29"), ("d", "2026-04-24"), ("e", "2026-02-27"))]
+    f._rows = lambda ciks: rows
+    errs: list[str] = []
+    latest, prev = f.results("E", AS_OF, ciks=[1002242], errors=errs)
+    assert latest["title"] == "Eni: results for the second quarter and half year 2026" and latest["date"] == "2026-08-04"
+    assert latest["source"] == "sec:6-K bundle" and prev["date"] == "2026-04-24" and errs == []

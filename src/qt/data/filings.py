@@ -30,6 +30,8 @@ YEAR_S = 365 * 86400  # filings never change once accepted
 SUBMISSIONS_MAX_AGE_S = 6 * 3600
 MAX_CHARS = 22_000  # total size of documents() output, 6,000 of it the business section (not from course: LLM budget)
 MAX_RESULT_CANDIDATES = 6  # results filings opened per stock (not from course: request budget)
+MAX_BUNDLES = 30  # weekly 6-K bundles opened per stock when no results filing is found (not from course: request budget)
+BUNDLE_SAME_QUARTER_DAYS = 45  # bundled results releases this close are one quarter's (not from course)
 MAX_RESULT_AGE_DAYS = 200  # "latest" results release: one half-year plus a margin (not from course; as results_prev)
 MAX_EXHIBIT_BYTES = 4_000_000  # skip larger EX-99 files in the current-report list (not from course)
 MAX_SEC_FAILURES = 4  # consecutive failed SEC requests that stop SEC for the rest of the run (not from course)
@@ -127,6 +129,9 @@ _RF_20F_START = re.compile(r"^\s*risk factors and risk management\s*\n(?:\s*\n)*
 _RF_20F_END = re.compile(r"^\s*Risk management\s*$", re.MULTILINE)
 _RF_20F_STD_START = re.compile(r"^\s*(?:item\s*3\.?\s*)?D\.\s*risk\s+factors\s*$", re.IGNORECASE | re.MULTILINE)
 _RF_20F_STD_END = re.compile(r"^\s*item\s*4\.?\s*[-–—:.]?\s*[A-Za-z][^\n]{3,80}$", re.IGNORECASE | re.MULTILINE)
+# "Item 3. Key Information" with "Risk factors" right under it and no "D." (Eni, 25.10)
+_RF_20F_KEY_START = re.compile(r"^\s*item\s*3\.?\s*[-–—:.]?\s*key\s+information\s*\n(?:\s*\n)*\s*risk\s+factors\s*$",
+                               re.IGNORECASE | re.MULTILINE)
 _RF_40F_START = re.compile(r"^\s*D\.\s+RISK FACTORS\s*$", re.IGNORECASE | re.MULTILINE)
 _RF_40F_END = re.compile(r"Form 51-101F1|Statement of Reserves Data", re.IGNORECASE)
 
@@ -151,7 +156,8 @@ def cut_risk_factors(text: str, form: str) -> str:
     if form.startswith("10-"):
         return _longest(text, _RF_10K_START, _RF_10K_END)
     if form.startswith("20-F"):
-        return _longest(text, _RF_20F_START, _RF_20F_END) or _longest(text, _RF_20F_STD_START, _RF_20F_STD_END)
+        return _longest(text, _RF_20F_START, _RF_20F_END) or _longest(text, _RF_20F_STD_START, _RF_20F_STD_END) \
+            or _longest(text, _RF_20F_KEY_START, _RF_20F_STD_END)
     if form.startswith("40-F"):
         return _longest(text, _RF_40F_START, _RF_40F_END)
     return ""
@@ -333,6 +339,66 @@ def extract_text(text: str, outlook_cap: int = 4000) -> dict:
             "guidance": guidance_ranges(body), "chars": len(text)}
 
 
+_TOC = re.compile(r"^table\s+of\s+contents$", re.IGNORECASE)
+_SIGNATURE = re.compile(r"^signatures?$", re.IGNORECASE)
+_TOC_BULLET = re.compile(r"^[\u00b7\u2022\u25aa\u25cf\u25a0\-–•▪]\s*")
+
+
+def bundle_toc(text: str) -> list[str]:
+    """The releases a 6-K bundles, from the table of contents on its cover page, one entry per bullet with its
+    lines joined; [] when the cover has none. Eni files one 6-K a week with every release of that week in the
+    main document and no EX-99, so its results release is found only here (25.10)."""
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    start = next((i + k for i, ln in enumerate(lines[:150]) for k in (0, 1)
+                  if _TOC.match(" ".join(lines[i:i + k + 1]))), None)  # "Table\nof contents" (Eni, 24.04.2026)
+    if start is None:
+        return []
+    out: list[list[str]] = []
+    bullets = False
+    for ln in lines[start + 1:start + 80]:
+        if _SIGNATURE.match(ln):
+            break
+        if _TOC_BULLET.match(ln):
+            bullets = True
+            out.append([])
+            ln = _TOC_BULLET.sub("", ln).strip()
+            if not ln:
+                continue
+        if bullets and out:
+            out[-1].append(ln)
+        else:
+            out.append([ln])
+    else:
+        return []                                             # no signature block: not a cover-page contents list
+    return [_cap(" ".join(x), 200) for x in out if len(" ".join(x)) >= 8]
+
+
+def _locate(body: str, item: str) -> int:
+    words = re.findall(r"\w+", item)[:6]
+    if len(words) < 3:
+        return -1
+    m = re.compile(r"\W+".join(map(re.escape, words)), re.IGNORECASE).search(body)
+    return m.start() if m else -1
+
+
+def bundle_extract(text: str, outlook_cap: int = 4000) -> dict:
+    """A 6-K's main document: its own extract ("doc"), the contents list ("toc") and, for each listed results
+    release, the extract of that release's own pages, cut at the next listed release ("results"). A listed
+    release whose heading is not found in the body is left out, never guessed."""
+    toc = bundle_toc(text)
+    lines = text.split("\n")
+    sig = next((i for i, ln in enumerate(lines) if _SIGNATURE.match(ln.strip())), None)
+    body = "\n".join(lines[sig + 1:]) if sig is not None else ""
+    at = {item: _locate(body, item) for item in toc} if body else {}
+    results = []
+    for item, pos in at.items():
+        if pos < 0 or results_kind(item) != "results":
+            continue
+        end = min([p for p in at.values() if p > pos] or [len(body)])
+        results.append({**extract_text(body[pos:end], outlook_cap), "title": item})
+    return {"toc": toc, "doc": extract_text(text, outlook_cap), "results": results}
+
+
 def risk_extract(html: str, form: str) -> dict:
     text = html_to_text(html)
     sec = cut_risk_factors(text, form)
@@ -343,8 +409,9 @@ def risk_extract(html: str, form: str) -> dict:
 # ---- the business section (S07-R2, S07-R3 questions 3-4, S07-R27): what the company does, its segments, its
 # competition and the metrics it reports itself. Paragraphs are kept verbatim, so a quote can be checked against them.
 
-# "Items 1 and 2. Business and Properties": oil and gas filers put the two together (Talos, 24.10)
-_BIZ_10K_START = re.compile(r"^\s*items?\s*1(?:\s*(?:and|&|,)\s*2)?\s*[.:]?\s*[\-–—]?\s*business(?:\s*(?:and|&)\s*properties)?\.?\s*$",
+# "Items 1 and 2. Business and Properties": oil and gas filers put the two together (Talos, 24.10), also as
+# "ITEMS 1. AND 2. BUSINESS AND PROPERTIES" (SM Energy, 25.10)
+_BIZ_10K_START = re.compile(r"^\s*items?\s*1\.?(?:\s*(?:and|&|,)\s*2)?\s*[.:]?\s*[\-–—]?\s*business(?:\s*(?:and|&)\s*properties)?\.?\s*$",
                             re.IGNORECASE | re.MULTILINE)
 _BIZ_10K_END = re.compile(r"^\s*item\s*1a\s*[.:]?\s*[\-–—]?\s*risk\s+factors\.?\s*$", re.IGNORECASE | re.MULTILINE)
 _BIZ_20F_START = re.compile(r"^\s*(?:item\s*4\.?\s*)?B\.\s*business\s+overview\.?\s*$", re.IGNORECASE | re.MULTILINE)
@@ -608,6 +675,9 @@ class SECFilings:
     def exhibit_extract(self, url: str, outlook_cap: int = 4000) -> dict:
         return self._text(url, transform=lambda h: extract_text(html_to_text(h), outlook_cap), key=f"x{outlook_cap}")
 
+    def _bundle(self, url: str) -> dict:
+        return self._text(url, transform=lambda h: bundle_extract(html_to_text(h)), key="bundle")
+
     def current_reports(self, ticker: str, as_of: date, days: int = 90, max_n: int = 8,
                         ciks: list[int] | None = None, errors: list[str] | None = None) -> list[dict]:
         """8-K, 8-K/A and 6-K filed in [as_of - days, as_of], newest first (no look-ahead)."""
@@ -633,9 +703,12 @@ class SECFilings:
                                             "lead": _cap(ext.get("lead"), 1200)})
                 if r["form"] == "6-K":
                     titles = [e["title"] for e in row["exhibits"]]
+                    toc: list[str] = []
                     if (not row["exhibits"] or not any(titles)) and (r.get("size") or 0) <= MAX_EXHIBIT_BYTES:
-                        titles.append(self.exhibit_extract(row["url"]).get("title", ""))
-                    row["title"] = _cap(next((t for t in titles if t), ""), 200)
+                        b = self._bundle(row["url"])
+                        toc = b["toc"]
+                        titles += toc or [b["doc"].get("title", "")]
+                    row["title"] = _cap("; ".join(toc) if toc else next((t for t in titles if t), ""), 200)
                     kind = results_kind(*titles)
                     if kind in ("other_event", "unknown") and _period_end(r.get("reportDate") or "") \
                             and r.get("reportDate") != r.get("filingDate"):
@@ -712,12 +785,46 @@ class SECFilings:
             found.append(rel)
             if len(found) == 2:
                 break
+        if not found:
+            found = self._bundled_results(rows, as_of, errors)
         if not found and errors is not None:
             older = [r for r in self._results_candidates(rows, as_of, None)
                      if r.get("filingDate", "") < (as_of - timedelta(days=MAX_RESULT_AGE_DAYS)).isoformat()]
             errors.append(f"no results release (8-K 2.02 / results 6-K) in the last {MAX_RESULT_AGE_DAYS} days"
                           + (f" (newest older candidate: {older[0]['filingDate']})" if older else " found"))
         return (found[0] if found else None), (found[1] if len(found) > 1 else None)
+
+    def _bundled_results(self, rows: list[dict], as_of: date, errors: list[str] | None) -> list[dict]:
+        """Results releases listed in the contents of weekly 6-K bundles filed in the window, newest first, one per
+        quarter: of a quarter's releases the press release ("results" in its title) before the full interim
+        report filed beside it, since the press release carries the outlook."""
+        lo, hi = (as_of - timedelta(days=MAX_RESULT_AGE_DAYS)).isoformat(), as_of.isoformat()
+        got: list[dict] = []
+        for r in [r for r in rows if r.get("form") == "6-K" and lo <= r.get("filingDate", "") <= hi][:MAX_BUNDLES]:
+            if (r.get("size") or 0) >= 20_000_000:
+                continue
+            url = f"{_acc_path(r['cik'], r['accessionNumber'])}/{r.get('primaryDocument', '')}"
+            try:
+                b = self._bundle(url)
+            except ProviderError as e:
+                if errors is not None:
+                    errors.append(f"bundle {r['accessionNumber']}: {e}")
+                if self.down or "deadline" in str(e):
+                    break
+                continue
+            got += [{"form": "6-K", "date": r["filingDate"], "url": url, "source": "sec:6-K bundle",
+                     "title": _cap(x["title"], 200), "lead": _cap(x.get("lead"), 1500),
+                     "outlook": _cap_list(x.get("outlook") or [], 4000), "guidance": x.get("guidance") or [],
+                     "commentary": None} for x in b["results"]]
+        quarters: list[list[dict]] = []
+        for g in got:
+            if quarters and date.fromisoformat(quarters[-1][0]["date"]) - date.fromisoformat(g["date"]) \
+                    <= timedelta(days=BUNDLE_SAME_QUARTER_DAYS):
+                quarters[-1].append(g)
+            else:
+                quarters.append([g])
+        press = re.compile(r"\bresults\b", re.IGNORECASE)
+        return [next((g for g in q if press.search(g["title"])), q[0]) for q in quarters[:2]]
 
     def _risk(self, url: str, form: str) -> dict:
         return self._text(url, transform=lambda h: risk_extract(h, form), key=f"rf:{form}")
