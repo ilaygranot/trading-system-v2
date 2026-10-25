@@ -267,6 +267,14 @@ def build(out: dict, facts: FactSheet, as_of: date | None = None) -> dict:
     art["stats"] = {"kept": kept, "dropped": len(dropped), "facts": len(facts)}
     if as_of:
         art["as_of"] = as_of.isoformat()
+    return settle(art)
+
+
+def settle(art: dict) -> dict:
+    """A headline that failed the check gives its place to the dek, which passed it (25.10, PAA: the headline's
+    "42%" was not in the cited facts, and a whole article was shown as empty). The report says so."""
+    if not art.get("headline") and art.get("dek"):
+        art["headline"], art["dek"], art["headline_from"] = art["dek"], None, "dek"
     return art
 
 
