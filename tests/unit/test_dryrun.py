@@ -139,3 +139,15 @@ def test_completeness_cli(tmp_path):
     from dossiers import fixture
     p.write_text(json.dumps(fixture()), encoding="utf-8")
     assert main(["completeness", str(p)]) == 1
+
+
+def test_preflight_fails_when_the_run_would_outgrow_the_subscription(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("QT_DATABASE_URL", raising=False)
+    r = preflight._run("עומס מנוי", preflight.subscription)              # 12 deep dives at the first estimate
+    assert not r.ok and "המנוי הפסיק לענות" in r.detail
+    monkeypatch.setattr(preflight, "_estimate", lambda: (30.0, "x"))
+    assert preflight._run("עומס מנוי", preflight.subscription).ok
+    monkeypatch.setattr(preflight, "_estimate", lambda: (300.0, "x"))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    assert preflight._run("עומס מנוי", preflight.subscription).ok          # an API key pays per call
