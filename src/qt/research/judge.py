@@ -19,7 +19,8 @@ change. Order:
   A4  last, per idea: DC-25, the article: the ten questions in prose on a wider sheet (the 10-K paragraphs, the macro
       and sector rows, the statements as series, the charts' last values, the earlier answers); code keeps only the
       sentences whose ids, numbers and quotes check out (qt.research.article).
-Every card gets a fact sheet built from the code's numbers for that idea (principle 4: no fact without an id), and
+Every card gets a fact sheet built from the code's numbers for that idea and its wider context (context_facts: the macro
+detail and the market story, the sector, the statements, the chart; principle 4: no fact without an id), and
 the earlier cards' answers as the world state. The Critic checks each decision (qt.agents.runner).
 Not in v1: A2 (the sector scorecard keeps the code default), DC-18 (the instrument: stock only in the paper book).
 DC-14 in the daily news pass is qt.news; here it runs only on deep-dive events.
@@ -47,6 +48,14 @@ TARGET_SOURCE = {"hist_3y": "own_multiple_target", "sector": "own_multiple_targe
 SRC = "code:research"
 LANGUAGE = "Hebrew for every text field (reasoning, breakers, tldr); codes, ids and tickers as they are"
 JUDGED_BY = "Agents A1, A3, A4, A5, A6 with the Critic (cards DC-01..04, 08..14, 17, 19, 20, 25, 26)"
+
+# What code computes and no agent answer changes (Ilay 25.10: "גבולות מאוד ברורים בהגדרה של הרמזור ומה בכללי הוא
+# חישוב דטרמיניסטי"). The cards read these as facts; CODE_OWNED keys never reach the deep dive from a judgment.
+CODE_DECIDES = ("the traffic light (S09: stock, sector, market and combined) and every indicator under it; the growth "
+                "profile and the screen's numbers (S06); the averages; R:R, the stop and k's range; the levels and the "
+                "target prices; the catalyst classes code decides and the catalyst horizon. These are facts: reason on "
+                "them, never change, recompute or contradict them")
+CODE_OWNED = ("levels_color", "timing", "combined", "profile", "row", "levels", "targets", "extreme", "stop")
 
 DeepDive = Callable[[str, str, str, dict], dict]               # (sym, etf, direction, judgment) -> idea
 
@@ -239,14 +248,12 @@ def _last(xs: list | None) -> Any:
     return next((x for x in reversed(xs or []) if x is not None), None)
 
 
-def article_facts(d: dict, macro: dict, as_of: date, j: dict, sectors: dict | None = None) -> FactSheet:
-    """DC-25's sheet: the idea's sheet, plus what the article explains and the deep-dive cards did not need: the
-    macro picture and the sector's row (question 1), the statements as series (question 6), the last values of the
-    charts (S09), the call's excerpts (DC-26), and the earlier cards' answers as facts of the agent (the article
-    explains them, never changes them)."""
-    fs = idea_facts(d, macro, as_of)
+def context_facts(fs: FactSheet, d: dict, macro: dict, as_of: date, sectors: dict | None = None,
+                  a1: dict | None = None) -> FactSheet:
+    """The wider context of an idea, on the deep-dive cards' sheet as on the article's (Ilay 25.10: "חשוב שיהיה לו
+    את כל הקונטקסט"): the macro detail and the week's market story, the sector's and the industry's rows, the
+    statements as series, the chart's values. All computed by code: facts to reason on, never to change (CODE_DECIDES)."""
     sym, etf = d["sym"], d.get("etf")
-    EC.call_facts(fs, sym, j.get("call"), as_of)
     st = macro.get("stage2") or {}
     stance = st.get("stance") or {}
     for part in ("activity", "fed", "inflation", "labor", "ism"):
@@ -287,6 +294,21 @@ def article_facts(d: dict, macro: dict, as_of: date, j: dict, sectors: dict | No
         add_facts(fs, f"{sym}.chart.periods", t.get("periods") or {}, as_of, depth=1)
     if (d.get("profile") or {}).get("sector"):
         fs.add(f"{sym}.profile.sector", d["profile"]["sector"], "yahoo:assetProfile", as_of)
+    for i, para in enumerate((a1 or {}).get("story") or []):
+        fs.add(f"macro.story[{i}]", para[:1200], "agent:DC-27", as_of)     # an agent fact: it supports words, never a number
+    if ((a1 or {}).get("fed") or {}).get("headline"):
+        fs.add("macro.fed.headline", a1["fed"]["headline"], "agent:DC-27", as_of)
+    return fs
+
+
+def article_facts(d: dict, macro: dict, as_of: date, j: dict, sectors: dict | None = None,
+                  a1: dict | None = None) -> FactSheet:
+    """DC-25's sheet: the deep-dive cards' sheet (the idea, the call's answers, the wider context), plus the earlier
+    cards' answers as facts of the agent (the article explains them, never changes them)."""
+    fs = idea_facts(d, macro, as_of)
+    sym = d["sym"]
+    EC.call_facts(fs, sym, j.get("call"), as_of)
+    context_facts(fs, d, macro, as_of, sectors, a1)
     for card, val in (("DC-10", f"{j.get('story_type', '')}: {j.get('story', '')}"),
                       ("DC-11", f"{(j.get('premium') or {}).get('choice', '')}: {j.get('thesis', '')}"),
                       ("DC-13", f"{j.get('heat', '')}: {j.get('why', '')}")):
@@ -318,6 +340,11 @@ def unexplained_greens(timing: list[dict], analysed, skipped: dict | None) -> li
             and not str(skipped.get(t["sym"]) or "").strip()]
 
 
+def code_free(j: dict) -> dict:
+    """The judgment as the deep dive reads it: without a key that code computes (CODE_OWNED)."""
+    return {k: v for k, v in j.items() if k not in CODE_OWNED}
+
+
 def _world_from(j: dict, t: dict) -> dict:
     """What the article's card sees of the idea's other cards, rebuilt from a judgment saved without it (a report
     from before qt.research.state)."""
@@ -337,6 +364,8 @@ class Judge:
         """state: qt.research.state.State. What a run of the same week finished is taken from it and not asked
         again; each piece is saved as it finishes."""
         self.runner, self.run_id, self.max_deep, self.step, self.state = runner, run_id, max_deep, step, state
+        self.sectors: dict | None = None         # the week's sectors and A1 with its story: the cards' wider context
+        self.a1: dict | None = None
         self.max_rescue = max_rescue                     # the dry run asks fewer (qt.dryrun)
         self.log: list[dict] = []
         self.selection: dict[str, Any] = {}
@@ -497,6 +526,7 @@ class Judge:
 
     # ---------------------------------------------------------------- A4 + A6
     def idea(self, t: dict, deep_dive: DeepDive, macro: dict, as_of: date, sectors: dict | None = None) -> dict:
+        self.sectors = sectors if sectors is not None else self.sectors
         j, d, world = self._cards(t, deep_dive, macro, as_of)
         self.article(j, d, macro, as_of, world, sectors)
         return j
@@ -510,7 +540,7 @@ class Judge:
             j["article"] = AR.settle(saved["article"])
             return
         try:
-            fs = article_facts(d, macro, as_of, j, sectors)
+            fs = article_facts(d, macro, as_of, j, sectors, self.a1)
             w = {k: v for k, v in world.items() if k not in ("DC-14",)} | {
                 "write_in": "Hebrew sentences; English quotes word for word from a fact's text",
                 "sections": [dict(key=k, question=q, rules=r) for k, q, r, _ in AR.SECTIONS],
@@ -550,12 +580,13 @@ class Judge:
     def _cards(self, t: dict, deep_dive: DeepDive, macro: dict, as_of: date) -> tuple[dict, dict, dict]:
         sym, etf, dr = t["sym"], t["etf"], t["dir"]
         j: dict[str, Any] = {"etf": etf, "direction": dr}
-        d = deep_dive(sym, etf, dr, dict(j, options=False))      # the facts; the option chains come at the end
+        d = deep_dive(sym, etf, dr, code_free(dict(j, options=False)))   # the facts; the option chains come at the end
         self.call(j, d, as_of)
         fs = idea_facts(d, macro, as_of)
         EC.call_facts(fs, sym, j.get("call"), as_of)
+        context_facts(fs, d, macro, as_of, self.sectors, self.a1)
         world: dict[str, Any] = {"symbol": sym, "direction": dr, "etf": etf, "traffic_light": t.get("combined"),
-                                 "write_in": LANGUAGE}
+                                 "code_decides": CODE_DECIDES, "write_in": LANGUAGE}
 
         story = self._decide("A4", "DC-10", fs, world, sym)
         world["DC-10"] = {"option": story["option"], "reasoning": story.get("reasoning")}
@@ -647,7 +678,7 @@ class Judge:
         saved = self._saved(f"idea:{t['sym']}")
         if saved:
             j = {k: v for k, v in saved["j"].items() if k not in ("article", "article_error")}
-            d = deep_dive(t["sym"], t["etf"], t["dir"], dict(j, options=False))      # the facts for the article
+            d = deep_dive(t["sym"], t["etf"], t["dir"], code_free(dict(j, options=False)))   # the facts for the article
             return j, d, saved.get("world") or _world_from(j, t)
         n0 = len(self.log)
         j, d, world = self._cards(t, deep_dive, macro, as_of)
@@ -681,6 +712,7 @@ class Judge:
         a1 = {**a1, **{k: story[k] for k in ("story", "fed", "events") if story.get(k)},
               "narrative": {k: story.get(k) for k in ("status", "stats", "dropped", "error") if story.get(k) is not None}}
         J: dict[str, Any] = {"judged_by": JUDGED_BY, "A1": a1, "ideas": {}}
+        self.sectors, self.a1 = stages.get("sectors"), a1
         picked = self._picked(stages["timing"], macro, as_of, stages.get("screens"), stages.get("watchlist") or ())
         done: list[tuple[dict, dict, dict]] = []
         for n, t in enumerate(picked):
