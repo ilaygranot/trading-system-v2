@@ -433,3 +433,42 @@ def test_an_idea_with_a_refused_card_is_not_kept_for_the_resume(db):
     JG.Judge(Refuses(db, CardClient()), state=st)({"as_of": AS_OF, "macro": FIX["macro"], "timing": _timing(2)},
                                                   _deep_dive([]))
     assert st.get("agents:idea:S0") and st.get("agents:idea:S1") is None
+
+
+# ------------------------------------------------------------------ the context and the code's boundary (Ilay 25.10)
+
+TECH = {"rsi": [55.0, 61.2], "macd": [0.1, 0.4], "signal": [0.2, 0.3], "hist": [-0.1, 0.1], "adr_ratio": [1.1],
+        "rs_sector": [1.05], "rs_spy": [0.97], "weekly": {"close": [10.0, 10.4]}, "periods": {"3m": 12.5}}
+
+
+def test_the_deep_dive_cards_see_the_whole_context_and_what_code_decides(db):
+    client = CardClient()
+    a1 = {"story": ["המקרו חם והפד מקל."], "fed": {"headline": "הפד מקל."}}
+    jg = _judge(db, client)
+    jg.a1 = a1
+    jg.idea(_timing(1)[0] | {"sym": SYM}, _deep_dive([], tech=TECH), FIX["macro"], AS_OF, FIX["sectors"])
+    i = client.cards.index("DC-10")
+    req = [r for r in client.requests if '<decision_card id="DC-' in r["messages"][0]["content"]][i]
+    sheet = req["messages"][0]["content"]
+    for key in (f"{SYM}.chart.now.rsi", f"{SYM}.chart.periods", f"{SYM}.statements.annual.TotalRevenue", "macro.inflation",
+                "macro.market", f"sector.{FIX['ideas'][SYM]['etf']}", "macro.story[0]", "macro.fed.headline",
+                f"{SYM}.timing.combined"):
+        assert key in sheet, key
+    assert "never change, recompute or contradict them" in sheet                      # the boundary, in the world state
+
+
+def test_no_judgment_key_reaches_what_code_computes(db):
+    """The traffic light, the levels and the targets come from code; a judgment (an agent's, a saved one, a stale
+    file's) never feeds them (JG.CODE_OWNED)."""
+    calls = []
+    st_j = {"decision": "watch_only", "heat": "cold", "story_type": "momentum_long", "levels_color": "green",
+            "combined": "green", "targets": [{"price": 999}], "timing": {"combined": "green"}}
+    from qt.research.state import State
+    st = State(db, AS_OF)
+    st.put(f"agents:idea:{SYM}", {"j": st_j, "world": None})
+    jg = JG.Judge(AgentRunner(db, CardClient()), state=st)
+    jg._idea(_timing(1)[0] | {"sym": SYM}, _deep_dive(calls), FIX["macro"], AS_OF)
+    assert calls and not set(calls[0][1]) & set(JG.CODE_OWNED)
+    calls.clear()
+    jg.idea(_timing(1)[0] | {"sym": "S0"}, _deep_dive(calls), FIX["macro"], AS_OF)
+    assert all(not set(j) & set(JG.CODE_OWNED) for _, j in calls)
