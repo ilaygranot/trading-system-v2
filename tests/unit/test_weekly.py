@@ -185,7 +185,7 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
     from qt.approvals import Queue
     from qt.telegram import sign_report
     from qt.web import App
-    from dossiers import complete
+    from dossiers import backfilled, complete
     from test_judge import CardClient
 
     fix = _json.loads((Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8"))
@@ -196,7 +196,8 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
 
     def fake_research(as_of, judge, manual_text, fred):
         seen.update(as_of=as_of, manual=manual_text, limit=judge.runner.limit_usd, run_id=judge.run_id)
-        d = complete(fix)                                              # a finished report (dossiers.complete)
+        seen["backfill"] = [w["sym"] for w in judge.backfill_wanted]
+        d = backfilled(as_of, judge, manual_text, fred, complete(fix))   # a finished report (dossiers.complete)
         d["judgments"]["agent_log"] = [{"card": "DC-10", "cost": 0.25, "status": "decided"},
                                        {"card": "DC-13", "cost": 0.5, "status": "decided"}]
         return d
@@ -209,6 +210,7 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
     rid = Runner(db, PIPELINES, svc).start("weekly", AS_OF)
     assert seen["as_of"] == AS_OF and "ism_pmi" in seen["manual"] and seen["limit"] == config()["budget"]["weekly_research_usd"] and seen["run_id"] == rid
     assert runner.limit_usd is None                                    # the daily cap is back after the run
+    assert seen["backfill"] == ["KEEP", first]          # no earlier report analysed them; first is analysed anyway
     out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='research'", (rid,), ["output"])["output"]
     assert out["cost_usd"] == 0.75 and out["completeness"]["status"] == "complete"
     wl = yaml.safe_load(Queue(db).latest_upload("watchlist")["content"])
@@ -219,7 +221,7 @@ def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeyp
     assert Queue(db).latest_upload("dossier")["name"].startswith("dossier-")
     text = bot.sent[-2]
     link = f"https://qt.example/report/{rep['id']}?sig={sign_report(rep['id'], 'pw')}"
-    assert f"מחקר שבועי: {len(fix['ideas'])} רעיונות נבדקו · עלות הסוכנים 0.75$ · הדוח: {link}" in text
+    assert f"מחקר שבועי: {len(fix['ideas']) + 1} רעיונות נבדקו · עלות הסוכנים 0.75$ · הדוח: {link}" in text
     assert "רשימת המעקב עודכנה" in text and f"✅ דוח מלא: {len(fix['ideas'])}/{len(fix['ideas'])} מניות" in text
     for sym, i in fix["ideas"].items():
         if i["bucket"] in ("enter", "conditional"):
@@ -308,3 +310,32 @@ def test_a_research_cut_by_the_budget_fails_the_run_after_the_partial_report(db)
     run = db.one("SELECT * FROM runs WHERE kind = 'weekly'")
     assert run["status"] == "failed" and seen == [AS_OF.isoformat()]
     assert Queue(db).latest_upload("report") and Queue(db).latest_upload("dossier")     # the partial report is up
+
+
+def test_a_partial_report_never_adds_to_the_watchlist(db):
+    """25.10: SM, CHRD and MUR came onto the list from the broken run's partial report."""
+    import json
+    from pathlib import Path
+
+    import pytest
+    from qt.agents import AgentRunner
+    from qt.approvals import Queue
+    from dossiers import complete
+    from test_judge import CardClient
+    from qt.weekly import ResearchIncomplete
+    fix = json.loads((Path(__file__).parent.parent / "fixtures" / "research_dossier.json").read_text(encoding="utf-8"))
+
+    def partial(as_of, judge, manual_text, fred):
+        d = complete(fix)
+        d["judgments"]["errors"] = {"X": "BudgetExceeded"}
+        return d
+    Queue(db).upload("manual_macro", "ism.yaml", "ism_pmi: {'2026-09': 49}\n")
+    old = {"entries": [vars(_entry(symbol="KEEP", added="2026-09-01"))]}
+    Queue(db).upload("dossier", "dossier-2026-10-16.json", json.dumps(
+        {"meta": {"as_of": "2026-10-16", "judged_by": "Agents A1"}, "ideas": {"KEEP": {"judgment": {"article": {"headline": {"text": "x"}}}}}}))
+    svc = {**_svc(Bot(), old), "agents": AgentRunner(db, CardClient()), "fred": object(), "research_run": partial}
+    with pytest.raises(ResearchIncomplete):
+        Runner(db, PIPELINES, svc).start("weekly", AS_OF)
+    assert Queue(db).latest_upload("watchlist") is None
+    from qt.weekly import analysed
+    assert analysed(db, ["KEEP", "NEW"], AS_OF) == {"KEEP": "2026-10-16"}

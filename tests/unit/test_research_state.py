@@ -142,3 +142,32 @@ def test_a_data_check_without_its_sources_is_not_kept_for_the_resume(db):
     assert verified(st, check(False))["sec"] is False and st.get("stage:verify.json") is None
     assert verified(st, check(True))["sec"] is True and st.get("stage:verify.json")["sec"] is True
     assert verified(st, check(True))["sec"] is True and runs == [False, True]          # kept: not asked again
+
+
+def test_watchlist_stocks_with_no_full_analysis_are_analysed_after_the_picks(db):
+    """Ilay 25.10: nine stocks on the list (a broken run, a session by hand) had no full analysis; they get the same
+    cards and article as a picked stock, after the picks, judged on this week's facts."""
+    st, calls = State(db, AS_OF), []
+    stages = _stages(2) | {"backfill": [{"sym": "OLD", "etf": "XLE", "dir": "long", "profile": "L4", "combined": "red",
+                                         "backfill": True, "backfill_failed": ["S06-R22"]},
+                                        {"sym": "S1", "etf": "XLE", "dir": "long", "backfill": True}]}
+    client = CardClient()
+    J = JG.Judge(AgentRunner(db, client), state=st)(stages, _deep_dive(calls))
+    assert list(J["ideas"]) == ["S0", "S1", "OLD"] and J["ideas"]["OLD"]["backfill"] is True
+    assert "backfill" not in J["ideas"]["S1"] and J["ideas"]["OLD"].get("article") and "incomplete" not in J
+    old = [r for r in client.requests if "OLD" in r["messages"][0]["content"] and "DC-10" in r["messages"][0]["content"]]
+    assert old and "failed_this_weeks_screen" in old[0]["messages"][0]["content"]
+    client = CardClient()                               # a resume of the week asks nothing again
+    J = JG.Judge(AgentRunner(db, client), state=st)(stages, _deep_dive([]))
+    assert client.cards == [] and J["ideas"]["OLD"]["backfill"] is True
+
+
+def test_a_budget_stop_cuts_the_backfill_too(db):
+    class Broke(AgentRunner):
+        def decide(self, agent, card_id, *a, subject=None, **k):
+            if subject == "S1":
+                raise BudgetExceeded("agent budget $25 reached")
+            return super().decide(agent, card_id, *a, subject=subject, **k)
+    stages = _stages(2) | {"backfill": [{"sym": "OLD", "etf": "XLE", "dir": "long", "backfill": True}]}
+    J = JG.Judge(Broke(db, CardClient()), state=State(db, AS_OF))(stages, _deep_dive([]))
+    assert "OLD" not in J["ideas"] and "OLD" in J["A3"]["cut_by_budget"] and "OLD" in J["incomplete"]

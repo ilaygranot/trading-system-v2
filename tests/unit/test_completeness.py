@@ -1,6 +1,8 @@
 """The whole-report contract (qt.research.completeness): each way the 23.10 report, or a report like it, falls short."""
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from qt.research import completeness as C
@@ -15,7 +17,7 @@ def codes(c: dict, kind: str = "blocks") -> set[str]:
 def test_a_finished_report_is_complete():
     c = C.check(complete())
     assert c["status"] == "complete" and c["blocks"] == [] and c["flags"] == []
-    assert c["counts"] == {"picked": 3, "analysed": 3, "articles": 3}
+    assert c["counts"] == {"picked": 3, "analysed": 3, "articles": 3, "backfill": 0}
     assert C.line(c).startswith("דוח מלא: 3/3 מניות, 3 מאמרים")
 
 
@@ -37,7 +39,7 @@ def test_23_10_four_of_twelve_and_no_article():
     c = C.check(d)
     assert c["status"] == "partial"
     assert {"cut_by_budget", "picked_missing", "article_missing"} <= codes(c)
-    assert c["counts"] == {"picked": 5, "analysed": 3, "articles": 0}
+    assert c["counts"] == {"picked": 5, "analysed": 3, "articles": 0, "backfill": 0}
     assert "דוח חלקי" in C.line(c)
 
 
@@ -175,3 +177,21 @@ def test_the_report_opens_with_the_verdict():
     html = report.render(d)
     assert 'class="verdict partial"' in html and "אין מאמר" in html
     assert html.index('id="verdict"') < html.index('class="rail"')
+
+
+def test_every_watchlist_stock_has_a_full_analysis():
+    """Ilay 25.10: nine stocks on the list had none; the report is not complete while one is missing."""
+    d = complete()
+    sym = next(iter(d["ideas"]))
+    d["meta"]["watchlist"] = {"symbols": [sym, "OLD", "PREV", "GONE", "DRY"], "analysed_before": {"PREV": "2026-10-16"},
+                              "deferred": ["DRY"]}
+    d["meta"]["backfill"] = {"wanted": ["OLD", "GONE", "DRY"], "errors": {"GONE": "לא ביקום של השבוע (אין ציטוט)"}}
+    c = C.check(d)
+    assert codes(c) == {"watchlist_unanalysed"} and "OLD" in c["blocks"][0]["text"]
+    assert {"watchlist_gone", "watchlist_deferred"} <= codes(c, "flags")
+    i = copy.deepcopy(d["ideas"][sym]) | {"backfill": {"failed": []}}
+    d["ideas"]["OLD"] = i
+    c = C.check(d)
+    assert c["status"] == "complete" and c["counts"]["backfill"] == 1 and "1 מרשימת המעקב" in C.line(c)
+    i["judgment"].pop("article")
+    assert "watchlist_unanalysed" in codes(C.check(d))

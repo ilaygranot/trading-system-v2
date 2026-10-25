@@ -217,6 +217,25 @@ class ResearchIncomplete(RuntimeError):
     button, the second cron firing, or a new run of the week) asks only for what is missing (qt.research.state)."""
 
 
+def analysed(db, symbols: list[str], as_of: date, depth: int = 30) -> dict[str, str]:
+    """{symbol: the as-of of its newest full analysis}: by the agents, with its article, in an earlier report (Ilay
+    25.10: a stock on the watchlist from a broken run or a session by hand has none, and gets one)."""
+    import json
+    want, out = set(symbols), {}
+    for r in db.all("SELECT id FROM uploads WHERE kind = 'dossier' ORDER BY id DESC LIMIT ?", (depth,)):
+        try:
+            d = json.loads(db.one("SELECT content FROM uploads WHERE id = ?", (r["id"],))["content"])
+        except ValueError:
+            continue
+        meta = d.get("meta") or {}
+        if not str(meta.get("judged_by") or "").startswith("Agents") or str(meta.get("as_of")) > as_of.isoformat():
+            continue
+        for s, i in (d.get("ideas") or {}).items():
+            if s in want and s not in out and ((i.get("judgment") or {}).get("article") or {}).get("headline"):
+                out[s] = str(meta["as_of"])
+    return out
+
+
 def _run_research(as_of: date, judge, manual_text: str, fred) -> dict:
     from qt.research import run as R
     work = Path(os.environ.get("QT_WORK_DIR", "/tmp/qt-research")) / as_of.isoformat()
@@ -262,16 +281,26 @@ def research(ctx: RunContext, _: str) -> dict:
         lim = ctx.services.get("research_limits") or {}            # the dry run: fewer deep dives (qt.dryrun)
         judge = Judge(runner, run_id=ctx.run_id, state=state,
                       **{k: lim[k] for k in ("max_deep", "max_rescue") if k in lim})
+        entries = (ctx.services.get("watchlist") or {}).get("entries") or []
+        cover = analysed(ctx.db, [e["symbol"] for e in entries], ctx.as_of)
+        wanted = [dict(sym=e["symbol"], etf=e.get("etf"), dir=e.get("direction") or "long")
+                  for e in entries if e["symbol"] not in cover]
+        n = lim.get("max_backfill", len(wanted))                   # the dry run: fewer (qt.dryrun)
+        judge.backfill_wanted = wanted[:n]
         d = (ctx.services.get("research_run") or _run_research)(ctx.as_of, judge, manual["content"], fred)
     finally:
         runner.limit_usd = prev
     d = json.loads(json.dumps(d, default=str))
+    d["meta"]["watchlist"] = {"analysed_before": cover, "deferred": [w["sym"] for w in wanted[n:]],
+                              "symbols": [e["symbol"] for e in entries]}
     from qt.research import completeness
     d["completeness"] = done = completeness.check(d)           # the report opens with it; a block fails the step
     html = report.render(d)
     rid = q.upload("report", f"report-{ctx.as_of.isoformat()}.html", "<!doctype html><meta charset=utf-8>" + html)
     q.upload("dossier", f"dossier-{ctx.as_of.isoformat()}.json", json.dumps(d, ensure_ascii=False))  # the dashboard
     old = ctx.services.get("watchlist")
+    if done["status"] != "complete":           # 25.10: a partial report never adds to the list (SM, CHRD, MUR did)
+        raise ResearchIncomplete("\n".join(completeness.lines(done)) + f"\n(report {rid}; resume the run to finish it)")
     wl = merge_watchlist(old, W.from_dossier(d))
     q.upload("watchlist", f"watchlist-{ctx.as_of.isoformat()}.yaml", yaml.safe_dump(wl, allow_unicode=True, sort_keys=False))
     on_list = {e["symbol"] for e in (old or {}).get("entries", [])}
@@ -281,8 +310,6 @@ def research(ctx: RunContext, _: str) -> dict:
              for s, i in d["ideas"].items()]
     sc = (d.get("sectors") or {}).get("scorecard") or {}
     growth = {e: dict(v["growth"], total=v.get("total"), bucket=v.get("bucket")) for e, v in sc.items() if v.get("growth")}
-    if done["status"] != "complete":           # the partial report is up; the run is not done
-        raise ResearchIncomplete("\n".join(completeness.lines(done)) + f"\n(report {rid}; resume the run to finish it)")
     return {"report_id": rid, "completeness": done, "ideas": ideas, "watchlist_n": len(wl["entries"]), "sector_growth": growth,
             "rejected_on_list": [x["symbol"] for x in ideas if x["bucket"] == "reject" and x["symbol"] in on_list],
             "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {}),

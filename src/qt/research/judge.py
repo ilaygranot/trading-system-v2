@@ -587,6 +587,9 @@ class Judge:
         context_facts(fs, d, macro, as_of, self.sectors, self.a1)
         world: dict[str, Any] = {"symbol": sym, "direction": dr, "etf": etf, "traffic_light": t.get("combined"),
                                  "code_decides": CODE_DECIDES, "write_in": LANGUAGE}
+        if t.get("backfill"):                           # on the watchlist with no full analysis: judged on this week
+            world["backfill"] = {"why": "on the watchlist from an earlier week without a full analysis",
+                                 "failed_this_weeks_screen": t.get("backfill_failed") or []}
 
         story = self._decide("A4", "DC-10", fs, world, sym)
         world["DC-10"] = {"option": story["option"], "reasoning": story.get("reasoning")}
@@ -730,6 +733,25 @@ class Judge:
                     for x in picked[n + 1:]:
                         self.selection["skipped"][x["sym"]] = "נעצר: תקציב ה-Agents לריצה נגמר (ירוקות נותחו ראשונות)"
                     break
+        stopped = "cut_by_budget" in self.selection
+        for t in stages.get("backfill") or []:       # Ilay 25.10: watchlist stocks with no full analysis, after the picks
+            if t["sym"] in J["ideas"]:
+                continue
+            if stopped:
+                self.selection.setdefault("cut_by_budget", []).append(t["sym"])
+                continue
+            try:
+                j, d, world = self._idea(t, deep_dive, macro, as_of)
+                j["backfill"] = True
+                J["ideas"][t["sym"]] = j
+                done.append((j, d, world))
+            except Exception as e:                       # noqa: BLE001 - as a picked idea's failure
+                J.setdefault("errors", {})[t["sym"]] = f"{type(e).__name__}: {e}"
+                if type(e).__name__ in STOPS:
+                    if type(e).__name__ == "AgentUnavailable":
+                        self.selection["stopped"] = str(e)[:300]
+                    self.selection.setdefault("cut_by_budget", [])
+                    stopped = True
         for j, d, world in done:          # the articles after every idea's cards: the budget goes to the decisions first
             self.article(j, d, macro, as_of, world, stages.get("sectors"))
         J["A3"] = self.selection
