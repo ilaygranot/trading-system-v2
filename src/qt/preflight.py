@@ -4,8 +4,9 @@ Each check is one thing the Saturday run needs, tried for real: the Playbook fro
 on this server, the database, the Claude CLI answering on the subscription token, and one live request to every
 data source the research reads (Yahoo's screener and quoteSummary, FRED, SEC, roic.ai, FMP, the monthly macro
 sources), with fresh caches so an old answer cannot pass for a live one. Then the agents' expected cost against the
-run's cap. `qt preflight` runs it (exit 1 on any failure, `--notify` sends the result to Telegram); `--offline`
-keeps to the checks without network or keys (the CI job that installs the package as Render does).
+run's cap, and against the load the Claude subscription was seen to stop at. `qt preflight` runs it (exit 1 on any
+failure, `--notify` sends the result to Telegram); `--offline` keeps to the checks without network or keys (the CI
+job that installs the package as Render does).
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ WEEKLY_KEYS = ("QT_DATABASE_URL", "FRED_API_KEY", "SEC_CONTACT", "ROIC_API_KEY",
                "TELEGRAM_CHAT_ID", "QT_PUBLIC_URL")
 COST_PER_IDEA_USD = 8.0          # list price of one deep dive with its article, before any run measured it (24.10)
 COST_SHARE_MAX = 0.8             # the estimate may use at most this share of the cap (not from course)
+SUBSCRIPTION_SEEN_USD = 45.0     # list price after which the subscription stopped answering (weekly-2026-10-23-9ec812, 25.10)
 
 
 @dataclass
@@ -224,14 +226,11 @@ def macro_sources(as_of: date | None = None) -> str:
     return "עדכני: " + ", ".join(f"{k} {v}" for k, v in sorted((rep.get("latest") or {}).items()))
 
 
-def cost_estimate() -> str:
-    """The research's expected list price against its cap: the last research's cost per deep dive, times the cap of
-    deep dives, plus its fixed part (A1, the pick, DC-08). Over COST_SHARE_MAX of the cap fails: the cap must stay
-    a guard against a runaway loop, never the thing that ends a normal run (23.10)."""
-    from qt.agents.runner import config
+def _estimate() -> tuple[float, str]:
+    """The research's expected list price: the last research's cost per deep dive, times the cap of deep dives, plus
+    its fixed part (A1, the pick, DC-08)."""
     from qt.db import DB
     from qt.research.judge import MAX_DEEP
-    cap = float(config()["budget"]["weekly_research_usd"])
     per, fixed, basis = COST_PER_IDEA_USD, 2.0, "הערכה ראשונית"
     url = os.environ.get("QT_DATABASE_URL")
     if url:
@@ -245,16 +244,39 @@ def cost_estimate() -> str:
                 per = max(sum(ideas) / len(ideas), per / 2)
                 fixed = sum(float(r["usd"] or 0) for r in rows if r["subject"] in ("macro", "screen"))
                 basis = f"לפי {row['run_id']}"
-    est = per * MAX_DEEP + fixed
+    return per * MAX_DEEP + fixed, basis
+
+
+def cost_estimate() -> str:
+    """The expected list price against the run's cap. Over COST_SHARE_MAX of the cap fails: the cap must stay a guard
+    against a runaway loop, never the thing that ends a normal run (23.10)."""
+    from qt.agents.runner import config
+    cap = float(config()["budget"]["weekly_research_usd"])
+    est, basis = _estimate()
     if est > cap * COST_SHARE_MAX:
         raise RuntimeError(f"צפוי {est:.0f}$ ({basis}), התקרה {cap:.0f}$: הריצה עלולה להיחתך")
     return f"צפוי {est:.0f}$ מתוך תקרה של {cap:.0f}$ ({basis})"
 
 
+def subscription() -> str:
+    """The expected load against what the Claude subscription carried before it stopped answering (25.10: 395 calls,
+    ~45$ at list price, then 0 tokens). The subscription's limit is not published, so the check uses the load it was
+    seen to stop at; over it fails, since the run would stop in the middle and wait for a resume. On an API key the
+    run pays per call and has no such limit."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "מפתח API: אין מגבלת מנוי"
+    est, basis = _estimate()
+    if est > SUBSCRIPTION_SEEN_USD:
+        raise RuntimeError(f"צפוי עומס של {est:.0f}$ במחירון ({basis}), והמנוי הפסיק לענות אחרי כ-{SUBSCRIPTION_SEEN_USD:.0f}$ "
+                           "ב-25.10: הריצה צפויה להיעצר באמצע ולחכות להמשך")
+    return f"צפוי עומס של {est:.0f}$ במחירון, מתחת ל-{SUBSCRIPTION_SEEN_USD:.0f}$ שבהם המנוי נעצר ב-25.10"
+
+
 OFFLINE: list[tuple[str, Callable[[], str]]] = [("Playbook", playbook), ("כרטיסים", cards), ("policy", policy)]
 LIVE: list[tuple[str, Callable[[], str]]] = [("מפתחות", keys), ("מסד נתונים", database), ("Claude", claude),
                                              ("Yahoo", yahoo), ("FRED", fred), ("SEC", sec), ("roic.ai", roic),
-                                             ("FMP", fmp), ("מחיר שני", second_price), ("חדשות", news), ("מקרו חודשי", macro_sources), ("עלות צפויה", cost_estimate)]
+                                             ("FMP", fmp), ("מחיר שני", second_price), ("חדשות", news), ("מקרו חודשי", macro_sources), ("עלות צפויה", cost_estimate),
+                                             ("עומס מנוי", subscription)]
 
 
 def run(offline: bool = False) -> list[Result]:

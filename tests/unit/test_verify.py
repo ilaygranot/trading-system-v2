@@ -171,3 +171,26 @@ def test_nasdaq_second_close(monkeypatch):
     import pytest
     with pytest.raises(P.ProviderError):
         P.Nasdaq().daily_closes("XXX", date(2026, 10, 16), date(2026, 10, 23))
+
+
+def test_the_sec_probe_waits_out_a_busy_minute_and_says_why_it_gave_up(monkeypatch):
+    """25.10: one failed probe left the whole data check without SEC, and the report could not say why."""
+    from qt.data import providers
+    tries = []
+
+    def cik(self, t):
+        tries.append(t)
+        if len(tries) < 3:
+            raise RuntimeError("company_tickers.json: HTTP 503")
+        return 320193
+    monkeypatch.setattr(providers.EDGAR, "cik", cik)
+    monkeypatch.setattr(verify.time, "sleep", lambda s: None)
+    src = verify.default_sources(None)
+    assert src["sec"] is not None and "sec_error" not in src and len(tries) == 3
+    tries.clear()
+    monkeypatch.setattr(verify, "SEC_TRIES", 2)
+    src = verify.default_sources(None)
+    assert src["sec"] is None and "HTTP 503" in src["sec_error"]
+    d = json.loads(FIX.read_text(encoding="utf-8"))
+    v = verify.run(d, sec=None, second_close=None, fetch=None, sec_error=src["sec_error"])
+    assert v["sec"] is False and "HTTP 503" in v["sec_error"]

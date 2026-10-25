@@ -127,3 +127,18 @@ def test_a_missing_article_or_a_failed_idea_is_not_a_finished_report(db):
     J = JG.Judge(Flaky(db, CardClient()))(_stages(3), _deep_dive([]))
     assert sorted(J["incomplete"]) == ["S0:article", "S2"]
     assert "incomplete" not in JG.Judge(AgentRunner(db, CardClient()))(_stages(2), _deep_dive([]))
+
+
+def test_a_data_check_without_its_sources_is_not_kept_for_the_resume(db):
+    """25.10: SEC did not answer, the check ran without it and was kept; a resume must ask again."""
+    from qt.research.run import verified
+    st, runs = State(db, AS_OF), []
+
+    def check(sec):
+        def go():
+            runs.append(sec)
+            return {"checks": [], "sec": sec, "second_price": True}
+        return go
+    assert verified(st, check(False))["sec"] is False and st.get("stage:verify.json") is None
+    assert verified(st, check(True))["sec"] is True and st.get("stage:verify.json")["sec"] is True
+    assert verified(st, check(True))["sec"] is True and runs == [False, True]          # kept: not asked again

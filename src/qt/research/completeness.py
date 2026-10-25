@@ -68,9 +68,11 @@ def _article(sym: str, j: dict) -> tuple[list[dict], list[dict]]:
     answered = [k for k, s in secs.items() if (s or {}).get("paragraphs")]
     if not (a.get("headline") or {}).get("text") or not answered:
         return [_item("article_empty", sym, f"{sym}: המאמר ריק (אין כותרת או אף פסקה שעברה את בדיקת הקוד)")], []
+    flags = [_item("headline_from_dek", sym, f"{sym}: הכותרת נפלה בבדיקת הקוד, ושורת המשנה מוצגת במקומה")] \
+        if a.get("headline_from") == "dek" else []
     if len(answered) < MIN_ANSWERED_SECTIONS:
-        return [], [_item("article_thin", sym, f"{sym}: המאמר עונה רק על {len(answered)} מתוך {len(secs)} השאלות")]
-    return [], []
+        flags.append(_item("article_thin", sym, f"{sym}: המאמר עונה רק על {len(answered)} מתוך {len(secs)} השאלות"))
+    return [], flags
 
 
 def _idea(sym: str, i: dict) -> tuple[list[dict], list[dict]]:
@@ -140,7 +142,8 @@ def _verification(v: Any) -> tuple[list[dict], list[dict]]:
         return [_item("verification", "verify", "בדיקת הנתונים (SEC, מחיר שני, טריות) לא רצה")], []
     blocks = []
     if not v.get("sec"):
-        blocks.append(_item("verify_sec", "verify", "בדיקת הנתונים רצה בלי SEC (לא זמין או חסום)"))
+        why = f": {v['sec_error'][:160]}" if v.get("sec_error") else " (לא זמין או חסום)"
+        blocks.append(_item("verify_sec", "verify", f"בדיקת הנתונים רצה בלי SEC{why}"))
     if not v.get("second_price"):
         blocks.append(_item("verify_price", "verify", "בדיקת הנתונים רצה בלי מקור שני למחיר (FMP / nasdaq.com / Alpha Vantage)"))
     down = [c for c in v["checks"] if c.get("field") == "close" and "לא זמין" in str(c.get("note"))]

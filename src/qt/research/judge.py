@@ -507,7 +507,7 @@ class Judge:
         sym = d["sym"]
         saved = self._saved(f"article:{sym}")
         if saved:
-            j["article"] = saved["article"]
+            j["article"] = AR.settle(saved["article"])
             return
         try:
             fs = article_facts(d, macro, as_of, j, sectors)

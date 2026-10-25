@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import html as H
 import re
+import time
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from typing import Any, Callable, Iterable
@@ -25,6 +26,7 @@ from urllib.parse import urlparse
 from qt.policy import load_policy
 
 BADGE = {"ok": "✓", "single": "◐", "bad": "✗"}
+SEC_TRIES, SEC_WAIT_S = 3, 30                   # the SEC probe: a busy minute is not a blocked SEC (not from course)
 REVENUE_TAGS = (("us-gaap", "Revenues"), ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax"),
                 ("us-gaap", "SalesRevenueNet"), ("ifrs-full", "Revenue"))
 EPS_TAGS = (("us-gaap", "EarningsPerShareDiluted"), ("ifrs-full", "DilutedEarningsLossPerShare"),
@@ -325,7 +327,7 @@ def _company_domain(idea: dict) -> str | None:
 
 
 def run(d: dict, *, sec: Any = None, second_close: Callable[[str, date], tuple[float, str]] | None = None,
-        fetch: Callable[[str], str] | None = None) -> dict[str, Any]:
+        fetch: Callable[[str], str] | None = None, sec_error: str | None = None) -> dict[str, Any]:
     """Checks for a dossier. sec: an object with cik(ticker) and company_facts(cik) (qt.data.providers.EDGAR),
     or None when SEC is out of reach. Every network failure becomes a ◐ on its check, never an exception."""
     as_of = date.fromisoformat(d["meta"]["as_of"])
@@ -352,7 +354,7 @@ def run(d: dict, *, sec: Any = None, second_close: Callable[[str, date], tuple[f
         checks.append(source_check(subject, s, cd, fetch))
     rows = [asdict(c) for c in checks]
     return dict(checks=rows, summary=summarize(rows), sec=sec is not None, second_price=second_close is not None,
-                fetched_pages=fetch is not None)
+                fetched_pages=fetch is not None, **({"sec_error": sec_error} if sec is None and sec_error else {}))
 
 
 def summarize(rows: list[dict]) -> dict[str, Any]:
@@ -375,10 +377,18 @@ def default_sources(store: Any = None) -> dict[str, Any]:
     from qt.data.providers import EDGAR, FMP, AlphaVantage, Nasdaq
 
     out: dict[str, Any] = {"sec": EDGAR(store, contact=os.environ.get("SEC_CONTACT"))}
-    try:
-        out["sec"].cik("AAPL")
-    except Exception:                                                    # noqa: BLE001 - SEC blocked
+    for attempt in range(SEC_TRIES):                 # 25.10: one failed probe left the whole verification without SEC
+        try:
+            out["sec"].cik("AAPL")
+            break
+        except Exception as e:                                           # noqa: BLE001 - SEC blocked: say why
+            out["sec_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+            if attempt + 1 < SEC_TRIES:
+                time.sleep(SEC_WAIT_S)
+    else:
         out["sec"] = None
+    if out["sec"] is not None:
+        out.pop("sec_error", None)
     av_cache: dict[str, dict[str, float]] = {}
 
     def second_close(sym: str, day: date) -> tuple[float, str]:

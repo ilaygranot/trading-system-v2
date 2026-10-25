@@ -471,5 +471,17 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
         judgments={k: v for k, v in J.items() if k != "ideas"})
     from qt.data.store import Store
     check = lambda: verify.run(d, **verify.default_sources(Store(str(work / "verify.sqlite"))))  # noqa: E731
-    d["verification"] = check() if J.get("incomplete") else cached("verify.json", check)   # cut: the ideas will change
+    d["verification"] = check() if J.get("incomplete") else \
+        cached("verify.json", check) if state is None else verified(state, check)   # cut: the ideas will change
     return d
+
+
+def verified(state, check) -> dict:
+    """The week's data check, kept only when it ran with its sources: 25.10, SEC did not answer the probe, the check
+    ran without it, was kept, and every resume would have reused it."""
+    v = state.get("stage:verify.json")
+    if not (v and v.get("sec") and v.get("second_price")):
+        v = check()
+        if v.get("sec") and v.get("second_price"):
+            state.put("stage:verify.json", v)
+    return v

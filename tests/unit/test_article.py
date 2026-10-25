@@ -131,3 +131,24 @@ def test_dates_must_be_dates_of_the_cited_facts_and_agent_text_is_no_source_for_
     assert "68" in AR.check_sentence(S("הנחה של 68%.", [ag]), fs)                     # the agent's own number
     assert AR.check_sentence(S("הנחה של 68% מול הסקטור.", [ag, fs.add("SHEL.valuation.premium.pct", -67.98,
                                                                          "code:research", AS_OF).fact_id]), fs) is None
+
+
+def test_a_headline_that_fails_gives_its_place_to_the_dek():
+    """25.10, PAA: the headline's "42%" was in no cited fact; 92 sentences passed, and the article was shown empty."""
+    fs, f = _sheet()
+    out = {"headline": S("הנחה של 42% מול הקבוצה.", [f["pe"]]), "dek": S("המכפיל הצפוי 8.4 מול 26.3 בסקטור.",
+                                                                       [f["pe"], f["sector_pe"]]), "sections": {}}
+    art = AR.build(out, fs)
+    assert art["headline"]["text"].startswith("המכפיל") and art["dek"] is None and art["headline_from"] == "dek"
+    assert art["dropped"][0]["section"] == "headline"
+    out["headline"] = S("המכפיל 8.4.", [f["pe"]])
+    assert "headline_from" not in AR.build(out, fs)
+
+
+def test_a_saved_article_without_a_headline_is_settled_on_resume(tmp_path):
+    saved = {"headline": None, "dek": {"text": "שורה.", "notes": [1], "quotes": []}, "sections": {}}
+    j: dict = {}
+    jd = JG.Judge.__new__(JG.Judge)
+    jd._saved = lambda key: {"article": copy.deepcopy(saved)}
+    jd.article(j, {"sym": "PAA"}, {}, date(2026, 10, 23), {})
+    assert j["article"]["headline"]["text"] == "שורה." and j["article"]["headline_from"] == "dek"

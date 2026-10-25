@@ -97,6 +97,13 @@ def test_an_empty_or_thin_article():
     a = d["ideas"]["SHEL"]["judgment"]["article"]
     a["headline"] = None
     assert "article_empty" in codes(C.check(d))
+    from qt.research import article as AR
+    AR.settle(a)                                     # 25.10 PAA: the dek, which passed the check, takes its place
+    c = C.check(d)
+    assert c["status"] == "complete" and "headline_from_dek" in codes(c, "flags")
+    a["headline"] = a["dek"] = None
+    AR.settle(a)
+    assert "article_empty" in codes(C.check(d))
     d = complete()
     secs = d["ideas"]["SHEL"]["judgment"]["article"]["sections"]
     for k in list(secs)[:8]:
@@ -137,6 +144,9 @@ def test_the_data_check_must_run_with_its_sources():
     d["verification"]["checks"] = [{"subject": "SHEL", "field": "close", "status": "single",
                                     "note": "המקור השני לא זמין: timeout"}]
     assert {"verify_sec", "verify_price", "verify_price_down"} <= codes(C.check(d))
+    d["verification"]["sec_error"] = "ProviderError: company_tickers.json: HTTP 503"
+    sec = next(x for x in C.check(d)["blocks"] if x["code"] == "verify_sec")
+    assert "HTTP 503" in sec["text"]                                      # 25.10: the reason, not a guess
     d = complete()
     d["verification"]["summary"]["total"]["bad"] = 2
     c = C.check(d)
