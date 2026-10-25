@@ -53,7 +53,17 @@ CREATE TABLE IF NOT EXISTS outcomes (
   result {JSON} NOT NULL,                -- hit/miss, R multiple, MFE/MAE, ...
   correct INTEGER                        -- 1 / 0 / NULL (undetermined)
 );
+CREATE TABLE IF NOT EXISTS voids (
+  id {ID},
+  decision_id BIGINT NOT NULL REFERENCES decisions(id),
+  created_at {TS} NOT NULL,
+  status TEXT NOT NULL,                  -- what the row really was, e.g. agent_unavailable
+  reason TEXT NOT NULL
+);
 """
+# A decision recorded wrongly stays in the journal; a void next to it takes it out of the counts (25.10: 41 cards
+# recorded "refused" after Claude stopped answering). Every count over decisions filters with LIVE.
+LIVE = "NOT EXISTS (SELECT 1 FROM voids v WHERE v.decision_id = {t}.id)"
 
 APPEND_ONLY = {
     "sqlite": """
@@ -61,12 +71,19 @@ CREATE TRIGGER IF NOT EXISTS decisions_no_update BEFORE UPDATE ON decisions
 BEGIN SELECT RAISE(ABORT, 'journal is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS decisions_no_delete BEFORE DELETE ON decisions
 BEGIN SELECT RAISE(ABORT, 'journal is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS voids_no_update BEFORE UPDATE ON voids
+BEGIN SELECT RAISE(ABORT, 'journal is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS voids_no_delete BEFORE DELETE ON voids
+BEGIN SELECT RAISE(ABORT, 'journal is append-only'); END;
 """,
     "postgres": """
 CREATE OR REPLACE FUNCTION qt_append_only() RETURNS trigger AS $$
 BEGIN RAISE EXCEPTION 'journal is append-only'; END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS decisions_append_only ON decisions;
 CREATE TRIGGER decisions_append_only BEFORE UPDATE OR DELETE ON decisions
+FOR EACH ROW EXECUTE FUNCTION qt_append_only();
+DROP TRIGGER IF EXISTS voids_append_only ON voids;
+CREATE TRIGGER voids_append_only BEFORE UPDATE OR DELETE ON voids
 FOR EACH ROW EXECUTE FUNCTION qt_append_only();
 """,
 }
@@ -127,10 +144,21 @@ class Journal:
         self.db.insert("outcomes", dict(decision_id=decision_id, measured_at=_now(), result=dumps(result),
                                         correct=None if correct is None else int(correct)))
 
+    def void(self, decision_ids: list[int], status: str, reason: str) -> list[int]:
+        """Take recorded decisions out of the counts without touching them; ids already voided are skipped."""
+        done = []
+        for i in decision_ids:
+            if self.get(i) is None:
+                raise KeyError(f"no decision {i}")
+            if not self.db.one("SELECT id FROM voids WHERE decision_id = ?", (i,)):
+                self.db.insert("voids", dict(decision_id=i, created_at=_now(), status=status, reason=reason))
+                done.append(i)
+        return done
+
     def due_predictions(self, on: date) -> list[dict]:
         """Decisions whose prediction check date has arrived and that have no outcome yet."""
         return self.db.all(
-            "SELECT * FROM decisions d WHERE prediction IS NOT NULL AND check_on <= ? "
+            "SELECT * FROM decisions d WHERE prediction IS NOT NULL AND check_on <= ? AND " + LIVE.format(t="d") + " "
             "AND NOT EXISTS (SELECT 1 FROM outcomes o WHERE o.decision_id = d.id) ORDER BY check_on",
             (on.isoformat(),), JSON_COLS)
 

@@ -28,7 +28,7 @@ from typing import Any
 from qt import tradelog as T
 from qt.approvals import Queue
 from qt.db import DB, dumps
-from qt.journal import Decision, Journal
+from qt.journal import LIVE, Decision, Journal
 from qt.runs import RunContext
 
 SCHEMA = """
@@ -444,7 +444,7 @@ def learn_monthly(ctx: RunContext, _: str) -> dict:
     agree = db.all("SELECT d.card_id, r.verdict, COUNT(*) AS n FROM ilay_reviews r JOIN decisions d "
                    "ON d.id = r.decision_id WHERE r.created_at >= ? GROUP BY d.card_id, r.verdict", (since,))
     critic = db.all("SELECT card_id, status, COUNT(*) AS n FROM decisions WHERE decided_by LIKE ? "
-                    "AND created_at >= ? GROUP BY card_id, status", ("agent:%", since))
+                    "AND created_at >= ? AND " + LIVE.format(t="decisions") + " GROUP BY card_id, status", ("agent:%", since))
     calib = db.all("SELECT d.confidence, COUNT(*) AS n, SUM(o.correct) AS correct FROM decisions d JOIN outcomes o "
                    "ON o.decision_id = d.id WHERE d.confidence IS NOT NULL AND o.correct IS NOT NULL "
                    "GROUP BY d.confidence")

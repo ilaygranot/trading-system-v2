@@ -159,8 +159,10 @@ def report(ctx: RunContext, _: str) -> dict:
     cost = ctx.db.all("SELECT agent, COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0) AS usd FROM agent_calls "
                       "WHERE created_at >= ? GROUP BY agent ORDER BY agent", (since,))
     queue = ctx.db.all("SELECT status, COUNT(*) AS n FROM approval_queue WHERE as_of >= ? GROUP BY status", (since,))
+    from qt.journal import LIVE, SCHEMA
+    ctx.db.ddl(SCHEMA)
     agents = ctx.db.all("SELECT status, COUNT(*) AS n FROM decisions WHERE decided_by LIKE ? "
-                        "AND created_at >= ? GROUP BY status", ("agent:%", since))
+                        "AND created_at >= ? AND " + LIVE.format(t="decisions") + " GROUP BY status", ("agent:%", since))
     q = {r["status"]: int(r["n"]) for r in queue}
     asked = sum(q.get(s, 0) for s in ("approved", "rejected", "expired", "changed", "pending", "postponed"))
     return {
