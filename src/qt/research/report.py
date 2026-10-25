@@ -44,8 +44,11 @@ FLAG_HE = {
     "atr20_over_atr60_wait": "ATR20/ATR60 גבוה: להמתין",
     "permits_phase_recovery_differs": "היתרי הבנייה מצביעים על התאוששות, לא התרחבות",
 }
-RULE_HE = {"S06-R22": "פרופיל צמיחה/תמחור לא עומד", "S06-R10": "הכנסות מתחת לרצפה", "S06-R9": "מחיר מתחת לרצפה",
-           "S06-R6": "שווי שוק מתחת לרצפה", "S06-R8": "שווי שוק לשורט מתחת לרצפה", "no_profile": "לא התאים לאף פרופיל"}
+RULE_HE = {"S06-R22": "צמיחת מכירות (SG1) לא מעל ממוצע הסקטור", "S06-R10": "הכנסות מתחת לרצפה", "S06-R9": "מחיר מתחת לרצפה",
+           "S06-R6": "שווי שוק מתחת לרצפה", "S06-R8": "שווי שוק לשורט מתחת לרצפה", "no_profile": "לא התאים לאף פרופיל",
+           "S06-R5": "לא בבורסה מותרת", "S06-R24": "רווח F2 לא חיובי", "S06-R31": "פרופיל L5 (נפסל)",
+           "S06-R41": "רווח, הפסד ושוב רווח", "S06-R36": "שורט צף גבוה מדי", "S06-R37": "ימים לכיסוי גבוהים מדי",
+           "no_short_profile": "לא התאים לאף פרופיל שורט"}
 TERM_HE = {"hot": "חם", "extreme_heat": "חם קיצוני", "cold": "קר", "extreme_cold": "קר קיצוני", "grey": "אפור",
            "bullish": "שורית", "bearish": "דובית", "growth+_inflation+": "צמיחה+ אינפלציה+",
            "growth+_inflation-": "צמיחה+ אינפלציה−", "growth-_inflation-": "צמיחה− אינפלציה−",
@@ -639,6 +642,7 @@ def _screen(d: dict) -> str:
                        f'<td>{E(", ".join(x.get("patterns") or []))}</td><td>{E(opt.get(x.get("option"), x.get("option")))}</td>'
                        f'<td>{E(x.get("reason") or "")}</td></tr>')
         out.append("</tbody></table></div>")
+    out.append(_why_not(d))
     good = [t for t in tm if t.get("combined") == "green" or (t.get("combined") == "orange" and (t.get("rr_extreme") or 0) >= 3)]
     out.append('<h3>מי שעבר את הרמזור: כל הירוקים, והכתומים עם יחס של 3 ומעלה לשיא</h3><div class="tbl"><table><thead><tr>'
                '<th>מניה</th><th>סקטור</th><th>פרופיל</th><th>מניה</th><th>סקטור</th><th>שוק</th><th>משולב</th><th>מקורות אדומים</th>'
@@ -653,6 +657,23 @@ def _screen(d: dict) -> str:
     out.append('</tbody></table></div><p class="note">R:R לשיא מחושב עם k=4 מול השיא של 8 שנים. זה סינון ראשוני בלבד: '
                'היעד הסופי נבחר בניתוח העמוק מבין שלושת מקורות הקורס.</p>')
     out.append('<p class="note">מי נותח לעומק ולמה אחרים דולגו: <a href="#funnel">בפרק המשפך</a>.</p></section>')
+    return "".join(out)
+
+
+def _why_not(d: dict) -> str:
+    """Per sector, every stock that did not pass the screen with the rule that stopped it (Ilay 25.10)."""
+    out = []
+    for e, s in d["screens"].items():
+        rej = s.get("rejected")
+        if not rej:
+            continue
+        thr = (s.get("averages") or {}).get("sg1_threshold")
+        rows = "".join(f'<tr><td><b>{E(t)}</b></td><td>{E(", ".join(RULE_HE.get(r, r) for r in x["rules"]))}</td>'
+                       f'<td class="n">{num(x.get("sg1"), 1)}</td><td class="n">{num(x.get("eg1"), 1)}</td>'
+                       f'<td class="n">{num(x.get("eg2"), 1)}</td></tr>' for t, x in sorted(rej.items()))
+        out.append(f'<details><summary>{E(e)}: למה {len(rej)} מניות לא עברו (סף SG1 {num(thr, 1)}%)</summary>'
+                   '<div class="tbl"><table><thead><tr><th>מניה</th><th>הכלל שפסל</th><th>SG1</th><th>EG1</th><th>EG2</th>'
+                   f'</tr></thead><tbody>{rows}</tbody></table></div></details>')
     return "".join(out)
 
 

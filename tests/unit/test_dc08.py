@@ -99,3 +99,17 @@ def test_report_shows_the_dc08_answers():
                                                            "patterns": ["no_profile"]}}}}}
     html = report._screen(d)
     assert "DC-08" in html and "אין עקביות" in html and "S06-R41" in html
+
+
+def test_screens_keep_the_reason_per_rejected_stock():
+    """Ilay 25.10: "why not MSFT?" is answered from the dossier, with the rule and the numbers it looked at."""
+    from qt.research import report
+    out = sector_screen.screens({"XLK": ROWS, "XLU": ROWS}, ["XLK"], ["XLU"])
+    rej = out["XLK"]["rejected"]
+    assert "AAA" not in rej and rej["ATR"]["rules"][0] == "S06-R41"
+    assert rej["JMP"]["rules"] == ["S06-R22"] and rej["JMP"]["sg1"] == 0.0
+    assert "S06-R6" in rej["TNY"]["rules"]
+    shorts = {c["ticker"] for c in out["XLU"]["short"]}
+    assert not shorts & set(out["XLU"]["rejected"]) and "AAA" in out["XLU"]["rejected"]
+    h = report._why_not({"screens": out})
+    assert "JMP" in h and report.RULE_HE["S06-R22"] in h
