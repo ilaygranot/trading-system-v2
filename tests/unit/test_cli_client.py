@@ -80,3 +80,23 @@ def test_agent_client_picks_the_api_key_first(monkeypatch):
     assert CC.agent_client() is None
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "t")
     assert isinstance(CC.agent_client(), CC.ClaudeCodeClient)
+
+
+def test_no_answer_at_all_stops_the_run_instead_of_counting_as_a_refusal():
+    """The run of 25.10: from 06:40 every call came back empty (0 tokens), 81 cards were marked "refused" in three
+    minutes and no article was written. An error with no token used is Claude unavailable, not the agent refusing."""
+    import pytest
+    from qt.agents.runner import AgentUnavailable, BudgetExceeded
+    limit = json.dumps({"type": "result", "subtype": "success", "is_error": True,
+                        "result": "Claude AI usage limit reached|1761400000", "usage": {}, "modelUsage": {}})
+    c = CC.ClaudeCodeClient(run=lambda *a, **k: NS(returncode=1, stdout=limit, stderr=""), binary="claude")
+    req = {"model": "claude-opus-5-5", "system": "s", "messages": [{"role": "user", "content": "u"}]}
+    with pytest.raises(AgentUnavailable, match="usage limit") as e:
+        c.ask(req)
+    assert isinstance(e.value, BudgetExceeded)                  # the run stops as on its budget; a resume continues
+    c = CC.ClaudeCodeClient(run=lambda *a, **k: NS(returncode=1, stdout="", stderr="not logged in"), binary="claude")
+    with pytest.raises(AgentUnavailable, match="not logged in"):
+        c.ask(req)
+    # the model read the prompt and answered without the schema: that one is the agent's (refused, then the card stands)
+    c = CC.ClaudeCodeClient(run=lambda *a, **k: NS(returncode=0, stdout=_body(None, error=True), stderr=""), binary="claude")
+    assert c.ask(req).stop_reason == "refusal"

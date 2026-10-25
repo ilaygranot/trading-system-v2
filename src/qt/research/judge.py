@@ -36,6 +36,7 @@ from qt.research import catalyst_chain as CC
 from qt.research import earnings_call as EC
 from qt.research import macro_story as MS
 
+STOPS = ("BudgetExceeded", "AgentUnavailable")   # the run's agents are gone: stop, cut the rest, a resume continues
 MIN_DEEP, MAX_DEEP = 8, 12     # DC-09: up to 12 green and orange stocks all pass; above, the agent ranks and 8 to 12
                                 # go on (Ilay 22.10, to start; the card had 8-15 per direction; not from course)
 MAX_RESCUE = 6                 # DC-08 calls per research run (not from course: cost)
@@ -523,6 +524,8 @@ class Judge:
             self._save(f"article:{sym}", {"article": j["article"]})
         except Exception as e:                           # noqa: BLE001 - the budget or a bad answer: the card stands
             j["article_error"] = f"{type(e).__name__}: {e}"
+            if type(e).__name__ == "AgentUnavailable":
+                self.selection["stopped"] = str(e)[:300]
 
     def call(self, j: dict, d: dict, as_of: date) -> None:
         """DC-26 on the last earnings call, when the documents hold one: j["call"] keeps the verified answers. A
@@ -540,7 +543,7 @@ class Judge:
             j["call"] = EC.verify(o, by_id, tr)
             j["call"]["status"] = o.get("status")
         except Exception as e:                           # noqa: BLE001 - one source's failure; the budget stops the run
-            if type(e).__name__ == "BudgetExceeded":
+            if type(e).__name__ in STOPS:
                 raise
             j["call_error"] = f"{type(e).__name__}: {e}"
 
@@ -578,7 +581,7 @@ class Judge:
                                           "profile": prof}, sym)
                 CC.apply_answer(ev, o)
             except Exception as e:                       # one event's failure is the lower class (S13-J7)
-                if type(e).__name__ == "BudgetExceeded":     # the run's budget is gone: stop, as __call__ expects
+                if type(e).__name__ in STOPS:     # the run's budget is gone: stop, as __call__ expects
                     raise
                 CC.agent_error(ev, e)
         rows = CC.judgment_rows(evs, ne)
@@ -646,8 +649,10 @@ class Judge:
             j = {k: v for k, v in saved["j"].items() if k not in ("article", "article_error")}
             d = deep_dive(t["sym"], t["etf"], t["dir"], dict(j, options=False))      # the facts for the article
             return j, d, saved.get("world") or _world_from(j, t)
+        n0 = len(self.log)
         j, d, world = self._cards(t, deep_dive, macro, as_of)
-        self._save(f"idea:{t['sym']}", {"j": j, "world": world})
+        if not any(x["status"] == "refused" for x in self.log[n0:]):   # a refused card is asked again on resume
+            self._save(f"idea:{t['sym']}", {"j": j, "world": world})
         return j, d, world
 
     def narrative(self, macro: dict, as_of: date, news: dict | None, a1: dict) -> dict:
@@ -686,7 +691,9 @@ class Judge:
             except Exception as e:                       # noqa: BLE001 - one idea's failure (budget, data) is reported
                 J.setdefault("errors", {})[t["sym"]] = f"{type(e).__name__}: {e}"
                 self.selection.setdefault("skipped", {})[t["sym"]] = f"הניתוח נכשל: {type(e).__name__}: {e}"
-                if type(e).__name__ == "BudgetExceeded":
+                if type(e).__name__ in STOPS:
+                    if type(e).__name__ == "AgentUnavailable":
+                        self.selection["stopped"] = str(e)[:300]
                     self.selection["cut_by_budget"] = [x["sym"] for x in picked[n + 1:]]
                     for x in picked[n + 1:]:
                         self.selection["skipped"][x["sym"]] = "נעצר: תקציב ה-Agents לריצה נגמר (ירוקות נותחו ראשונות)"

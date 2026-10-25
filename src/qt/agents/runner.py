@@ -40,6 +40,12 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+class AgentUnavailable(BudgetExceeded):
+    """Claude did not answer at all: the subscription's usage limit, an expired token, the CLI failing. Not the agent's
+    refusal: the run stops like on its budget (the rest is cut, a resume continues) instead of marking every
+    remaining card "refused" (the run of 25.10: 81 empty answers in three minutes, 0 articles)."""
+
+
 @lru_cache(maxsize=None)
 def config() -> dict:
     return yaml.safe_load((Path(__file__).parent / "models.yaml").read_text(encoding="utf-8"))

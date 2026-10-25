@@ -76,11 +76,16 @@ class ClaudeCodeClient:
             body = json.loads(p.stdout or "{}")
         except json.JSONDecodeError:
             body = {}
+        from qt.agents.runner import AgentUnavailable
         if p.returncode != 0 and not body:
-            raise RuntimeError(f"claude -p exited {p.returncode}: {(p.stderr or '')[-300:]}")
+            raise AgentUnavailable(f"claude -p exited {p.returncode}: {(p.stderr or '')[-300:]}")
         u = body.get("usage") or {}
         out = body.get("structured_output")
         error = body.get("is_error") or body.get("subtype") not in (None, "success") or out is None
+        if error and not any(u.get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                                                 "cache_creation_input_tokens")):
+            # no token read or written: the model was never reached (usage limit, token), not a refusal
+            raise AgentUnavailable(f"Claude did not answer: {(body.get('result') or p.stderr or '')[:300]}")
         mu = body.get("modelUsage") or {}
         # Claude Code also calls a small model for its own housekeeping: the served model is the requested one when
         # it is listed, else the one that cost the most
