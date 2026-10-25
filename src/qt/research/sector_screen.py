@@ -9,7 +9,7 @@ from typing import Any
 from qt import sectors as S
 from qt.policy import load_policy
 from qt.research.yahoo import Yahoo
-from qt.screening import StockRow, run as screen
+from qt.screening import StockRow, compute, run as screen, universe_failures
 
 
 def _closes(y: Yahoo, sym: str, as_of: date, days: int = 365 * 4) -> tuple[list[str], list[float]]:
@@ -77,8 +77,31 @@ def screens(rows_by_etf: dict[str, list[StockRow]], longs: list[str], shorts: li
             short=[_cand(c) for c in r.short] if e in shorts else [],
             tracks=r.tracks, rejected_count=len(r.rejected),
             rescue=[_cand(c) | dict(failed=c.failed, patterns=c.patterns) for c in r.rescue],
-            rejected_by_rule=_count_rules(r.rejected))
+            rejected_by_rule=_count_rules(r.rejected),
+            rejected=_why_not(rows_by_etf.get(e, []), r, e in longs, e in shorts))
     return out
+
+
+def _why_not(rows: list[StockRow], r, long: bool, short: bool) -> dict[str, dict]:
+    """Per stock that is not a candidate on the sector's side: the rules that stopped it and the numbers they
+    looked at, so "why not MSFT?" has an answer in the dossier (Ilay 25.10). Missing-data stocks are in tracks."""
+    passed = {c.ticker for c in (r.long if long else []) + (r.short if short else [])}
+    skip = passed | set(r.tracks["missing_data"])
+    out = {}
+    for row in rows:
+        t = row.ticker
+        if t in skip:
+            continue
+        rules = list(r.rejected.get(t, [])) if long else []
+        if short and not long:
+            rules = universe_failures(row, "short") or ["no_short_profile"]
+        m = compute(row)
+        out[t] = dict(rules=rules or ["no_profile"], sg1=_r(m.sg1), eg1=_r(m.eg1), eg2=_r(m.eg2))
+    return out
+
+
+def _r(v: float | None) -> float | None:
+    return None if v is None else round(v, 1)
 
 
 def _cand(c) -> dict:
