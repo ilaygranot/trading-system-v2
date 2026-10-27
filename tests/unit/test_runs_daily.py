@@ -160,7 +160,7 @@ def test_news_classifies_once_and_an_adverse_headline_reaches_a7(db):
     asked = [c[:2] for c in ag.calls if c[0] in ("DC-14", "DC-21")]
     assert asked == [("DC-14", "BA"), ("DC-21", "BA")]                         # the old headline is skipped
     assert "FAA halts" in ag.calls[1][2]["event"]
-    assert "FAA halts 737 deliveries" in sent[-1] and "A7" in sent[-1]
+    assert "FAA halts 737 deliveries" in sent[0] and "A7" in sent[0]
     row = db.one("SELECT klass, direction FROM news_seen WHERE link = 'https://x/1'")
     assert (row["klass"], row["direction"]) == ("A", "against_idea")
     ag.calls.clear()
@@ -171,7 +171,26 @@ def test_news_classifies_once_and_an_adverse_headline_reaches_a7(db):
 def test_news_without_agents_lists_raw_headlines(db):
     sent = []
     _runner(db, prices=NewsPrices(), notifier=sent.append).start("daily", AS_OF)
-    assert "יומן חדשות" in sent[-1] and "• BA FAA halts" in sent[-1]
+    assert "יומן חדשות" in sent[0] and "• BA FAA halts" in sent[0]
+
+
+def test_news_digest_lists_every_stock_after_the_summary(db):
+    sent = []
+    _runner(db, prices=NewsPrices(), notifier=sent.append, agents=FakeAgents()).start("daily", AS_OF)
+    assert len(sent) == 2 and sent[0].startswith("יומית") and sent[1].startswith("📰 חדשות לפי מניה")
+    assert "BA (בתיק) · 1 כותרות" in sent[1] and "• [A, נגד] FAA halts 737 deliveries (Reuters, 05-31)" in sent[1]
+    assert "Old story" not in sent[1]
+
+
+def test_news_digest_names_quiet_stocks_and_splits_long_days():
+    from qt.news import chunks, digest_lines
+    out = {"enabled": True, "symbols": [{"symbol": "BA", "held": True}, {"symbol": "GE", "held": False}],
+           "items": [dict(symbol="BA", title=f"t{i}", publisher="P", published="2023-05-31", link=str(i))
+                     for i in range(6)]}
+    lines = digest_lines(out)
+    assert "• ועוד 2 בדשבורד" in lines and lines[-1] == "בלי כותרות חדשות: GE"
+    parts = chunks(["x" * 50] * 200, limit=1000)
+    assert all(len(p) <= 1000 for p in parts) and sum(p.count("x" * 50) for p in parts) == 200
 
 
 # ---------------------------------------------------------------- heat (DC-15 / DC-16) and peers (S08-J25)
@@ -260,7 +279,7 @@ def test_peer_note_on_same_etf_entry(db):
     out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='news'", (rid,), ["output"])["output"]
     assert list(out["peer_notes"]) == ["GE"]
     assert "מתחרה: BA FAA halts" in out["peer_notes"]["GE"][0] and out["peer_notes"]["GE"][0].startswith("[C]")
-    assert "GE: [C] דיווח/אירוע אצל מתחרה" in sent[-1]
+    assert "GE: [C] דיווח/אירוע אצל מתחרה" in sent[0]
 
 
 # ---------------------------------------------------------------- the heat in force gates the entry (S08-R28, R33, R25)
