@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS news_seen (
 LOOKBACK_DAYS = 3                        # headlines this recent count as new (not from course)
 MAX_CLASSIFY = 12                        # DC-14 calls per day, positions first (not from course: cost)
 DIARY = 5                                # S13-R27: 3-5 events a day
+PER_SYMBOL = 4                           # headlines per stock in the per-stock digest (not from course: length)
 RANK = {"A": 0, "macro_lead": 1, "B": 2, "C": 3, "D": 4, "macro_noise": 5, None: 6}
 STRONG = ("A", "B")
 RESULTS_WORDS = re.compile(r"result|earning|quarter|revenue|guidance|outlook|profit", re.IGNORECASE)
@@ -104,6 +105,7 @@ def news(ctx: RunContext, _: str) -> dict:
     diary = sorted(fresh, key=lambda x: (RANK.get(x.get("klass"), 6), not x["held"]))[:DIARY]
     etf_of = {s: e.etf for s, e in watch.items()} | {s: p.get("sector") for s, p in held.items()}
     return {"enabled": True, "classified": sum(1 for x in fresh if x.get("klass")), "items": fresh,
+            "symbols": [{"symbol": s, "held": s in held} for s in list(held) + list(watch)],
             "adverse": adverse, "watch_flags": flags, "diary": diary,
             "peer_notes": peer_notes(fresh, list(watch.values()), etf_of)}
 
@@ -130,6 +132,48 @@ def peer_notes(items: list[dict], entries: list, etf_of: dict[str, str | None]) 
 DIR_HE = {"for_idea": "בעד", "against_idea": "נגד"}
 
 
+def _tag(it: dict) -> str:
+    if not it.get("klass"):
+        return ""
+    return (f"[{it['klass']}, {DIR_HE.get(it.get('direction'), '?')}" + (", מתומחר" if it.get("priced_in") else "") + "] ")
+
+
+def digest_lines(out: dict) -> list[str]:
+    """The per-stock digest (not from course: Ilay 27.10): every position and watchlist stock with its new
+    headlines, strongest first, and one line naming the stocks with nothing new. Sent after the day summary."""
+    if not out or not out.get("enabled") or not out.get("symbols"):
+        return []
+    by: dict[str, list[dict]] = {}
+    for it in out["items"]:
+        by.setdefault(it["symbol"], []).append(it)
+    lines, quiet = ["📰 חדשות לפי מניה (3 ימים אחרונים, רק כותרות שלא הוצגו קודם)"], []
+    for s in out["symbols"]:
+        got = sorted(by.get(s["symbol"], []), key=lambda x: (RANK.get(x.get("klass"), 6), x["published"]))
+        if not got:
+            quiet.append(s["symbol"])
+            continue
+        lines.append("")
+        lines.append(f"{s['symbol']} ({'בתיק' if s['held'] else 'ברשימה'}) · {len(got)} כותרות")
+        for it in got[:PER_SYMBOL]:
+            lines.append(f"• {_tag(it)}{it['title']} ({it['publisher']}, {it['published'][5:]})")
+        if len(got) > PER_SYMBOL:
+            lines.append(f"• ועוד {len(got) - PER_SYMBOL} בדשבורד")
+    if quiet:
+        lines += ["", "בלי כותרות חדשות: " + ", ".join(quiet)]
+    return lines
+
+
+def chunks(lines: list[str], limit: int = 4000) -> list[str]:
+    """Lines joined into messages under Telegram's 4096 characters, never splitting a line."""
+    out, cur = [], ""
+    for ln in lines:
+        if cur and len(cur) + len(ln) + 1 > limit:
+            out.append(cur)
+            cur = ""
+        cur = f"{cur}\n{ln}" if cur else ln[:limit]
+    return out + ([cur] if cur else [])
+
+
 def diary_lines(out: dict) -> list[str]:
     """The news diary for the end-of-day summary."""
     if not out or not out.get("enabled"):
@@ -138,9 +182,7 @@ def diary_lines(out: dict) -> list[str]:
         return ["יומן חדשות: אין כותרות חדשות על הפוזיציות והרשימה"]
     lines = ["יומן חדשות:"]
     for it in out["diary"]:
-        tag = (f"[{it['klass']}, {DIR_HE.get(it.get('direction'), '?')}"
-               + (", מתומחר" if it.get("priced_in") else "") + "] ") if it.get("klass") else ""
-        lines.append(f"• {it['symbol']} {tag}{it['title']} ({it['publisher']})")
+        lines.append(f"• {it['symbol']} {_tag(it)}{it['title']} ({it['publisher']})")
     for sym, what in out.get("adverse", {}).items():
         lines.append(f"⚠️ {sym}: ידיעה נגד הפוזיציה ({what}), עוברת ל-A7")
     for sym, what in out.get("watch_flags", {}).items():

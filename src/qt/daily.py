@@ -534,11 +534,14 @@ def notify(ctx: RunContext, _: str) -> dict:
             + (f" · {len(filled)} עסקאות נייר בוצעו" if filled else "")
             + f" · {float(cost['c'] or 0):.2f}$")
     text += "\n\n" + day_summary(ctx)
+    digest = chunks(digest_lines(ctx.out("news") or {}))
     sent = 0
     bot = ctx.services.get("telegram")
     if bot is not None:
         from qt.telegram import send_item
         bot.send(text)
+        for part in digest:
+            bot.send(part)
         for it in items:
             if it["status"] != "info" and not it.get("tg_message_id"):
                 send_item(bot, q, it)
@@ -546,7 +549,9 @@ def notify(ctx: RunContext, _: str) -> dict:
     sender = ctx.services.get("notifier")
     if sender is not None:
         sender(text)
-    return {"text": text, "items_sent": sent}
+        for part in digest:
+            sender(part)
+    return {"text": text, "digest": digest, "items_sent": sent}
 
 
 STATUS_HE = {"opportunity": "🟢 הזדמנות: הטריגר הופעל", "ready": "🟢 מוכנה לכניסה", "waiting": "⏳ ממתינה", "recheck": "🔎 היחס חזר מעל 3: לבדוק רמזור",
@@ -624,7 +629,7 @@ def day_summary(ctx: RunContext) -> str:
     return "\n".join(lines)
 
 
-from qt.news import diary_lines, news  # noqa: E402  (qt.news imports _pf from here)
+from qt.news import chunks, diary_lines, digest_lines, news  # noqa: E402  (qt.news imports _pf from here)
 from qt.learning import idea_prediction, learn_daily  # noqa: E402
 
 DAILY = (Step("fetch", fetch), Step("fill", fill), Step("calc", calc), Step("rules", rules), Step("watch", watch),
