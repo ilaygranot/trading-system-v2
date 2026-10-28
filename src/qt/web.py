@@ -1467,11 +1467,23 @@ class App:
             out += ui.fold("ביומן ההחלטות", ui.table(("מתי", "מי", "פעולה", "החלטה", "ביטחון", "כרטיס"), (
                 [f"<td class=t>{ui.when(x['created_at'])}</td>", _e(x["decided_by"]), _e(x["action"]), _e(str(x["choice"])[:200]),
                  _e(x["confidence"]), _e(x["card_id"])] for x in dec)))
-        out += ui.fold("חדשות", "<ul>" + "".join(
+        summ = self.news_summary(sym)
+        out += ui.fold("חדשות", (f"<p>📝 {_e(summ[1])} <span class=note>(סיכום A5, {_e(summ[0])})</span></p>" if summ else "")
+                       + ("<ul>" + "".join(
             f"<li><span class=note>{_e(n['published'])} · {_e(n['publisher'])}</span> <a href='{_e(n['link'])}' target=_blank "
-            f"rel=noopener>{_e(n['title'])}</a></li>" for n in news[:8]) + "</ul>" if news else ui.empty("אין חדשות מ-Yahoo כרגע"),
+            f"rel=noopener>{_e(n['title'])}</a></li>" for n in news[:8]) + "</ul>" if news else ui.empty("אין חדשות מ-Yahoo כרגע")),
             id="news")
         return out
+
+    def news_summary(self, symbol: str) -> tuple[str, str] | None:
+        """The latest DC-28 summary of the stock from the daily runs of the last week: (day, text)."""
+        rows = self.db.all("SELECT s.output, r.as_of FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE s.step = 'news' "
+                           "AND s.status = 'done' AND r.kind = 'daily' ORDER BY r.started_at DESC LIMIT 7", (), ["output"])
+        for r in rows:
+            text = ((r.get("output") or {}).get("summaries") or {}).get(symbol)
+            if text:
+                return str(r["as_of"]), text
+        return None
 
     def _latest_out(self, kind: str, step: str) -> tuple[Any, dict | None]:
         row = self.db.one("SELECT s.output, r.id, r.as_of FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE s.step = ? "

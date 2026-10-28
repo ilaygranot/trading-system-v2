@@ -103,8 +103,11 @@ class Telegram:
             raise RuntimeError(f"telegram {method}: {body.get('description')}")    # never echo the token
         return body["result"]
 
-    def send(self, text: str, buttons: list[list[dict]] | None = None, force_reply: bool = False) -> int:
+    def send(self, text: str, buttons: list[list[dict]] | None = None, force_reply: bool = False,
+             html: bool = False) -> int:
         payload: dict[str, Any] = {"chat_id": self.chat_id, "text": text[:4096]}
+        if html:                                                   # links in the text; no preview card per link
+            payload |= {"parse_mode": "HTML", "link_preview_options": {"is_disabled": True}}
         if buttons:
             payload["reply_markup"] = {"inline_keyboard": buttons}
         elif force_reply:
