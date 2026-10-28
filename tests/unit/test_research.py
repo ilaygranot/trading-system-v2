@@ -156,3 +156,15 @@ def test_idea_renders_the_charts_with_their_computed_captions():
     for t in ("RSI(20)", "MACD (20/60/10)", "ADR20 חלקי ADR60", "חוזק יחסי", "שלוש שנים, נר שבועי"):
         assert t in h
     assert "(S09-R19)" in h and "(S09-R21)" in h
+
+
+def test_the_card_under_the_article_leaves_out_what_the_article_shows():
+    d = json.loads(FIX.read_text(encoding="utf-8"))
+    i = next(iter(d["ideas"].values()))
+    i["tech"] = idea.tech(_wave(900, 100, 20, 40), _wave(900, 50, 5, 60), _wave(900, 400, 10, 90))
+    full, short = report._idea(i), report._idea(i, appendix=True)
+    for t in ("הגרף בתמונות (S09)", "הדוחות בתמונות (S07)", "class=\"pchart\"", "class=\"rrbar\""):
+        assert t in full and t not in short
+    for t in ("תכנון עסקה (S10–S11)", "מנוע הכללים", "ADR60", "גודל ראשון"):          # what only the card has
+        assert t in short
+    assert short.count("<div") == short.count("</div")
