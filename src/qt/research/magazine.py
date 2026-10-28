@@ -177,7 +177,7 @@ def _sources(sym: str, art: dict) -> str:
 
 def article_html(i: dict, checks: list[dict] | None = None, as_of: str = "") -> str:
     """The whole page for one stock: the article, then the appendix (sources, what code dropped, the glossary and
-    the trade card with every number). Falls back to the trade card when the run wrote no article."""
+    the trade card's numbers that the article doesn't show). Falls back to the trade card when the run wrote no article."""
     if not has_article(i):
         return R._idea(i, checks)
     sym, j, art = i["sym"], i["judgment"], i["judgment"]["article"]
@@ -215,8 +215,8 @@ def article_html(i: dict, checks: list[dict] | None = None, as_of: str = "") -> 
             for x in art["dropped"]) + "</ul></details>")
     out.append('<details><summary>מילון מושגים (מהקורס)</summary><dl class="glossary">' + "".join(
         f'<dt>{E(t)}</dt><dd>{E(d)} <small>{E(r)}</small></dd>' for t, d, r in GLOSSARY) + "</dl></details>")
-    card = R._idea(i, checks).replace(f'id="idea-{E(sym)}"', f'id="card-{E(sym)}"', 1)
-    out.append(f'<details><summary>כרטיס העסקה וכל הנתונים</summary>{card}</details></section></article>')
+    card = R._idea(i, checks, appendix=True).replace(f'id="idea-{E(sym)}"', f'id="card-{E(sym)}"', 1)
+    out.append(f'<details><summary>נתונים נוספים שלא במאמר</summary>{card}</details></section></article>')
     return "".join(out)
 
 

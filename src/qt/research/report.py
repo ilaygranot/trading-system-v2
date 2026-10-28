@@ -694,7 +694,10 @@ def _selection(d: dict) -> str:
     return "".join(out)
 
 
-def _idea(i: dict, checks: list[dict] | None = None) -> str:
+def _idea(i: dict, checks: list[dict] | None = None, appendix: bool = False) -> str:
+    """The trade card. As the article's appendix (Ilay 28.10) it leaves out what the article already shows: the
+    friend summary, the price chart and R:R bar, the exit, the targets table, the light grid, the charts, the
+    catalyst timeline, the call and the breakers."""
     j, p, f, v, c, tl = i["judgment"], i["plan"], i["fundamentals"], i["valuation"], i["catalysts"], i["timing"]
     checks = checks or []
     worst = "bad" if any(r["status"] == "bad" for r in checks) else "single" if any(r["status"] == "single" for r in checks) else "ok"
@@ -711,7 +714,7 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
                f'{E(DIR_HE[i["direction"]])} · {E(i["etf"])} · פרופיל {E(i["row"]["profile"])}</p></div>'
                f'<div class="i-badges">{bucket_pill(i["bucket"])}{pill(tl["combined"], "רמזור " + COLOR_HE.get(tl["combined"], ""))}'
                f'{story_chip}{vchip}</div></header>')
-    if j.get("tldr"):
+    if j.get("tldr") and not appendix:
         out.append(_tldr(i))
     if j.get("why") and not j.get("thesis"):
         out.append(f'<div class="verdict-box"><b>{"למה לא עכשיו" if i["bucket"] != "reject" else "למה נדחה"}:</b> {E(j["why"])}</div>')
@@ -724,7 +727,8 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
             out.append(f'<p><b>פרמיה (DC-11): {E(j["premium"]["choice"])}</b>. {E(j["premium"]["why"])}</p>')
         out.append("</div>")
     # chart + plan
-    out.append(f'<div class="split"><figure class="pchart"><figcaption>מחיר, שנה אחרונה: סגירה וממוצעים 21/63/252'
+    out.append('<div><div class="plan">' if appendix else
+               f'<div class="split"><figure class="pchart"><figcaption>מחיר, שנה אחרונה: סגירה וממוצעים 21/63/252'
                f'</figcaption>{price_chart(i["chart"], p, i["levels"], i["direction"])}</figure><div class="plan">')
     out.append(f'<h4>תכנון עסקה (S10–S11)</h4><dl>'
                f'<dt>מחיר אחרון</dt><dd>{px(p["entry"])}</dd>'
@@ -734,20 +738,20 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
                f'<dt>R:R</dt><dd><b>{num(p.get("rr"), 2)}</b> <small>(מינימום 3)</small></dd>'
                f'<dt>אופק</dt><dd>{_horizon(p)}</dd>'
                f'<dt>גודל ראשון</dt><dd>{num(p["sizing"]["allowed_pct"], 0, True)} = {p["sizing"]["quantity"]:,} יח׳ · סיכון {num(p["sizing"]["risk_pct_of_equity"], 2, True)} מהתיק</dd>'
-               f'</dl>{rr_bar(p["entry"], p["stop"], p.get("target"), i["direction"])}')
+               f'</dl>{"" if appendix else rr_bar(p["entry"], p["stop"], p.get("target"), i["direction"])}')
     if j.get("trigger"):
         t = j["trigger"]
         out.append(f'<div class="trigger"><b>טריגר (DC-17): {E(t.get("choice", ""))}</b> {E(t.get("text", ""))}</div>')
     if j.get("structure"):
         out.append(f'<p class="small"><b>מבנה (DC-18): {E(STRUCT_HE.get(j["structure"]["choice"], j["structure"]["choice"]))}</b>. {E(j["structure"]["why"])}</p>')
-    if i.get("exit") and full:
+    if i.get("exit") and full and not appendix:
         out.append(_exit(i))
     vs = p["verdict"]
     out.append(f'<div class="rules rules-{E(vs["status"])}"><b>מנוע הכללים: {E(vs["status"])}</b><ul>'
                + "".join(f'<li><code>{E(x["rule_id"])}</code> {E(x["severity"])}: {E(x["message"])}</li>' for x in vs["findings"])
                + ("" if vs["findings"] else "<li>אין ממצאים</li>") + "</ul></div></div></div>")
     # targets
-    if i["targets"]:
+    if i["targets"] and not appendix:
         out.append('<h4>שלושת מקורות היעד (S10-R3)</h4><div class="tbl"><table><thead><tr><th>מקור</th><th>מחיר</th><th>תזוזה</th>'
                    '<th>R:R</th><th>פירוט</th></tr></thead><tbody>')
         for t in i["targets"]:
@@ -759,17 +763,20 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
     # traffic light
     st = tl["stock"]
     det = st["details"]
-    out.append(f'<h4>רמזור (S09): מניה {pill(st["overall"])} · סקטור {pill(tl["sector"]["overall"])} · שוק '
-               f'{pill(tl["market"]["overall"])} → {pill(tl["combined"])}</h4>{light_grid(st["sources"])}'
-               f'<p class="small">RSI {num(det.get("rsi"), 1)} · MACD היסטוגרמה {num(det["macd"]["hist"], 2, sign=True)} · '
+    out.append(('<h4>רמזור (S09): הקריאות</h4>' if appendix else
+                f'<h4>רמזור (S09): מניה {pill(st["overall"])} · סקטור {pill(tl["sector"]["overall"])} · שוק '
+                f'{pill(tl["market"]["overall"])} → {pill(tl["combined"])}</h4>{light_grid(st["sources"])}')
+               + f'<p class="small">RSI {num(det.get("rsi"), 1)} · MACD היסטוגרמה {num(det["macd"]["hist"], 2, sign=True)} · '
                f'ממוצעים {", ".join(px(x) for x in det["sma"]["values"])} · ימים מעל ממוצע 21 ללא נגיעה: {det["sma"]["extended_days"]}</p>')
     if j.get("levels_note"):
         out.append(f'<p class="small"><b>רמות (A6): {E(COLOR_HE.get(j.get("levels_color"), ""))}</b>. {E(j["levels_note"])}</p>')
     if st["flags"]:
         out.append(f'<div class="chips">{flag_chips(st["flags"])}</div>')
-    out.append(_tech_charts(i))
+    if not appendix:
+        out.append(_tech_charts(i))
     # fundamentals
-    out.append(_fund_charts(i))
+    if not appendix:
+        out.append(_fund_charts(i))
     sp = f.get("surprises") or {}
     rows = [
         ("מגמת ליבה", ", ".join(f"{k}: {v}" for k, v in (f.get("core_trend") or {}).items())),
@@ -800,7 +807,7 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
     # catalysts
     if full:
         out.append('<h4>קטליזטורים ואנליסטים (S08)</h4>')
-        if j.get("catalysts"):
+        if j.get("catalysts") and not appendix:
             out.append('<ul class="timeline">' + "".join(_catalyst_li(x) for x in j["catalysts"]) + "</ul>")
         if j.get("catalyst_expected") is not None:
             out.append(f'<p class="small"><b>קטליסט צפוי (S07-R13, קוד):</b> {"כן" if j["catalyst_expected"] else "לא"}'
@@ -811,7 +818,8 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
             out.append(f'<p class="note">הקוד שינה את {E(o.get("card", ""))} מ-{E(o.get("from", ""))} ל-{E(o.get("to", ""))}: '
                        f'{E(o.get("why", ""))}</p>')
         out.append(_documents(i.get("documents")))
-        out.append(call_box(i))
+        if not appendix:
+            out.append(call_box(i))
         rv = c["revisions"]
         out.append(f'<p class="small">דוח הבא: <b>{E(c.get("next_earnings") or "—")}</b> · רוויזיות 30 יום F1: '
                    f'{rv["F1"]["up30"] or 0}↑ {rv["F1"]["down30"] or 0}↓, F2: {rv["F2"]["up30"] or 0}↑ {rv["F2"]["down30"] or 0}↓ · '
@@ -827,7 +835,7 @@ def _idea(i: dict, checks: list[dict] | None = None) -> str:
             out.append('<p class="small"><b>כותרות אחרונות</b></p><ul class="news">' + "".join(
                 f'<li><time>{E(n["time"])}</time> {src_link(n.get("link"), n["title"])} <small>{E(n.get("publisher") or "")}</small></li>'
                 for n in c["news"][:6]) + "</ul>")
-    if j.get("breakers"):
+    if j.get("breakers") and not appendix:
         out.append('<h4>שוברי תזה (DC-12) ומה לבדוק</h4><ul>' + "".join(
             f'<li><b>{E(b["text"])}</b> <small>({E(b["kind"])})</small>: {E(b["check"])}</li>' for b in j["breakers"]) + "</ul>")
     if j.get("kpis"):
