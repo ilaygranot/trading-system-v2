@@ -25,6 +25,7 @@ max_tokens: 16000
 max_tokens_by_card:           # the article writes 13 sections; 21,000 is the SDK's ceiling without streaming (not from course)
   DC-25: 21000
   DC-27: 16000
+  DC-28: 8000                 # 1-3 sentences per stock (not from course)
 budget:
 # The agents run on Ilay's subscription (CLAUDE_CODE_OAUTH_TOKEN): the cost is the list price the CLI reports, not a
 # bill. The caps are a guard against a runaway loop, set well above a full run, so a run is never cut short (Ilay

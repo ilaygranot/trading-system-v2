@@ -98,3 +98,15 @@ def test_a_stock_from_an_earlier_research_keeps_its_analysis(site, db):
     page = _call(site, f"/stock/{keep}")[2]
     assert f'id="idea-{keep}"' in page and "לא נותחה במחקר האחרון" not in page
     assert "לא הופיעה" in _call(site, "/stock/ZZZZ")[2]
+
+
+def test_the_news_fold_shows_the_latest_summary_over_the_links(site, db):
+    """Ilay 28.10: a summary to know what is happening, and the links to open."""
+    sym = next(iter(json.loads(FIX)["ideas"]))
+    db.execute("INSERT INTO runs (id, kind, as_of, status, started_at) VALUES ('d1', 'daily', '2026-10-27', 'done', "
+               "'2026-10-27T22:40:00')")
+    db.execute("INSERT INTO run_steps (run_id, step, seq, status, output) VALUES ('d1', 'news', 6, 'done', ?)",
+               (json.dumps({"summaries": {sym: "החברה מדווחת השבוע."}}),))
+    page = _call(site, f"/stock/{sym}")[2]
+    assert "📝 החברה מדווחת השבוע." in page and "(סיכום A5, 2026-10-27)" in page
+    assert f"<a href='https://example.com' target=_blank rel=noopener>{sym} news</a>" in page

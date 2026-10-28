@@ -1,6 +1,7 @@
 # The 24 decision cards (architecture/decision-cards.md, 19.10), DC-25, the deep-dive article (Ilay 23.10; the
 # format is not from course, the questions are), and DC-26, the course's questions to the last earnings call (Ilay
-# 24.10; S07-R32, 075-077), as the code sees them: who decides, the closed
+# 24.10; S07-R32, 075-077), DC-27, the market story, and DC-28, the daily news summary per stock (Ilay 28.10; the
+# format is not from course), as the code sees them: who decides, the closed
 # options (the output schema's enum), what is chosen when the facts don't decide, and the card's own fields.
 # The full card text (questions to ask, what is forbidden, required input) is decision_cards.md, sent to the
 # agent as part 5 of its context. An agent decides only through a card (architecture 5).
@@ -44,6 +45,7 @@ DC-14: {agent: A5, options: [macro_lead, macro_noise, A, B, C, D], undecided: lo
                 flow_technical: {type: boolean},
                 peers_affected: {type: array, items: {type: string}},
                 what: {type: string, description: "Hebrew, one line: what happened or is expected"}}}
+DC-28: {agent: A5, options: [summary], undecided: no_summary, approval: journal, extra_from: qt.news}
 DC-15: {agent: A5, options: [cold, hot, boiling, frozen], undecided: current_state, approval: required}
 DC-16: {agent: A5, options: [noise_continue, frozen_exit], undecided: noise_continue, approval: required}
 DC-17: {agent: A6, options: [color_change, level_break, retest, base_below_or_above, monthly_breakout_a_plus, short_from_above, wait],

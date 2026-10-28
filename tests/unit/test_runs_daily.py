@@ -157,9 +157,9 @@ def test_news_classifies_once_and_an_adverse_headline_reaches_a7(db):
     sent, ag = [], FakeAgents()
     r = _runner(db, prices=NewsPrices(), notifier=sent.append, agents=ag)
     r.start("daily", AS_OF)
-    asked = [c[:2] for c in ag.calls if c[0] in ("DC-14", "DC-21")]
+    asked = [c[:2] for c in ag.calls if c[0] in ("DC-14", "DC-21")]   # DC-28 (the summary) is asked too
     assert asked == [("DC-14", "BA"), ("DC-21", "BA")]                         # the old headline is skipped
-    assert "FAA halts" in ag.calls[1][2]["event"]
+    assert "FAA halts" in next(c for c in ag.calls if c[0] == "DC-21")[2]["event"]
     assert "FAA halts 737 deliveries" in sent[0] and "A7" in sent[0]
     row = db.one("SELECT klass, direction FROM news_seen WHERE link = 'https://x/1'")
     assert (row["klass"], row["direction"]) == ("A", "against_idea")
@@ -177,9 +177,38 @@ def test_news_without_agents_lists_raw_headlines(db):
 def test_news_digest_lists_every_stock_after_the_summary(db):
     sent = []
     _runner(db, prices=NewsPrices(), notifier=sent.append, agents=FakeAgents()).start("daily", AS_OF)
-    assert len(sent) == 2 and sent[0].startswith("יומית") and sent[1].startswith("📰 חדשות לפי מניה")
-    assert "BA (בתיק) · 1 כותרות" in sent[1] and "• [A, נגד] FAA halts 737 deliveries (Reuters, 05-31)" in sent[1]
-    assert "Old story" not in sent[1]
+    assert len(sent) == 2 and sent[0].startswith("יומית") and sent[1].startswith("📰 <b>חדשות לפי מניה</b>")
+    assert "<b>BA</b> (בתיק) · 1 כותרות חדשות" in sent[1]
+    assert '• [A, נגד] <a href="https://x/1">FAA halts 737 deliveries</a> (Reuters, 05-31)' in sent[1]
+    assert "Old story" not in sent[1] and "📝" not in sent[1]          # FakeAgents writes no summary
+
+
+class SummaryAgents(FakeAgents):
+    """FakeAgents, and DC-28 writes one good sentence on BA, one with a number not on the sheet, and one on GE."""
+    def decide(self, agent, card, fs, world, **kw):
+        if card != "DC-28":
+            return super().decide(agent, card, fs, world, **kw)
+        from types import SimpleNamespace as NS
+        self.calls.append((card, kw.get("subject"), dict(world)))
+        fid = next(f["fact_id"] for f in fs.to_list() if f["key"] == "BA.headline[0]")
+        out = {"stocks": [{"symbol": "BA", "sentences": [
+            {"text": "רשות התעופה עצרה את המסירות של המטוס, וזה נגד הפוזיציה.", "fact_ids": [fid], "quotes": []},
+            {"text": "המניה ירדה 7% אחרי ההודעה.", "fact_ids": [fid], "quotes": []}]},
+            {"symbol": "GE", "sentences": [{"text": "אין.", "fact_ids": [fid], "quotes": []}]}]}
+        return NS(option="summary", output=out, status="decided", decision_id=2, critic=None, for_ilay="", cost_usd=0.0)
+
+
+def test_news_summary_per_stock_keeps_only_checked_sentences(db):
+    sent, ag = [], SummaryAgents()
+    _runner(db, prices=NewsPrices(), notifier=sent.append, agents=ag).start("daily", AS_OF)
+    dc28 = [c for c in ag.calls if c[0] == "DC-28"]
+    assert len(dc28) == 1 and dc28[0][2]["symbols"] == ["BA"]                 # one call, the stocks with headlines
+    assert "📝 רשות התעופה עצרה את המסירות של המטוס, וזה נגד הפוזיציה." in sent[1]
+    assert "7%" not in sent[1] and "GE" not in sent[1]                           # number off the sheet; not a stock of the run
+    from qt.web import App
+    app = App(bot=None, password="pw", webhook_secret="hook")
+    app._db = db
+    assert app.news_summary("BA") == ("2023-05-31", "רשות התעופה עצרה את המסירות של המטוס, וזה נגד הפוזיציה.")
 
 
 def test_news_digest_names_quiet_stocks_and_splits_long_days():

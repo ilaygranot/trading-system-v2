@@ -541,7 +541,7 @@ def notify(ctx: RunContext, _: str) -> dict:
         from qt.telegram import send_item
         bot.send(text)
         for part in digest:
-            bot.send(part)
+            bot.send(part, html=True)
         for it in items:
             if it["status"] != "info" and not it.get("tg_message_id"):
                 send_item(bot, q, it)
