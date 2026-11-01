@@ -168,3 +168,23 @@ def test_the_card_under_the_article_leaves_out_what_the_article_shows():
     for t in ("תכנון עסקה (S10–S11)", "מנוע הכללים", "ADR60", "גודל ראשון"):          # what only the card has
         assert t in short
     assert short.count("<div") == short.count("</div")
+
+
+def test_eps_basis_uses_the_same_range_as_the_data_check():
+    # FLOC 31.10: ratio 0.76 failed the check (0.8-1.25) but passed the valuation's own 0.67-1.5
+    bars = _bars({"2022": 10, "2023": 100, "2024": 110, "2025": 120})
+    v = idea.valuation(bars, _fund([7.6, 7.6, 7.6]), {"f0": 10, "f1": 11, "f2": 12}, {"pe1": 15})
+    assert v["eps_basis_mismatch"]
+
+
+def test_agent_pick_of_an_unreliable_own_multiple_is_overridden():
+    targets = [dict(source="own_multiple_target", price=150, unreliable=True, multiple_source="hist_3y", rr=5.0),
+               dict(source="technical_level", price=130, rr=3.2),
+               dict(source="all_time_high_target", price=140, rr=4.0)]
+    j = {"target_source": "own_multiple_target"}
+    chosen = run._choose_target(targets, j)
+    assert chosen["source"] == "all_time_high_target"
+    assert j["code_overrides"][-1]["from"] == "own_multiple_target"
+    assert j["code_overrides"][-1]["to"] == "all_time_high_target"
+    j2 = {"target_source": "technical_level"}
+    assert run._choose_target(targets, j2)["source"] == "technical_level" and "code_overrides" not in j2

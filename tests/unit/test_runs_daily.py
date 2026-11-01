@@ -279,7 +279,22 @@ def test_peer_note_on_same_etf_entry(db):
     out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='news'", (rid,), ["output"])["output"]
     assert list(out["peer_notes"]) == ["GE"]
     assert "מתחרה: BA FAA halts" in out["peer_notes"]["GE"][0] and out["peer_notes"]["GE"][0].startswith("[C]")
-    assert "GE: [C] דיווח/אירוע אצל מתחרה" in sent[0]
+    assert "[C] דיווח/אירוע אצל מתחרה: BA FAA halts" in sent[0] and "← GE (S08-J25)" in sent[0]
+
+
+def test_peer_note_skips_a_headline_about_another_company():
+    # 30.10: Yahoo's search for SHEL returned "Chevron Q3 Earnings Beat"; it went to every XLE name, CVX too
+    from types import SimpleNamespace
+
+    from qt.news import diary_lines, peer_notes
+    e = [SimpleNamespace(symbol=s, etf="XLE", peers=[]) for s in ("CVX", "TALO", "EGY")]
+    cvx = dict(symbol="SHEL", klass="C", title="Chevron Q3 Earnings Beat Estimates", related=["CVX", "SHEL", "XOM"])
+    own = dict(symbol="SHEL", klass="C", title="Shell Q3 earnings call highlights", related=["SHEL", "CVX"])
+    notes = peer_notes([cvx, own], e, {"SHEL": "XLE"})
+    assert set(notes) == {"TALO", "EGY"}                       # CVX is named in the headline: not a peer event
+    assert all("Shell Q3" in n[0] for n in notes.values())
+    lines = diary_lines({"enabled": True, "items": [own], "diary": [], "peer_notes": notes})
+    assert sum("S08-J25" in ln for ln in lines) == 1 and "TALO, EGY" in lines[-1]
 
 
 # ---------------------------------------------------------------- the heat in force gates the entry (S08-R28, R33, R25)

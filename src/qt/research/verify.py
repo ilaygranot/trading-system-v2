@@ -128,7 +128,11 @@ def statement_checks(sym: str, idea: dict, facts: dict | None, sec_src: str) -> 
             sv, unit, tag = hit
             c.second, c.second_source, c.diff_pct = sv, f"{sec_src}/{tag}", diff_pct(val, sv)
             k = adr_ratio(val, sv) if per_share else None
-            if unit != "USD":
+            if unit != "USD" and c.diff_pct <= tol:
+                # both sources agree, in the company's own currency (31.10: ENB in CAD). Not a disagreement; the
+                # note stays, since a multiple on the dollar price needs the exchange rate
+                c.status, c.note = "single", c.note + f" · תואם לדוח ב-SEC, במטבע {unit}; המחיר בדולר, אז מכפיל צריך המרת מטבע"
+            elif unit != "USD":
                 c.status, c.note = "bad", c.note + f" · הדוח ב-SEC במטבע {unit}, והמחיר בדולר: לבדוק בסיס מטבע לפני כל מכפיל"
             elif c.diff_pct <= tol:
                 c.status = "ok"
@@ -187,9 +191,14 @@ def sanity_checks(sym: str, idea: dict) -> list[Check]:
     pe1 = row.get("pe1")
     if pe1 is not None and idea["direction"] == "long":
         lo, hi = v.pe_range
-        bad = not (lo < pe1 <= hi)
-        out.append(Check(sym, "pe1", "מכפיל צפוי (F1)", "bad" if bad else "ok", pe1, "code: price / F1",
-                         note=f"מחוץ לטווח {lo}–{hi}: לבדוק יחידות, מטבע ו-ADR" if bad else f"בטווח {lo}–{hi}"))
+        if pe1 <= 0 and (row.get("f1") or 0) < 0:
+            # a loss year ahead (profile L7, 31.10: EGY): no forward P/E exists, which is a fact, not bad data
+            out.append(Check(sym, "pe1", "מכפיל צפוי (F1)", "single", pe1, "code: price / F1",
+                             note="F1 שלילי (שנת הפסד צפויה): אין מכפיל צפוי, ולא נבנה עליו יעד"))
+        else:
+            bad = not (lo < pe1 <= hi)
+            out.append(Check(sym, "pe1", "מכפיל צפוי (F1)", "bad" if bad else "ok", pe1, "code: price / F1",
+                             note=f"מחוץ לטווח {lo}–{hi}: לבדוק יחידות, מטבע ו-ADR" if bad else f"בטווח {lo}–{hi}"))
     s0, s1 = row.get("sales"), row.get("sales_f1")
     if s0 and s1:
         r = s1 / s0

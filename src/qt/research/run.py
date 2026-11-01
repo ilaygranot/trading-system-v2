@@ -140,6 +140,26 @@ def backfill(y: Yahoo, u: dict, screens: dict, wanted: list[dict], as_of: date) 
     return extra, timing, errors
 
 
+def _choose_target(targets: list[dict], j: dict) -> dict | None:
+    """The agent's target source when code has it and it is usable; else the usable source with the best R:R.
+    Not from the course: an own multiple on an EPS that is not on the consensus basis is never taken, also when the
+    agent picked it (31.10: TALO, GRNT, CRGY); the override is written on the judgment for the report."""
+    chosen = next((t for t in targets if t["source"] == j.get("target_source")), None)
+    override = None
+    if chosen is not None and chosen.get("unreliable"):
+        override = {"card": "DC-11", "from": chosen["source"], "to": "—", "rule_id": "verification.eps_basis",
+                    "why": "המכפיל העצמי נשען על EPS בבסיס שונה מהקונצנזוס (GAAP מול מתואם, ADR או מטבע)"}
+        chosen = None
+    if chosen is None and targets:
+        usable = [t for t in targets if not t.get("unreliable")
+                  and t.get("multiple_source") != "sector"] or targets
+        chosen = max(usable, key=lambda t: t["rr"])
+    if override:
+        override["to"] = chosen["source"] if chosen else "—"
+        j.setdefault("code_overrides", []).append(override)
+    return chosen
+
+
 def _target_options(price: float, direction: str, ext: float, val: dict, levels: dict) -> list[dict]:
     """The three course target sources (reward_risk.target_sources) with their price, where code has one."""
     up = direction == "long"
@@ -238,11 +258,7 @@ def deep_dive(y: Yahoo, u: dict, screens: dict, sym: str, etf: str, direction: s
     for t in targets:
         t["rr"] = T.reward_risk(price, stop, t["price"], direction)          # type: ignore[arg-type]
         t["move_pct"] = T.pct_move(price, t["price"])
-    chosen = next((t for t in targets if t["source"] == j.get("target_source")), None)
-    if chosen is None and targets:
-        usable = [t for t in targets if not t.get("unreliable")
-                  and t.get("multiple_source") != "sector"] or targets
-        chosen = max(usable, key=lambda t: t["rr"])
+    chosen = _choose_target(targets, j)
     unhealthy = (fv.get("health") or {}).get("state") == "unhealthy"
     plan = idea.trade_plan(sym, direction, bars, chosen["price"] if chosen else None,
                            chosen["source"] if chosen else None, k, etf, buckets, macro_bias, tl, row,

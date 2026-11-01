@@ -120,8 +120,14 @@ def peer_notes(items: list[dict], entries: list, etf_of: dict[str, str | None]) 
         if not (k in STRONG or (k == "C" and RESULTS_WORDS.search(it.get("title") or ""))):
             continue
         sym, etf = it["symbol"], etf_of.get(it["symbol"])
+        related = it.get("related") or []
+        if related and related[0] != sym:
+            # not from the course: Yahoo's search for one ticker returns headlines about others (30.10: "Chevron Q3
+            # Earnings Beat" under SHEL went to every XLE name as a SHEL event). The first related ticker is the
+            # headline's company; a headline about another company is not an event at this one
+            continue
         for e in entries:
-            if e.symbol == sym or not ((etf and e.etf == etf) or sym in (e.peers or [])):
+            if e.symbol == sym or e.symbol in related or not ((etf and e.etf == etf) or sym in (e.peers or [])):
                 continue
             note = f"[{cls}] דיווח/אירוע אצל מתחרה: {sym} {it['title']}"
             if note not in out.get(e.symbol, []):
@@ -187,6 +193,9 @@ def diary_lines(out: dict) -> list[str]:
         lines.append(f"⚠️ {sym}: ידיעה נגד הפוזיציה ({what}), עוברת ל-A7")
     for sym, what in out.get("watch_flags", {}).items():
         lines.append(f"⚠️ {sym} ברשימה: ידיעה נגד הרעיון ({what}), לבדוק שובר תזה")
+    by_note: dict[str, list[str]] = {}                # one line per headline, not one per watchlist name (30.10: 34)
     for sym, notes in (out.get("peer_notes") or {}).items():
-        lines += [f"• {sym}: {n} (S08-J25)" for n in notes]
+        for n in notes:
+            by_note.setdefault(n, []).append(sym)
+    lines += [f"• {n} ← {', '.join(syms)} (S08-J25)" for n, syms in by_note.items()]
     return lines

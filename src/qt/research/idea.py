@@ -175,11 +175,14 @@ def valuation(bars: list, f: dict, row: dict, sector_avg: dict) -> dict[str, Any
     out["hist_years"], out["method"] = years, "pe" if profitable else "ps"
     # not from the course: the statements' EPS and the consensus must be on one basis (an ADR holds several
     # shares in another currency; GAAP vs adjusted). Last fiscal year's EPS against the consensus F0 for it:
-    # off by more than half, and the own-multiple target is marked unreliable and is not chosen automatically.
+    # outside verification.eps_basis_range, and the own-multiple target is marked unreliable and is not chosen,
+    # neither automatically nor on the agent's word (qt.research.run). One range for this and for the data check
+    # (31.10: FLOC at 0.76 passed here at 0.67-1.5 and failed the check at 0.8-1.25).
     if profitable and eps and row.get("f0"):
         r = eps[-1][1] / row["f0"]
         out["eps_basis_ratio"] = r
-        if not 0.67 <= r <= 1.5:
+        lo, hi = load_policy().verification.eps_basis_range
+        if not lo <= r <= hi:
             out["eps_basis_mismatch"] = True
     # not from the course: a year with EPS near zero gives a P/E in the hundreds and a meaningless target. A
     # multiple above twice the median of the three (or above the cap) is dropped and flagged; the target then
