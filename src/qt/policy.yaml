@@ -32,6 +32,10 @@ stop:
 reward_risk:
   min_ratio: 3.0                   # S10-R3, S11-R8, decision 9 (also options, from premium)
   target_sources: [technical_level, own_multiple_target, all_time_high_target]
+  # "open skies" (105:35): a price within this many ADR60 of the all-time high (low, short) has no resistance above;
+  # the extreme is then no target (R:R 0.03-0.4 on CVX, EOG, EQNR, FANG, CNQ 31.10). Decision 1 (20.10): at the
+  # all-time high with no technical level, the fundamental target is the target. The threshold is not from the course.
+  open_skies_adr: 1.0
 
 horizon:
   default_max_months: 3            # decision 2

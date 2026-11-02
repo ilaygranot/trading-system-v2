@@ -639,16 +639,16 @@ def _screen(d: dict) -> str:
                        f'<td>{E(", ".join(x.get("patterns") or []))}</td><td>{E(opt.get(x.get("option"), x.get("option")))}</td>'
                        f'<td>{E(x.get("reason") or "")}</td></tr>')
         out.append("</tbody></table></div>")
-    good = [t for t in tm if t.get("combined") == "green" or (t.get("combined") == "orange" and (t.get("rr_extreme") or 0) >= 3)]
+    good = [t for t in tm if t.get("combined") == "green" or (t.get("combined") == "orange" and (t.get("open_skies") or (t.get("rr_extreme") or 0) >= 3))]
     out.append('<h3>מי שעבר את הרמזור: כל הירוקים, והכתומים עם יחס של 3 ומעלה לשיא</h3><div class="tbl"><table><thead><tr>'
                '<th>מניה</th><th>סקטור</th><th>פרופיל</th><th>מניה</th><th>סקטור</th><th>שוק</th><th>משולב</th><th>מקורות אדומים</th>'
                '<th>R:R לשיא</th><th>ADR</th><th>ניתוח עומק</th></tr></thead><tbody>')
-    for t in sorted(good, key=lambda t: (t["combined"] != "green", -(t.get("rr_extreme") or 0))):
+    for t in sorted(good, key=lambda t: (t["combined"] != "green", not t.get("open_skies"), -(t.get("rr_extreme") or 0))):
         reds = [SOURCE_HE.get(k, k) for k, v in t["sources"].items() if v == "red"]
         link = f'<a href="#idea-{E(t["sym"])}">{E(t["sym"])}</a>' if t["sym"] in d["ideas"] else E(t["sym"])
         out.append(f'<tr><td><b>{link}</b></td><td>{E(t["etf"])}</td><td>{E(t["profile"])}</td><td>{pill(t["stock"])}</td>'
                    f'<td>{pill(t["sector"])}</td><td>{pill(t["market"])}</td><td>{pill(t["combined"])}</td>'
-                   f'<td>{E(", ".join(reds) or "—")}</td><td class="n">{num(t.get("rr_extreme"), 1)}</td>'
+                   f'<td>{E(", ".join(reds) or "—")}</td><td class="n">{"שמיים פתוחים" if t.get("open_skies") else num(t.get("rr_extreme"), 1)}</td>'
                    f'<td class="n">{num(t["adr"], 1, True)}</td><td>{"נבחר" if t["sym"] in d["ideas"] else "לא נבחר"}</td></tr>')
     out.append('</tbody></table></div><p class="note">R:R לשיא מחושב עם k=4 מול השיא של 8 שנים. זה סינון ראשוני בלבד: '
                'היעד הסופי נבחר בניתוח העמוק מבין שלושת מקורות הקורס.</p>')

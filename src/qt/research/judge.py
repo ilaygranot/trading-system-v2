@@ -328,6 +328,14 @@ def article_facts(d: dict, macro: dict, as_of: date, j: dict, sectors: dict | No
     return fs
 
 
+def rank_rr(t: dict) -> float:
+    """R:R to the extreme for ranking. A stock at the extreme (open skies, 105:35) has no resistance above, which the
+    course counts for it, not against it: it ranks as meeting the minimum, not as zero (not from the course)."""
+    if t.get("open_skies"):
+        return float(load_policy().reward_risk.min_ratio)
+    return t.get("rr_extreme") or 0.0
+
+
 def candidates(timing: list[dict]) -> list[dict]:
     """Who may go to the deep dive (DC-09): green or orange on the combined light, with data. Red never does."""
     return [t for t in timing if not t.get("error") and t.get("combined") in ("green", "orange")]
@@ -458,7 +466,7 @@ class Judge:
         def key(t: dict) -> tuple:
             r = rank.get(t.get("dir"), [])
             return (r.index(t.get("profile")) if t.get("profile") in r else len(r), t.get("combined") != "green",
-                    -(t.get("rr_extreme") or 0))
+                    -rank_rr(t))
         return sorted(ok, key=key)
 
     def pick(self, timing: list[dict], macro: dict, as_of: date, screens: dict | None = None,
@@ -475,7 +483,7 @@ class Judge:
         fs = FactSheet()
         for t in ok:
             add_facts(fs, t["sym"], {k: t.get(k) for k in ("etf", "dir", "profile", "combined", "stock", "sector",
-                                                          "market", "rr_extreme", "adr", "price")}, as_of, depth=1)
+                                                          "market", "rr_extreme", "open_skies", "adr", "price")}, as_of, depth=1)
             row = next((c for c in (screens or {}).get(t["etf"], {}).get(t["dir"]) or [] if c["ticker"] == t["sym"]), None)
             if row:                                       # the card's inputs: F0-F2, growth, multiples, tags and flags
                 add_facts(fs, t["sym"], {k: row.get(k) for k in PICK_ROW if k not in ("price",)}, as_of, "code:screening",

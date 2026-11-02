@@ -188,3 +188,19 @@ def test_agent_pick_of_an_unreliable_own_multiple_is_overridden():
     assert j["code_overrides"][-1]["to"] == "all_time_high_target"
     j2 = {"target_source": "technical_level"}
     assert run._choose_target(targets, j2)["source"] == "technical_level" and "code_overrides" not in j2
+
+
+def test_open_skies_drops_the_extreme_and_keeps_the_own_multiple():
+    # CVX 31.10: at its high, the extreme gave R:R 0.06; decision 1 (20.10): the fundamental target is the target
+    assert run.open_skies(235.5, 236.0, 2.0) and not run.open_skies(200.0, 236.0, 2.0)
+    bars = _bars({"2022": 10, "2023": 100, "2024": 110, "2025": 120})
+    v = idea.valuation(bars, _fund([10, 10, 10]), {"f0": 10, "f1": 11, "f2": 12}, {"pe1": 15})
+    opts = run._target_options(120, "long", 120.5, v, {}, sky=True)
+    assert [o["source"] for o in opts] == ["own_multiple_target"] and "שמיים פתוחים" in opts[0]["note"]
+    assert "all_time_high_target" in [o["source"] for o in run._target_options(100, "long", 150, v, {})]
+
+
+def test_open_skies_ranks_as_meeting_the_minimum_not_as_zero():
+    from qt.research.judge import rank_rr
+    assert rank_rr({"open_skies": True, "rr_extreme": None}) == 3.0
+    assert rank_rr({"rr_extreme": 0.06}) == 0.06
