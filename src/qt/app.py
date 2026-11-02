@@ -58,7 +58,9 @@ def services(db: DB, portfolio_path: str | None = None) -> dict[str, Any]:
     store = Store(db)
     yahoo = Yahoo(store)
     from qt.data.macro_auto import Sources
+    from qt.research.verify import make_second_close
     s: dict[str, Any] = {"prices": yahoo, "prices_fallback": FMP(store), "quote": yahoo.quote, "cftc": CFTC(),
+                         "second_close": make_second_close(store, alphavantage=False),   # the daily cross-check
                          "macro_auto": Sources}      # ISM / NFIB / NAAIM fetched by the runs (no manual file)
     pf = portfolio(db, portfolio_path)
     if pf is not None:

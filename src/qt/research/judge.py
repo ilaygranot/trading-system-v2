@@ -391,7 +391,12 @@ class Judge:
 
     def _decide(self, agent: str, card: str, fs: FactSheet, world: dict, subject: str) -> dict:
         r = self.runner.decide(agent, card, fs, world, run_id=self.run_id, step=self.step, subject=subject)
-        self.log.append(dict(card=card, subject=subject, option=r.option, status=r.status, cost=round(r.cost_usd, 4)))
+        entry = dict(card=card, subject=subject, option=r.option, status=r.status, cost=round(r.cost_usd, 4))
+        if r.status != "decided":                    # why, for the report (Ilay 2.11: nobody looked at the 42 rejections)
+            issues = (getattr(r, "critic", None) or {}).get("issues") or []
+            why = "; ".join(f"{i.get('kind')}: {i.get('detail')}" for i in issues[:2]) or "; ".join(getattr(r, "problems", None) or [])
+            entry["why"] = why[:400]
+        self.log.append(entry)
         out = dict(r.output)
         out["status"] = r.status
         return out

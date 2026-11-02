@@ -456,3 +456,41 @@ def test_profit_flags_on_a_steady_rise():
     assert f["extended_days"] > 21 and "high_intervals_red" not in f
     assert profit_flags(up[:30]) == {}                                   # too little history
     assert "extended_days" not in profit_flags(up, "short")
+
+
+def test_second_source_disagreeing_on_the_close_holds_new_entries(db):
+    # Ilay 2.11: the day's stops and R:R stood on Yahoo alone; a second close now checks each stock
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    sent = []
+    snap_close = {}
+
+    def second(sym, day):
+        return snap_close[sym] * 1.03, "test:second"                 # 3% off: above the 0.5% tolerance
+
+    class Spy(Prices):
+        def daily_bars(self, s, start, end):
+            bars, src = super().daily_bars(s, start, end)
+            snap_close[s] = [b for b in bars if b.day <= end][-1].close
+            return bars, src
+    rid = Runner(db, PIPELINES, {"prices": Spy(), "portfolio": pf, "watchlist": _wl(), "second_close": second,
+                                 "notifier": sent.append}).start("daily", AS_OF)
+    out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='fetch'", (rid,), ["output"])["output"]
+    assert out["mismatch"] == ["BA"] and out["crosscheck"]["BA"]["status"] == "bad"
+    assert not db.one("SELECT id FROM approval_queue WHERE symbol='BA' AND kind='enter'")
+    assert "פער בין מקורות: BA" in sent[0]
+
+
+def test_second_source_that_agrees_lets_the_entry_through(db):
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    closes = {}
+
+    class Spy(Prices):
+        def daily_bars(self, s, start, end):
+            bars, src = super().daily_bars(s, start, end)
+            closes[s] = [b for b in bars if b.day <= end][-1].close
+            return bars, src
+    rid = Runner(db, PIPELINES, {"prices": Spy(), "portfolio": pf, "watchlist": _wl(),
+                                 "second_close": lambda s, d: (closes[s], "test")}).start("daily", AS_OF)
+    out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='fetch'", (rid,), ["output"])["output"]
+    assert out["mismatch"] == [] and out["crosscheck"]["BA"]["status"] == "ok"
+    assert db.one("SELECT id FROM approval_queue WHERE symbol='BA' AND kind='enter'")

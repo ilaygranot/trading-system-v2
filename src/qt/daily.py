@@ -75,8 +75,40 @@ def fetch(ctx: RunContext, _: str) -> dict:
                 break
         else:
             out["stale"].append(s)
+    out["crosscheck"], out["mismatch"] = crosscheck(ctx, out)
     out["portfolio"] = pf
     return out
+
+
+def crosscheck(ctx: RunContext, snap: dict) -> tuple[dict[str, Any], list[str]]:
+    """Each stock's last close against a second source (FMP, then nasdaq.com), as the weekly data check does
+    (Ilay 2.11: every stop and R:R of the day stood on Yahoo alone). Off by more than verification.price_tol_pct:
+    the stock is listed as a mismatch, new entries wait that day, and stops and exits keep running on the primary.
+    A second source that does not answer is reported, not a mismatch. Not from the course (operations)."""
+    second = ctx.services.get("second_close")
+    if second is None:
+        return {}, []
+    from qt.policy import load_policy
+    tol = float(load_policy().verification.price_tol_pct)
+    out: dict[str, Any] = {}
+    bad: list[str] = []
+    for s, rows in snap["bars"].items():
+        if s in (INDEX, VIX) or s in snap["stale"] or not rows:
+            continue
+        day, close = date.fromisoformat(rows[-1][0]), rows[-1][4]
+        try:
+            v, src = second(s, day)
+        except Exception as e:                                       # noqa: BLE001 - reported, never a block
+            out[s] = {"status": "single", "note": f"{type(e).__name__}: {str(e)[:80]}"}
+            continue
+        diff = abs(close / v - 1) * 100 if v else None
+        ok = diff is not None and diff <= tol
+        out[s] = {"status": "ok" if ok else "bad", "close": close, "second": v, "source": src,
+                  "diff_pct": round(diff, 3) if diff is not None else None}
+        if not ok:
+            bad.append(s)
+            ctx.event(f"{s}: close {close:.2f} vs {v:.2f} at {src} ({diff:.2f}%)", "warn", "fetch")
+    return out, bad
 
 
 def fill(ctx: RunContext, _: str) -> dict:
@@ -159,6 +191,10 @@ def rules(ctx: RunContext, _: str) -> dict:
             if cap is not None and v > cap:
                 acts.append(dict(kind="flag", rule_id="D-S11-7", symbol=None, qty=None, price=None, preapproved=False,
                                  detail=f"{k} exposure {v:.2f} > cap {cap:g}"))
+    if snap.get("mismatch"):
+        acts.append(dict(kind="block_new_risk", rule_id="DATA-MISMATCH", symbol=None, qty=None, price=None,
+                         preapproved=False, detail="sources disagree on the close: " + ", ".join(snap["mismatch"]) +
+                         ": no new entries; risk and exits keep running"))
     if snap["stale"]:
         acts.append(dict(kind="block_new_risk", rule_id="DATA-STALE", symbol=None, qty=None, price=None,
                          preapproved=False, detail="stale data: " + ", ".join(snap["stale"]) +
@@ -183,7 +219,8 @@ def watch(ctx: RunContext, _: str) -> dict:
         d = asdict(c)
         d["held"] = e.symbol in held
         checks.append(d)
-        if c.status in ("opportunity", "ready") and c.heat == "hot" and not d["held"] and not snap["stale"]:
+        if c.status in ("opportunity", "ready") and c.heat == "hot" and not d["held"] and not snap["stale"] \
+                and not snap.get("mismatch"):
             seen = ctx.db.one("SELECT id FROM approval_queue WHERE symbol=? AND rule_id='S10-R4' AND as_of>=? "
                               "AND status IN ('approved','rejected')", (e.symbol, e.added))
             if not seen:
@@ -526,11 +563,15 @@ def notify(ctx: RunContext, _: str) -> dict:
     items = q.for_day(ctx.as_of)
     pending = [i for i in items if i["status"] in ("pending", "postponed", "changed")]
     stale = ctx.out("fetch")["stale"]
+    cc = ctx.out("fetch").get("crosscheck") or {}
+    mism = ctx.out("fetch").get("mismatch") or []
     filled = ctx.out("fill")["filled"] if ctx.out("fill") else []
     cost = ctx.db.one("SELECT COALESCE(SUM(cost_usd), 0) AS c FROM agent_calls WHERE run_id = ?", (ctx.run_id,))
     text = (f"יומית {ctx.as_of.isoformat()} · ריצה תקינה · משטר {r['regime']} · {len(pending)} פריטים לאישור · "
             f"{len(items) - len(pending)} פקודות עומדות/דגלים · "
             + ("נתונים עדכניים" if not stale else f"נתונים ישנים: {', '.join(stale)}")
+            + (f" · מקור שני: {sum(v['status'] == 'ok' for v in cc.values())}/{len(cc)} תואמים" if cc else "")
+            + (f" · ⚠️ פער בין מקורות: {', '.join(mism)}" if mism else "")
             + (f" · {len(filled)} עסקאות נייר בוצעו" if filled else "")
             + f" · {float(cost['c'] or 0):.2f}$")
     text += "\n\n" + day_summary(ctx)

@@ -204,3 +204,20 @@ def test_open_skies_ranks_as_meeting_the_minimum_not_as_zero():
     from qt.research.judge import rank_rr
     assert rank_rr({"open_skies": True, "rr_extreme": None}) == 3.0
     assert rank_rr({"rr_extreme": 0.06}) == 0.06
+
+
+def test_report_opens_with_the_week_in_words_and_lists_the_critic_rejections():
+    # Ilay 2.11: "I read it and have no idea what happened in the market this week"
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+    from dossiers import complete
+
+    from qt.research import report as R
+    d = complete()
+    d["judgments"]["agent_log"] = [{"card": "DC-14", "subject": "TALO", "status": "critic_rejected",
+                                    "why": "wrong_rule: the company's own report is not C"}]
+    nav, body = R.sections(d)
+    assert nav[0] == ("week", "השבוע") and body.index('id="week"') < body.index('id="summary"')
+    w = R._week(d)
+    assert "בשבוע" in w and "סקטורים" in w and "own report is not C" in w
+    assert R.plain("תיקון (S03-J5, S02-J5) והרוחב 47% (F-116, F-117).") == "תיקון והרוחב 47%."

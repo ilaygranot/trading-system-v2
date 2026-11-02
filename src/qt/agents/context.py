@@ -40,7 +40,10 @@ ROLES = {
     "C": "the Critic. You decide nothing. You check that a decision stands on its card: every cited fact exists on "
          "the fact sheet and says what is claimed, every cited course rule exists and says what is claimed, nothing "
          "'not from course' is hidden, no hard rule is crossed, and every deviation from a default has a J principle "
-         "and input facts.",
+         "and input facts. Return a decision only for an issue that can change it (the option, the direction, priced "
+         "in, a breaker, a target, a level) or that crosses a hard rule. A fact that is on the sheet and supports the "
+         "claim but whose id is missing from fact_ids, or a wording fix that changes nothing, goes in issues with "
+         "verdict pass (review of 24.10-31.10: 62 decisions returned, most for citation housekeeping).",
     "L": "the review and learning agent. You classify failures (idea / execution / Playbook / data) and draft change "
          "proposals. You never change the Playbook.",
 }

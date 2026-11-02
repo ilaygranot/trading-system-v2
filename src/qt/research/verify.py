@@ -376,28 +376,13 @@ def summarize(rows: list[dict]) -> dict[str, Any]:
                 worst={k: ("bad" if s["bad"] else "single" if s["single"] else "ok") for k, s in by.items()})
 
 
-# ------------------------------------------------------------------ live sources
-def default_sources(store: Any = None) -> dict[str, Any]:
-    """EDGAR, a second close (FMP, then nasdaq.com, then Alpha Vantage) and a page fetcher, each only if it answers here."""
+def make_second_close(store: Any = None, alphavantage: bool = True) -> Callable[[str, date], tuple[float, str]]:
+    """A second close for one day: FMP, then nasdaq.com, then Alpha Vantage (25 calls a day: the daily run leaves it
+    out). Used by the research's data check and by the daily run's cross-check."""
     import os
 
-    import requests
+    from qt.data.providers import FMP, AlphaVantage, Nasdaq
 
-    from qt.data.providers import EDGAR, FMP, AlphaVantage, Nasdaq
-
-    out: dict[str, Any] = {"sec": EDGAR(store, contact=os.environ.get("SEC_CONTACT"))}
-    for attempt in range(SEC_TRIES):                 # 25.10: one failed probe left the whole verification without SEC
-        try:
-            out["sec"].cik("AAPL")
-            break
-        except Exception as e:                                           # noqa: BLE001 - SEC blocked: say why
-            out["sec_error"] = f"{type(e).__name__}: {str(e)[:200]}"
-            if attempt + 1 < SEC_TRIES:
-                time.sleep(SEC_WAIT_S)
-    else:
-        out["sec"] = None
-    if out["sec"] is not None:
-        out.pop("sec_error", None)
     av_cache: dict[str, dict[str, float]] = {}
 
     def second_close(sym: str, day: date) -> tuple[float, str]:
@@ -418,7 +403,7 @@ def default_sources(store: Any = None) -> dict[str, Any]:
             errors.append("nasdaq: no bar")
         except Exception as ex:                                          # noqa: BLE001 - try the next source
             errors.append(f"nasdaq: {str(ex)[:60]}")
-        if os.environ.get("ALPHAVANTAGE_API_KEY"):
+        if alphavantage and os.environ.get("ALPHAVANTAGE_API_KEY"):
             try:
                 if sym not in av_cache:
                     av_cache[sym] = AlphaVantage(store).daily_closes(sym)[0]
@@ -429,7 +414,32 @@ def default_sources(store: Any = None) -> dict[str, Any]:
                 errors.append(f"alphavantage: {str(ex)[:60]}")
         raise RuntimeError("; ".join(errors) or "no second price source configured")
 
-    out["second_close"] = second_close                                  # nasdaq.com needs no key
+    return second_close
+
+
+# ------------------------------------------------------------------ live sources
+def default_sources(store: Any = None) -> dict[str, Any]:
+    """EDGAR, a second close (FMP, then nasdaq.com, then Alpha Vantage) and a page fetcher, each only if it answers here."""
+    import os
+
+    import requests
+
+    from qt.data.providers import EDGAR
+
+    out: dict[str, Any] = {"sec": EDGAR(store, contact=os.environ.get("SEC_CONTACT"))}
+    for attempt in range(SEC_TRIES):                 # 25.10: one failed probe left the whole verification without SEC
+        try:
+            out["sec"].cik("AAPL")
+            break
+        except Exception as e:                                           # noqa: BLE001 - SEC blocked: say why
+            out["sec_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+            if attempt + 1 < SEC_TRIES:
+                time.sleep(SEC_WAIT_S)
+    else:
+        out["sec"] = None
+    if out["sec"] is not None:
+        out.pop("sec_error", None)
+    out["second_close"] = make_second_close(store)                    # nasdaq.com needs no key
 
     def fetch(url: str) -> str:
         host = (urlparse(url).hostname or "").lower()

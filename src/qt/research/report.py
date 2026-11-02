@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import html
 import math
+import re
+from collections import Counter
 from datetime import date
 from typing import Any, Iterable, Sequence
 
@@ -342,6 +344,92 @@ def vtable(rows: list[dict], subject: bool = False) -> str:
     return "".join(out)
 
 
+_IDS = re.compile(r"\s*\((?:\s*(?:F-?\d+|[DS]-?S?\d\d-[RJ]?\d+|S\d\d-[RJ]\d+|DC-\d+|D-S\d\d-\d+)\s*,?)+\)")
+
+
+def plain(text: Any) -> str:
+    """Prose for reading: the fact and rule ids in parentheses, "(F-008, S03-J5)", are taken out. They stay in the
+    agent's full reasoning further down (Ilay 2.11: the report did not read as a story)."""
+    return _IDS.sub("", str(text or "")).strip()
+
+
+RULE_HE = {"S08-R28": "הרעיון קר: אין כניסה עד שהחום מאושר", "S07-R13": "אין קטליסט צפוי שנספר בקוד",
+           "S10-R3": "יחס סיכוי-סיכון מתחת ל-3", "S09-R1": "הרמזור המשולב לא ירוק",
+           "D-S10-5": "אופק מעל 6 חודשים (דגל בלבד)"}
+CARD_HE = {"DC-14": "סיווג קטליסט", "DC-12": "שוברי תזה", "DC-10": "סוג הסיפור", "DC-11": "פרמיה ויעד",
+           "DC-25": "המאמר", "DC-26": "שיחת הוועידה", "DC-09": "בחירת מניות", "DC-27": "סיפור המקרו",
+           "DC-13": "חם או קר", "DC-08": "הצלה מברירת מחדל"}
+
+
+def _week(d: dict) -> str:
+    """The week at a glance, in words, before anything else: the market, the sectors, what was checked, what stopped
+    the trades, and what the agents did. Built from the report's own numbers (Ilay 2.11)."""
+    out = ['<section id="week"><h2>השבוע במבט אחד</h2><ul class="week">']
+    m3 = ((d.get("macro") or {}).get("stage3") or {})
+    mk, spx = m3.get("market") or {}, ((d.get("macro") or {}).get("charts") or {}).get("spx") or {}
+    vals = [v for v in spx.get("values") or [] if v is not None]
+    if len(vals) >= 6:
+        wk = (vals[-1] / vals[-6] - 1) * 100
+        line = f"<b>השוק:</b> ה-S&amp;P 500 סגר ב-{vals[-1]:,.0f}, {num(wk, 1, True, True)} בשבוע"
+        if mk.get("drawdown_pct") is not None:
+            line += f", {num(mk['drawdown_pct'], 1, True)} מתחת לשיא ({mk.get('sessions_from_peak', '—')} מפגשים מהשיא)"
+        lights = Counter(t.get("market") for t in d.get("timing") or [] if t.get("market"))
+        if lights:
+            line += f". רמזור השוק: {pill(lights.most_common(1)[0][0])}"
+        br = (m3.get("breadth") or {}).get("pct_above_ma200")
+        if br is not None:
+            line += f". {num(br, 0, True)} מהמניות מעל ממוצע 200"
+        out.append(f"<li>{line}.</li>")
+    st = ((d.get("macro") or {}).get("stage2") or {}).get("stance") or {}
+    if st:
+        out.append(f'<li><b>מקרו:</b> אזור {E(T(st.get("zone")))}, הטיה {E(T(st.get("bias") or "grey"))}, '
+                   f'מצפן {E(T(st.get("compass_now") or "—"))}.</li>')
+    sc = (d.get("sectors") or {}).get("scorecard") or {}
+    w1 = sorted(((e, (c.get("rs") or {}).get("1w")) for e, c in sc.items() if (c.get("rs") or {}).get("1w") is not None),
+                key=lambda x: -x[1])
+    if w1:
+        best = ", ".join(f"{E(e)} {num(v, 1, True, True)}" for e, v in w1[:3])
+        worst = ", ".join(f"{E(e)} {num(v, 1, True, True)}" for e, v in w1[-3:])
+        sect = d.get("sectors") or {}
+        out.append(f"<li><b>סקטורים (חוזק מול SPY בשבוע):</b> החזקים {best}; החלשים {worst}. לונג: "
+                   f"{E(', '.join(sect.get('long') or []) or '—')}, שורט: {E(', '.join(sect.get('short') or []) or '—')}.</li>")
+    f = {x["stage"]: x for x in d.get("funnel") or []}
+    if f:
+        sp = (f.get("timing") or {}).get("split") or {}
+        out.append(f'<li><b>מה נבדק:</b> {f.get("universe", {}).get("n", 0):,} מניות, {f.get("sectors", {}).get("n", 0):,} '
+                   f'בסקטורים שנבחרו, {f.get("screen", {}).get("n", 0):,} עברו את הסינון. ברמזור: {sp.get("green", 0)} ירוקות, '
+                   f'{sp.get("orange", 0)} כתומות, {sp.get("red", 0)} אדומות. {f.get("deep_dive", {}).get("n", 0)} נותחו לעומק.</li>')
+    ideas = d.get("ideas") or {}
+    stops = Counter(x.get("rule_id") for i in ideas.values() for x in (i.get("plan", {}).get("verdict") or {}).get("findings") or []
+                    if x.get("severity") in ("block", "needs_override"))
+    msg = {x.get("rule_id"): x.get("message", "") for i in ideas.values()
+           for x in (i.get("plan", {}).get("verdict") or {}).get("findings") or []}
+    n_go = sum(i.get("bucket") in ("enter", "conditional") for i in ideas.values())
+    if ideas:
+        why = "; ".join(f"{RULE_HE.get(r) or (msg.get(r) or r)[:70]} ({n})" for r, n in stops.most_common(4)) or "—"
+        out.append(f"<li><b>עסקאות:</b> {n_go} מוכנות או ממתינות לטריגר מתוך {len(ideas)}. מה עצר: {E(why)}.</li>")
+    log = (d.get("judgments") or {}).get("agent_log") or []
+    if log:
+        bad = [x for x in log if x.get("status") not in (None, "decided")]
+        out.append(f"<li><b>הסוכנים:</b> {len(log)} החלטות, {len(log) - len(bad)} הוכרעו, {len(bad)} נדחו או לא הוכרעו "
+                   f"(פירוט למטה).</li>")
+    out.append("</ul>")
+    bad = [x for x in log if x.get("status") not in (None, "decided")]
+    if bad:
+        out.append('<details><summary>מה המבקר דחה ולמה</summary><div class="tbl"><table><thead><tr><th>כרטיס</th>'
+                   '<th>נושא</th><th>סטטוס</th><th>הסיבה</th></tr></thead><tbody>')
+        for x in bad:
+            c = x.get("card", "")
+            out.append(f'<tr><td>{E(c)} <small>{E(CARD_HE.get(c, ""))}</small></td><td>{E(x.get("subject", ""))}</td>'
+                       f'<td>{E(STATUS_HE.get(x.get("status"), x.get("status")))}</td><td class="why">{E(x.get("why") or "—")}</td></tr>')
+        out.append("</tbody></table></div></details>")
+    out.append("</section>")
+    return "".join(out)
+
+
+STATUS_HE = {"critic_rejected": "המבקר דחה", "agent_undecided": "לא הוכרע", "refused": "אין תשובה תקינה"}
+
+
 def _summary(d: dict) -> str:
     ideas = d["ideas"]
     order = {"enter": 0, "conditional": 1, "watch": 2, "reject": 3}
@@ -356,7 +444,7 @@ def _summary(d: dict) -> str:
     out.append(f'<p class="big">מתוך {d["funnel"][0]["n"]:,} מניות, <b>{n_enter}</b> עסקה מוכנה לכניסה '
                f'ו-<b>{n_cond}</b> ממתינות לטריגר. כל השאר במעקב או נדחו, וכל אחת מהן מנומקת למטה.</p>')
     out.append(f'<p>מקרו: אזור <b>{E(T(st["zone"]))}</b>, הטיה <b>{E(T(st["bias"] or "grey"))}</b>, מצפן '
-               f'<b>{E(T(st["compass_now"] or "—"))}</b>. {E(J.get("DC-03", {}).get("why", ""))}</p>')
+               f'<b>{E(T(st["compass_now"] or "—"))}</b>. {E(plain(J.get("DC-03", {}).get("why", "")))}</p>')
     out.append("</div>")
     for i in trades:
         p, j = i["plan"], i["judgment"]
@@ -380,7 +468,7 @@ def _summary(d: dict) -> str:
                '<th>מנוע הכללים</th><th>למה</th></tr></thead><tbody>')
     for i in rows:
         p = i["plan"]
-        why = i["judgment"].get("why") or i.get("bucket_reason") or ""
+        why = plain(i["judgment"].get("why") or i.get("bucket_reason") or "")
         out.append(f'<tr><td><a href="#idea-{E(i["sym"])}"><b>{E(i["sym"])}</b></a> <small>{E(DIR_HE[i["direction"]])} · {E(i["etf"])}</small></td>'
                    f'<td>{bucket_pill(i["bucket"])}</td><td>{pill(i["timing"]["combined"])}</td>'
                    f'<td class="n">{px(p["entry"])}</td><td class="n">{px(p["stop"])}</td><td class="n">{px(p.get("target"))}</td>'
@@ -493,7 +581,7 @@ def _macro(d: dict) -> str:
     events = J.get("events") or []
     if J.get("story"):
         out.append('<div class="judgment"><div class="j-tag">מה קורה, במילים פשוטות · A1' + _was(d, "A1.story") + '</div>'
-                   + "".join(f"<p>{E(x)}</p>" for x in J["story"]) + "</div>")
+                   + "".join(f"<p>{E(plain(x))}</p>" for x in J["story"]) + "</div>")
     out.append(_fed(st["fed"], J.get("fed") or {}, _was(d, "A1.fed")))
     if events:
         out.append('<h3>מה קרה: האירועים שהזיזו את הגרפים' + (f' <small>{_was(d, "A1.events")[3:]}</small>' if _was(d, "A1.events") else "") + '</h3><ol class="events">')
@@ -1260,6 +1348,7 @@ h3{font-size:1.2rem;margin:1.6rem 0 .6rem} h4{font-size:1rem;margin:1.4rem 0 .5r
 .verdict{border:1px solid var(--line);border-inline-start:5px solid var(--g);background:var(--g-bg);border-radius:8px;padding:10px 14px;margin:8px 0 12px}
 .verdict.partial{border-inline-start-color:var(--r);background:var(--r-bg)}
 .verdict ul{margin:6px 0 0;padding-inline-start:20px} .verdict li.flag{color:var(--o)} .verdict li.block{color:var(--r)}
+ul.week{margin:6px 0 10px;padding-inline-start:20px;line-height:1.7;font-size:1.02rem} ul.week li{margin:4px 0}
 .rail{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
   display:flex;gap:4px;overflow-x:auto;padding-block:8px}
 .rail a{white-space:nowrap;text-decoration:none;color:var(--muted);padding:4px 10px;border-radius:4px;font-size:.9rem}
@@ -1398,12 +1487,13 @@ def sections(d: dict[str, Any], ideas: str | None = None) -> tuple[list[tuple[st
     """The report's sections and its rail (anchor, title), without the page around them: render() wraps them for the
     standalone report, and the dashboard (qt.web) shows them inside its own page, with its own `ideas` section (a
     short row per stock; the articles are on each stock's page)."""
-    nav = [("summary", "שורה תחתונה"), ("funnel", "משפך"), ("macro", "מקרו"), ("sectors", "סקטורים"),
+    # the story first (the week, the bottom line, the market), the checks after the ideas (Ilay 2.11)
+    nav = [("week", "השבוע"), ("summary", "שורה תחתונה"), ("macro", "מקרו"), ("sectors", "סקטורים"), ("funnel", "משפך"),
            ("screen", "סינון ורמזור"), ("ideas", "רעיונות"), ("method", "שיטה")]
     if d.get("verification"):
-        nav.insert(1, ("verify", "אימות"))
-    return nav, (f"{_summary(d)}{_verification(d)}{_funnel(d)}{_macro(d)}{_sectors(d)}{_screen(d)}{_ideas(d) if ideas is None else ideas}"
-                 f"{_method(d)}")
+        nav.insert(-1, ("verify", "אימות"))
+    return nav, (f"{_week(d)}{_summary(d)}{_macro(d)}{_sectors(d)}{_funnel(d)}{_screen(d)}"
+                 f"{_ideas(d) if ideas is None else ideas}{_verification(d)}{_method(d)}")
 
 
 def verdict(c: dict | None) -> str:
