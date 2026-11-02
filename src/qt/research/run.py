@@ -83,6 +83,13 @@ def price_moves(y: Yahoo, sym: str, as_of: date) -> dict:
     return {f"{m}m": round((c[-1] / c[-1 - n] - 1) * 100, 1) for m, n in ((3, 63), (6, 126), (12, 252)) if len(c) > n}
 
 
+def open_skies(price: float, extreme: float, adr_pct: float | None) -> bool:
+    """At the all-time high (low, short): within policy open_skies_adr x ADR60 of it, or beyond it (105:35)."""
+    if not price or not extreme or not adr_pct:
+        return False
+    return abs(extreme - price) / price * 100.0 < float(load_policy().reward_risk.get("open_skies_adr", 1.0)) * adr_pct
+
+
 def stage_timing(y: Yahoo, screens: dict, as_of: date) -> list[dict]:
     """S09 on every screen survivor, with R:R at the default k to each course target that code can compute
     without the agent: the extreme (all-time high / low in the history held) and the own-multiple target."""
@@ -105,11 +112,12 @@ def timing_row(y: Yahoo, e: str, c: dict, as_of: date, spy: list, etf_bars: list
         px, a = b[-1].close, adr(b)
         ext = max(x.high for x in b) if dr == "long" else min(x.low for x in b)
         st = T.stop_price(px, a, load_policy().stop.k_default, dr)          # type: ignore[arg-type]
-        rr = T.reward_risk(px, st, ext, dr) if (ext > px) == (dr == "long") else None  # type: ignore[arg-type]
+        sky = open_skies(px, ext, a)
+        rr = T.reward_risk(px, st, ext, dr) if (ext > px) == (dr == "long") and not sky else None  # type: ignore[arg-type]
         return dict(etf=e, sym=s, dir=dr, profile=c["profile"], stock=tl["stock"]["overall"],
                     sector=tl["sector"]["overall"], market=tl["market"]["overall"], combined=tl["combined"],
                     sources=tl["stock"]["sources"], flags=tl["stock"]["flags"], adr=a, price=px, extreme=ext,
-                    rr_extreme=rr)
+                    rr_extreme=rr, open_skies=sky)
     except Exception as ex:                                                  # noqa: BLE001 - reported per stock
         return dict(etf=e, sym=s, dir=dr, profile=c["profile"], error=f"{type(ex).__name__}: {ex}")
 
@@ -140,8 +148,29 @@ def backfill(y: Yahoo, u: dict, screens: dict, wanted: list[dict], as_of: date) 
     return extra, timing, errors
 
 
-def _target_options(price: float, direction: str, ext: float, val: dict, levels: dict) -> list[dict]:
-    """The three course target sources (reward_risk.target_sources) with their price, where code has one."""
+def _choose_target(targets: list[dict], j: dict) -> dict | None:
+    """The agent's target source when code has it and it is usable; else the usable source with the best R:R.
+    Not from the course: an own multiple on an EPS that is not on the consensus basis is never taken, also when the
+    agent picked it (31.10: TALO, GRNT, CRGY); the override is written on the judgment for the report."""
+    chosen = next((t for t in targets if t["source"] == j.get("target_source")), None)
+    override = None
+    if chosen is not None and chosen.get("unreliable"):
+        override = {"card": "DC-11", "from": chosen["source"], "to": "—", "rule_id": "verification.eps_basis",
+                    "why": "המכפיל העצמי נשען על EPS בבסיס שונה מהקונצנזוס (GAAP מול מתואם, ADR או מטבע)"}
+        chosen = None
+    if chosen is None and targets:
+        usable = [t for t in targets if not t.get("unreliable")
+                  and t.get("multiple_source") != "sector"] or targets
+        chosen = max(usable, key=lambda t: t["rr"])
+    if override:
+        override["to"] = chosen["source"] if chosen else "—"
+        j.setdefault("code_overrides", []).append(override)
+    return chosen
+
+
+def _target_options(price: float, direction: str, ext: float, val: dict, levels: dict, sky: bool = False) -> list[dict]:
+    """The three course target sources (reward_risk.target_sources) with their price, where code has one.
+    sky: the price is at the extreme (open_skies): the extreme is no target, the own multiple is (decision 1, 20.10)."""
     up = direction == "long"
     out = []
     res = levels.get("nearest_resistance" if up else "nearest_support")
@@ -152,6 +181,11 @@ def _target_options(price: float, direction: str, ext: float, val: dict, levels:
         out.append(dict(source="own_multiple_target", price=t["price"], unreliable="unreliable_eps_basis" in t["flags"],
                         multiple_source=t["multiple_source"],
                         note=f"{'P/E' if t['method'] == 'pe' else 'P/S'} ×{t['multiple']:.1f} ({SRC_HE.get(t['multiple_source'], t['multiple_source'])})"))
+    if sky:
+        for o in out:
+            if o["source"] == "own_multiple_target":
+                o["note"] += " · שמיים פתוחים: המחיר בשיא, ויעד המכפיל הוא היעד (החלטה 1, 20.10)"
+        return [o for o in out if (o["price"] > price) == up]
     out.append(dict(source="all_time_high_target", price=ext,
                     note=f"{'השיא' if up else 'השפל'} של {HISTORY_DAYS // 365} השנים האחרונות"))
     return [o for o in out if (o["price"] > price) == up]
@@ -234,15 +268,11 @@ def deep_dive(y: Yahoo, u: dict, screens: dict, sym: str, etf: str, direction: s
     levels = candidate_levels(bars, price, ("month", "quarter", "year"))
     k = float(j.get("k", load_policy().stop.k_default))
     stop = T.stop_price(price, adr(bars), k, direction)                       # type: ignore[arg-type]
-    targets = _target_options(price, direction, ext, val, levels)
+    targets = _target_options(price, direction, ext, val, levels, open_skies(price, ext, adr(bars)))
     for t in targets:
         t["rr"] = T.reward_risk(price, stop, t["price"], direction)          # type: ignore[arg-type]
         t["move_pct"] = T.pct_move(price, t["price"])
-    chosen = next((t for t in targets if t["source"] == j.get("target_source")), None)
-    if chosen is None and targets:
-        usable = [t for t in targets if not t.get("unreliable")
-                  and t.get("multiple_source") != "sector"] or targets
-        chosen = max(usable, key=lambda t: t["rr"])
+    chosen = _choose_target(targets, j)
     unhealthy = (fv.get("health") or {}).get("state") == "unhealthy"
     plan = idea.trade_plan(sym, direction, bars, chosen["price"] if chosen else None,
                            chosen["source"] if chosen else None, k, etf, buckets, macro_bias, tl, row,

@@ -168,3 +168,56 @@ def test_the_card_under_the_article_leaves_out_what_the_article_shows():
     for t in ("תכנון עסקה (S10–S11)", "מנוע הכללים", "ADR60", "גודל ראשון"):          # what only the card has
         assert t in short
     assert short.count("<div") == short.count("</div")
+
+
+def test_eps_basis_uses_the_same_range_as_the_data_check():
+    # FLOC 31.10: ratio 0.76 failed the check (0.8-1.25) but passed the valuation's own 0.67-1.5
+    bars = _bars({"2022": 10, "2023": 100, "2024": 110, "2025": 120})
+    v = idea.valuation(bars, _fund([7.6, 7.6, 7.6]), {"f0": 10, "f1": 11, "f2": 12}, {"pe1": 15})
+    assert v["eps_basis_mismatch"]
+
+
+def test_agent_pick_of_an_unreliable_own_multiple_is_overridden():
+    targets = [dict(source="own_multiple_target", price=150, unreliable=True, multiple_source="hist_3y", rr=5.0),
+               dict(source="technical_level", price=130, rr=3.2),
+               dict(source="all_time_high_target", price=140, rr=4.0)]
+    j = {"target_source": "own_multiple_target"}
+    chosen = run._choose_target(targets, j)
+    assert chosen["source"] == "all_time_high_target"
+    assert j["code_overrides"][-1]["from"] == "own_multiple_target"
+    assert j["code_overrides"][-1]["to"] == "all_time_high_target"
+    j2 = {"target_source": "technical_level"}
+    assert run._choose_target(targets, j2)["source"] == "technical_level" and "code_overrides" not in j2
+
+
+def test_open_skies_drops_the_extreme_and_keeps_the_own_multiple():
+    # CVX 31.10: at its high, the extreme gave R:R 0.06; decision 1 (20.10): the fundamental target is the target
+    assert run.open_skies(235.5, 236.0, 2.0) and not run.open_skies(200.0, 236.0, 2.0)
+    bars = _bars({"2022": 10, "2023": 100, "2024": 110, "2025": 120})
+    v = idea.valuation(bars, _fund([10, 10, 10]), {"f0": 10, "f1": 11, "f2": 12}, {"pe1": 15})
+    opts = run._target_options(120, "long", 120.5, v, {}, sky=True)
+    assert [o["source"] for o in opts] == ["own_multiple_target"] and "שמיים פתוחים" in opts[0]["note"]
+    assert "all_time_high_target" in [o["source"] for o in run._target_options(100, "long", 150, v, {})]
+
+
+def test_open_skies_ranks_as_meeting_the_minimum_not_as_zero():
+    from qt.research.judge import rank_rr
+    assert rank_rr({"open_skies": True, "rr_extreme": None}) == 3.0
+    assert rank_rr({"rr_extreme": 0.06}) == 0.06
+
+
+def test_report_opens_with_the_week_in_words_and_lists_the_critic_rejections():
+    # Ilay 2.11: "I read it and have no idea what happened in the market this week"
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+    from dossiers import complete
+
+    from qt.research import report as R
+    d = complete()
+    d["judgments"]["agent_log"] = [{"card": "DC-14", "subject": "TALO", "status": "critic_rejected",
+                                    "why": "wrong_rule: the company's own report is not C"}]
+    nav, body = R.sections(d)
+    assert nav[0] == ("week", "השבוע") and body.index('id="week"') < body.index('id="summary"')
+    w = R._week(d)
+    assert "בשבוע" in w and "סקטורים" in w and "own report is not C" in w
+    assert R.plain("תיקון (S03-J5, S02-J5) והרוחב 47% (F-116, F-117).") == "תיקון והרוחב 47%."

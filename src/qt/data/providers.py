@@ -77,7 +77,8 @@ class Yahoo:
         body = get_json(f"{self.BASE}/v1/finance/search?q={symbol}&newsCount={n}&quotesCount=0", self.store,
                         max_age_s=3600, session=self.session)
         return [dict(title=x.get("title") or "", publisher=x.get("publisher") or "", link=x.get("link") or "",
-                     published=datetime.fromtimestamp(x.get("providerPublishTime", 0), timezone.utc).date().isoformat())
+                     published=datetime.fromtimestamp(x.get("providerPublishTime", 0), timezone.utc).date().isoformat(),
+                     related=[t for t in x.get("relatedTickers") or [] if isinstance(t, str)])
                 for x in body.get("news", [])], "yahoo:v1/finance/search"
 
     def estimates(self, symbol: str) -> tuple[dict[str, Any], str]:

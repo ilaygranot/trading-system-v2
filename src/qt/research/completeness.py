@@ -150,7 +150,7 @@ def _verification(v: Any) -> tuple[list[dict], list[dict]]:
     if down:
         blocks.append(_item("verify_price_down", "verify", "המקור השני למחיר לא ענה ל-" + ", ".join(c["subject"] for c in down)))
     bad = ((v.get("summary") or {}).get("total") or {}).get("bad", 0)
-    flags = [_item("verification_bad", "verify", f"{bad} בדיקות נתונים נכשלו (✗): מקורות לא מסכימים")] if bad else []
+    flags = [_item("verification_bad", "verify", f"{bad} בדיקות נתונים נכשלו (✗): " + ", ".join(sorted({c['subject'] for c in v['checks'] if c.get('status') == 'bad'}))[:160])] if bad else []
     return blocks, flags
 
 

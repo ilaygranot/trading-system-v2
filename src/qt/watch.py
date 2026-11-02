@@ -172,8 +172,9 @@ def from_dossier(d: dict) -> dict[str, Any]:
         why = skipped.get(t["sym"], "") if isinstance(skipped, dict) else ""
         out.append(asdict(WatchEntry(
             symbol=t["sym"], direction=t["dir"], etf=t["etf"], bucket="watch", added=as_of, trigger_kind="now",
-            trigger_level=None, k=k, target=round(t["extreme"], 2) if t.get("extreme") else None,
-            target_source="all_time_high_target", price_at_add=round(t["price"], 2),
+            trigger_level=None, k=k,
+            target=round(t["extreme"], 2) if t.get("extreme") and not t.get("open_skies") else None,
+            target_source=None if t.get("open_skies") else "all_time_high_target", price_at_add=round(t["price"], 2),
             risk_pct_at_add=round(k * t["adr"], 2) if t.get("adr") else None, green_at_add=True,
             why_not=why or "ירוקה שלא נותחה לעומק", tldr=why)))
     return {"as_of": as_of, "source": "research " + as_of, "entries": out}

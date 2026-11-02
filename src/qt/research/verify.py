@@ -128,7 +128,11 @@ def statement_checks(sym: str, idea: dict, facts: dict | None, sec_src: str) -> 
             sv, unit, tag = hit
             c.second, c.second_source, c.diff_pct = sv, f"{sec_src}/{tag}", diff_pct(val, sv)
             k = adr_ratio(val, sv) if per_share else None
-            if unit != "USD":
+            if unit != "USD" and c.diff_pct <= tol:
+                # both sources agree, in the company's own currency (31.10: ENB in CAD). Not a disagreement; the
+                # note stays, since a multiple on the dollar price needs the exchange rate
+                c.status, c.note = "single", c.note + f" · תואם לדוח ב-SEC, במטבע {unit}; המחיר בדולר, אז מכפיל צריך המרת מטבע"
+            elif unit != "USD":
                 c.status, c.note = "bad", c.note + f" · הדוח ב-SEC במטבע {unit}, והמחיר בדולר: לבדוק בסיס מטבע לפני כל מכפיל"
             elif c.diff_pct <= tol:
                 c.status = "ok"
@@ -187,9 +191,14 @@ def sanity_checks(sym: str, idea: dict) -> list[Check]:
     pe1 = row.get("pe1")
     if pe1 is not None and idea["direction"] == "long":
         lo, hi = v.pe_range
-        bad = not (lo < pe1 <= hi)
-        out.append(Check(sym, "pe1", "מכפיל צפוי (F1)", "bad" if bad else "ok", pe1, "code: price / F1",
-                         note=f"מחוץ לטווח {lo}–{hi}: לבדוק יחידות, מטבע ו-ADR" if bad else f"בטווח {lo}–{hi}"))
+        if pe1 <= 0 and (row.get("f1") or 0) < 0:
+            # a loss year ahead (profile L7, 31.10: EGY): no forward P/E exists, which is a fact, not bad data
+            out.append(Check(sym, "pe1", "מכפיל צפוי (F1)", "single", pe1, "code: price / F1",
+                             note="F1 שלילי (שנת הפסד צפויה): אין מכפיל צפוי, ולא נבנה עליו יעד"))
+        else:
+            bad = not (lo < pe1 <= hi)
+            out.append(Check(sym, "pe1", "מכפיל צפוי (F1)", "bad" if bad else "ok", pe1, "code: price / F1",
+                             note=f"מחוץ לטווח {lo}–{hi}: לבדוק יחידות, מטבע ו-ADR" if bad else f"בטווח {lo}–{hi}"))
     s0, s1 = row.get("sales"), row.get("sales_f1")
     if s0 and s1:
         r = s1 / s0
@@ -367,28 +376,13 @@ def summarize(rows: list[dict]) -> dict[str, Any]:
                 worst={k: ("bad" if s["bad"] else "single" if s["single"] else "ok") for k, s in by.items()})
 
 
-# ------------------------------------------------------------------ live sources
-def default_sources(store: Any = None) -> dict[str, Any]:
-    """EDGAR, a second close (FMP, then nasdaq.com, then Alpha Vantage) and a page fetcher, each only if it answers here."""
+def make_second_close(store: Any = None, alphavantage: bool = True) -> Callable[[str, date], tuple[float, str]]:
+    """A second close for one day: FMP, then nasdaq.com, then Alpha Vantage (25 calls a day: the daily run leaves it
+    out). Used by the research's data check and by the daily run's cross-check."""
     import os
 
-    import requests
+    from qt.data.providers import FMP, AlphaVantage, Nasdaq
 
-    from qt.data.providers import EDGAR, FMP, AlphaVantage, Nasdaq
-
-    out: dict[str, Any] = {"sec": EDGAR(store, contact=os.environ.get("SEC_CONTACT"))}
-    for attempt in range(SEC_TRIES):                 # 25.10: one failed probe left the whole verification without SEC
-        try:
-            out["sec"].cik("AAPL")
-            break
-        except Exception as e:                                           # noqa: BLE001 - SEC blocked: say why
-            out["sec_error"] = f"{type(e).__name__}: {str(e)[:200]}"
-            if attempt + 1 < SEC_TRIES:
-                time.sleep(SEC_WAIT_S)
-    else:
-        out["sec"] = None
-    if out["sec"] is not None:
-        out.pop("sec_error", None)
     av_cache: dict[str, dict[str, float]] = {}
 
     def second_close(sym: str, day: date) -> tuple[float, str]:
@@ -409,7 +403,7 @@ def default_sources(store: Any = None) -> dict[str, Any]:
             errors.append("nasdaq: no bar")
         except Exception as ex:                                          # noqa: BLE001 - try the next source
             errors.append(f"nasdaq: {str(ex)[:60]}")
-        if os.environ.get("ALPHAVANTAGE_API_KEY"):
+        if alphavantage and os.environ.get("ALPHAVANTAGE_API_KEY"):
             try:
                 if sym not in av_cache:
                     av_cache[sym] = AlphaVantage(store).daily_closes(sym)[0]
@@ -420,7 +414,32 @@ def default_sources(store: Any = None) -> dict[str, Any]:
                 errors.append(f"alphavantage: {str(ex)[:60]}")
         raise RuntimeError("; ".join(errors) or "no second price source configured")
 
-    out["second_close"] = second_close                                  # nasdaq.com needs no key
+    return second_close
+
+
+# ------------------------------------------------------------------ live sources
+def default_sources(store: Any = None) -> dict[str, Any]:
+    """EDGAR, a second close (FMP, then nasdaq.com, then Alpha Vantage) and a page fetcher, each only if it answers here."""
+    import os
+
+    import requests
+
+    from qt.data.providers import EDGAR
+
+    out: dict[str, Any] = {"sec": EDGAR(store, contact=os.environ.get("SEC_CONTACT"))}
+    for attempt in range(SEC_TRIES):                 # 25.10: one failed probe left the whole verification without SEC
+        try:
+            out["sec"].cik("AAPL")
+            break
+        except Exception as e:                                           # noqa: BLE001 - SEC blocked: say why
+            out["sec_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+            if attempt + 1 < SEC_TRIES:
+                time.sleep(SEC_WAIT_S)
+    else:
+        out["sec"] = None
+    if out["sec"] is not None:
+        out.pop("sec_error", None)
+    out["second_close"] = make_second_close(store)                    # nasdaq.com needs no key
 
     def fetch(url: str) -> str:
         host = (urlparse(url).hostname or "").lower()

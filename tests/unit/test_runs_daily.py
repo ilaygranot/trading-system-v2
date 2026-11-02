@@ -279,7 +279,22 @@ def test_peer_note_on_same_etf_entry(db):
     out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='news'", (rid,), ["output"])["output"]
     assert list(out["peer_notes"]) == ["GE"]
     assert "מתחרה: BA FAA halts" in out["peer_notes"]["GE"][0] and out["peer_notes"]["GE"][0].startswith("[C]")
-    assert "GE: [C] דיווח/אירוע אצל מתחרה" in sent[0]
+    assert "[C] דיווח/אירוע אצל מתחרה: BA FAA halts" in sent[0] and "← GE (S08-J25)" in sent[0]
+
+
+def test_peer_note_skips_a_headline_about_another_company():
+    # 30.10: Yahoo's search for SHEL returned "Chevron Q3 Earnings Beat"; it went to every XLE name, CVX too
+    from types import SimpleNamespace
+
+    from qt.news import diary_lines, peer_notes
+    e = [SimpleNamespace(symbol=s, etf="XLE", peers=[]) for s in ("CVX", "TALO", "EGY")]
+    cvx = dict(symbol="SHEL", klass="C", title="Chevron Q3 Earnings Beat Estimates", related=["CVX", "SHEL", "XOM"])
+    own = dict(symbol="SHEL", klass="C", title="Shell Q3 earnings call highlights", related=["SHEL", "CVX"])
+    notes = peer_notes([cvx, own], e, {"SHEL": "XLE"})
+    assert set(notes) == {"TALO", "EGY"}                       # CVX is named in the headline: not a peer event
+    assert all("Shell Q3" in n[0] for n in notes.values())
+    lines = diary_lines({"enabled": True, "items": [own], "diary": [], "peer_notes": notes})
+    assert sum("S08-J25" in ln for ln in lines) == 1 and "TALO, EGY" in lines[-1]
 
 
 # ---------------------------------------------------------------- the heat in force gates the entry (S08-R28, R33, R25)
@@ -441,3 +456,41 @@ def test_profit_flags_on_a_steady_rise():
     assert f["extended_days"] > 21 and "high_intervals_red" not in f
     assert profit_flags(up[:30]) == {}                                   # too little history
     assert "extended_days" not in profit_flags(up, "short")
+
+
+def test_second_source_disagreeing_on_the_close_holds_new_entries(db):
+    # Ilay 2.11: the day's stops and R:R stood on Yahoo alone; a second close now checks each stock
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    sent = []
+    snap_close = {}
+
+    def second(sym, day):
+        return snap_close[sym] * 1.03, "test:second"                 # 3% off: above the 0.5% tolerance
+
+    class Spy(Prices):
+        def daily_bars(self, s, start, end):
+            bars, src = super().daily_bars(s, start, end)
+            snap_close[s] = [b for b in bars if b.day <= end][-1].close
+            return bars, src
+    rid = Runner(db, PIPELINES, {"prices": Spy(), "portfolio": pf, "watchlist": _wl(), "second_close": second,
+                                 "notifier": sent.append}).start("daily", AS_OF)
+    out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='fetch'", (rid,), ["output"])["output"]
+    assert out["mismatch"] == ["BA"] and out["crosscheck"]["BA"]["status"] == "bad"
+    assert not db.one("SELECT id FROM approval_queue WHERE symbol='BA' AND kind='enter'")
+    assert "פער בין מקורות: BA" in sent[0]
+
+
+def test_second_source_that_agrees_lets_the_entry_through(db):
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": []}
+    closes = {}
+
+    class Spy(Prices):
+        def daily_bars(self, s, start, end):
+            bars, src = super().daily_bars(s, start, end)
+            closes[s] = [b for b in bars if b.day <= end][-1].close
+            return bars, src
+    rid = Runner(db, PIPELINES, {"prices": Spy(), "portfolio": pf, "watchlist": _wl(),
+                                 "second_close": lambda s, d: (closes[s], "test")}).start("daily", AS_OF)
+    out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='fetch'", (rid,), ["output"])["output"]
+    assert out["mismatch"] == [] and out["crosscheck"]["BA"]["status"] == "ok"
+    assert db.one("SELECT id FROM approval_queue WHERE symbol='BA' AND kind='enter'")

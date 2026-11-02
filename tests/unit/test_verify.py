@@ -194,3 +194,16 @@ def test_the_sec_probe_waits_out_a_busy_minute_and_says_why_it_gave_up(monkeypat
     d = json.loads(FIX.read_text(encoding="utf-8"))
     v = verify.run(d, sec=None, second_close=None, fetch=None, sec_error=src["sec_error"])
     assert v["sec"] is False and "HTTP 503" in v["sec_error"]
+
+
+def test_filing_in_another_currency_that_agrees_is_not_a_disagreement():
+    # ENB 31.10: Yahoo and the SEC filing both give 3.22 in CAD; the note about the currency stays
+    c = _by(verify.statement_checks("ENB", _idea(eps=3.22), _facts(eps=3.22, unit="CAD", tax="ifrs-full"), "sec"), "eps_fy")
+    assert c.status == "single" and "CAD" in c.note
+
+
+def test_negative_forward_pe_on_a_loss_year_is_a_fact_not_bad_data():
+    # EGY 31.10: F1 negative (profile L7), so price / F1 is negative
+    i = _idea(pe1=-12.8)
+    i["row"]["f1"] = -0.4
+    assert _by(verify.sanity_checks("EGY", i), "pe1").status == "single"
