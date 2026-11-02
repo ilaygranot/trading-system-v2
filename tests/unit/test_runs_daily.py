@@ -494,3 +494,42 @@ def test_second_source_that_agrees_lets_the_entry_through(db):
     out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='fetch'", (rid,), ["output"])["output"]
     assert out["mismatch"] == [] and out["crosscheck"]["BA"]["status"] == "ok"
     assert db.one("SELECT id FROM approval_queue WHERE symbol='BA' AND kind='enter'")
+
+
+class TwoStocks(Prices):
+    """BA's fixture bars also under XX, a second watchlist stock."""
+    def daily_bars(self, symbol, start, end):
+        return super().daily_bars("BA" if symbol == "XX" else symbol, start, end)
+
+
+def _two(db, pf, bad="XX"):
+    closes = {}
+
+    class Spy(TwoStocks):
+        def daily_bars(self, s, start, end):
+            bars, src = super().daily_bars(s, start, end)
+            closes[s] = [b for b in bars if b.day <= end][-1].close
+            return bars, src
+    wl = _wl()
+    wl["entries"].append(dict(wl["entries"][0], symbol="XX"))
+    second = lambda s, d: (closes[s] * (1.03 if s == bad else 1.0), "test")   # noqa: E731
+    return Runner(db, PIPELINES, {"prices": Spy(), "portfolio": pf, "watchlist": wl,
+                                  "second_close": second}).start("daily", AS_OF)
+
+
+def test_one_watchlist_stock_with_bad_data_holds_only_its_own_entry(db):
+    # Ilay 2.11: one stock off at the second source held every entry on the list
+    _two(db, {"cash": 100_000, "peak_equity": 100_000, "positions": []})
+    enter = {r["symbol"] for r in db.all("SELECT symbol FROM approval_queue WHERE kind='enter'")}
+    assert enter == {"BA"}
+    item = db.one("SELECT kind, payload FROM approval_queue WHERE rule_id='DATA-MISMATCH'", json_cols=["payload"])
+    assert item["kind"] == "flag" and "XX" in item["payload"]["detail"]
+
+
+def test_bad_data_on_a_held_stock_still_holds_every_entry(db):
+    pf = {"cash": 100_000, "peak_equity": 100_000, "positions": [
+        {"symbol": "XX", "direction": "long", "sector": "XLI", "qty": 10, "entry": 150.0, "entry_stop": 140.0,
+         "stop": 140.0}]}
+    _two(db, pf)
+    assert not db.all("SELECT id FROM approval_queue WHERE kind='enter'")
+    assert db.one("SELECT kind FROM approval_queue WHERE rule_id='DATA-MISMATCH'")["kind"] == "block_new_risk"

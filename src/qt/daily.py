@@ -83,7 +83,8 @@ def fetch(ctx: RunContext, _: str) -> dict:
 def crosscheck(ctx: RunContext, snap: dict) -> tuple[dict[str, Any], list[str]]:
     """Each stock's last close against a second source (FMP, then nasdaq.com), as the weekly data check does
     (Ilay 2.11: every stop and R:R of the day stood on Yahoo alone). Off by more than verification.price_tol_pct:
-    the stock is listed as a mismatch, new entries wait that day, and stops and exits keep running on the primary.
+    the stock is listed as a mismatch and gets no new entry that day (every new entry waits when it is held or on
+    order, qt.daily._market_wide); stops and exits keep running on the primary.
     A second source that does not answer is reported, not a mismatch. Not from the course (operations)."""
     second = ctx.services.get("second_close")
     if second is None:
@@ -162,6 +163,14 @@ def calc(ctx: RunContext, _: str) -> dict:
 HELD_FIELDS = {f.name for f in fields(Held)}
 
 
+def _market_wide(ctx: RunContext, pf: dict) -> set[str]:
+    """The symbols whose bad data holds every new entry: the index and VIX (the regime) and what is held or on order
+    (equity, the portfolio stop and sizing). A watchlist stock with bad data holds only its own entry (Ilay 2.11:
+    one stock that failed the second-source check held the whole list). Not from the course (operations)."""
+    return ({INDEX, VIX} | {p["symbol"] for p in pf.get("positions", [])}
+            | {o["symbol"] for o in Queue(ctx.db).open_orders()})
+
+
 def rules(ctx: RunContext, _: str) -> dict:
     from qt.calc.volatility import VixReading
     snap, c = ctx.out("fetch"), ctx.out("calc")
@@ -191,14 +200,18 @@ def rules(ctx: RunContext, _: str) -> dict:
             if cap is not None and v > cap:
                 acts.append(dict(kind="flag", rule_id="D-S11-7", symbol=None, qty=None, price=None, preapproved=False,
                                  detail=f"{k} exposure {v:.2f} > cap {cap:g}"))
-    if snap.get("mismatch"):
-        acts.append(dict(kind="block_new_risk", rule_id="DATA-MISMATCH", symbol=None, qty=None, price=None,
-                         preapproved=False, detail="sources disagree on the close: " + ", ".join(snap["mismatch"]) +
-                         ": no new entries; risk and exits keep running"))
-    if snap["stale"]:
-        acts.append(dict(kind="block_new_risk", rule_id="DATA-STALE", symbol=None, qty=None, price=None,
-                         preapproved=False, detail="stale data: " + ", ".join(snap["stale"]) +
-                         ": no new entries; risk and exits keep running"))
+    wide = _market_wide(ctx, pf)
+    for rid, what, syms in (("DATA-MISMATCH", "sources disagree on the close", snap.get("mismatch") or []),
+                            ("DATA-STALE", "stale data", snap["stale"])):
+        everyone = [s for s in syms if s in wide]
+        own = [s for s in syms if s not in wide]
+        if everyone:
+            acts.append(dict(kind="block_new_risk", rule_id=rid, symbol=None, qty=None, price=None, preapproved=False,
+                             detail=f"{what}: " + ", ".join(everyone) + ": no new entries; risk and exits keep running"))
+        if own:
+            acts.append(dict(kind="flag", rule_id=rid, symbol=None, qty=None, price=None, preapproved=False,
+                             detail=f"{what}: " + ", ".join(own) + ": no entry in these today; the rest of the "
+                             "watchlist goes on"))
     return {"equity": equity, "peak_equity": ps.peak, "portfolio_stop_triggered": ps.triggered,
             "regime": review.regime, "metrics": review.metrics, "actions": acts}
 
@@ -209,6 +222,8 @@ def watch(ctx: RunContext, _: str) -> dict:
     entries = W.load(ctx.services.get("watchlist"))
     held = {p["symbol"] for p in _pf(ctx).get("positions", [])} | {o["symbol"] for o in Queue(ctx.db).open_orders()}
     checks, actions = [], []
+    wide = _market_wide(ctx, _pf(ctx))
+    blocked_all = any(s in wide for s in snap["stale"] + (snap.get("mismatch") or []))
     for e in entries:
         rows = snap["bars"].get(e.symbol)
         if not rows or e.symbol in snap["stale"]:
@@ -219,8 +234,8 @@ def watch(ctx: RunContext, _: str) -> dict:
         d = asdict(c)
         d["held"] = e.symbol in held
         checks.append(d)
-        if c.status in ("opportunity", "ready") and c.heat == "hot" and not d["held"] and not snap["stale"] \
-                and not snap.get("mismatch"):
+        if c.status in ("opportunity", "ready") and c.heat == "hot" and not d["held"] and not blocked_all \
+                and e.symbol not in (snap.get("mismatch") or []):
             seen = ctx.db.one("SELECT id FROM approval_queue WHERE symbol=? AND rule_id='S10-R4' AND as_of>=? "
                               "AND status IN ('approved','rejected')", (e.symbol, e.added))
             if not seen:
