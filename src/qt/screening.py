@@ -137,11 +137,12 @@ def _growth_ok(m: Metrics, which: str) -> bool:
 
 def averages(metrics: Iterable[Metrics]) -> GroupAverages:
     """Group averages for screening (D-S06-5 (c): mean after exclusions; median for display).
-    Excluded from growth averages: coded ±99, |base EPS| <= 0.10, |growth| > 200% (D-S06-6 (c)).
+    Excluded from growth averages: coded ±99, |base EPS| <= 0.10, |growth| > 200% (D-S06-6 (c)); from the sales-growth
+    average: |growth| > 200% (the same rule; the threshold of the 098 gate stands on it).
     Excluded from P/E average: P/E > 500 or negative (S06-R20). Excluded stocks stay in the sheet."""
     s = load_policy().screening
     ms = [m for m in metrics if m.track != "missing_data"]
-    excluded: dict[str, list[str]] = {"eg1": [], "eg2": [], "pe": []}
+    excluded: dict[str, list[str]] = {"eg1": [], "eg2": [], "pe": [], "sg1": []}
     vals: dict[str, list[float]] = {"eg1": [], "eg2": []}
     for m in ms:
         for k in ("eg1", "eg2"):
@@ -155,7 +156,10 @@ def averages(metrics: Iterable[Metrics]) -> GroupAverages:
             pes.append(m.pe)
         else:
             excluded["pe"].append(m.row.ticker)
-    sg = [m.sg1 for m in ms if m.sg1 is not None]
+    # the sales-growth average takes the same outlier rule as the EPS averages (D-S06-6 (c), |growth| > 200%): one
+    # stock at +4,375% pulled XLB's threshold to 60% against a trimmed 19% (3.11, funnel audit)
+    excluded["sg1"] = [m.row.ticker for m in ms if m.sg1 is not None and abs(m.sg1) > s.base_effect_growth_pct]
+    sg = [m.sg1 for m in ms if m.sg1 is not None and abs(m.sg1) <= s.base_effect_growth_pct]
     ps = [m.ps for m in ms if m.ps]
     mean = lambda xs: sum(xs) / len(xs) if xs else 0.0
     return GroupAverages(mean(sg), mean(vals["eg1"]), mean(vals["eg2"]), mean(pes) if pes else None,

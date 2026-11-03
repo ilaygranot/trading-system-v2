@@ -66,7 +66,7 @@ def _rs(v):
 
 def test_at_s04_5_cold_stance_scorecard():
     # equal technical and fundamental ranks isolate the macro layer: cold + slowdown favours defensives
-    rs = {e: _rs(0.1 * i) for i, e in enumerate(ETFS)}
+    rs = {e: _rs(-0.5 + 0.1 * i) for i, e in enumerate(ETFS)}       # some below zero: a sector up everywhere is no short
     growth = {e: S.GroupGrowth(1.0 + 0.01 * i, 1.0, 0, 10) for i, e in enumerate(ETFS)}
     sc = S.scorecard(rs, growth, "slowdown", "cold")
     assert sc.sectors["XLU"].macro == 9 and sc.sectors["XLY"].macro == 0
@@ -151,3 +151,13 @@ def test_at_s05_3_industry_vs_sector():
     assert views["Aerospace"].vs_sector == "above" and views["Aerospace"].tag == "priority"
     assert views["Aerospace"].use_own_average and not views["Machinery"].use_own_average
     assert views["Machinery"].tag == "avoid"
+
+
+def test_rs_up_everywhere_never_short():
+    # 3.11: XLP was the short bucket at RS +8% in every period while its own light was green
+    rs = {e: _rs(-1.0) for e in ETFS}
+    rs["XLP"] = _rs(1.0)
+    growth = {e: S.GroupGrowth(10, 10, 0, 10) for e in ETFS}
+    growth["XLP"] = S.GroupGrowth(-5, -5, 0, 10)                          # the worst growth: the lowest total
+    sc = S.scorecard(rs, growth, "expansion", "hot")
+    assert "XLP" not in sc.short and "rs_up_all_periods_not_short" in sc.sectors["XLP"].flags

@@ -188,3 +188,14 @@ def test_run_end_to_end():
     assert shorts["CCC"].profile in {"S_consistent", "S_relative", "S_acute"}
     assert shorts["BAX"].profile is None and "short_gate_override" in shorts["BAX"].tags
     assert len(shorts["BAX"].conflicts) == 2
+
+
+def test_sales_growth_average_takes_the_same_outlier_rule():
+    # 3.11 funnel audit: one stock at +4,375% sales growth pulled XLB's threshold to 60% against a trimmed 19%
+    def _row(t, sg):
+        return S.compute(S.StockRow(t, market_cap=5e9, price=50, sales=100, sales_f1=100 * (1 + sg / 100),
+                                    f0=1.0, f1=1.1, f2=1.2))
+    ms = [_row("A", 10), _row("B", 20), _row("C", 30), _row("X", 4375)]
+    avg = S.averages(ms)
+    assert avg.sg1 == pytest.approx(20.0) and avg.sg1_threshold == 20.0
+    assert avg.excluded["sg1"] == ["X"]

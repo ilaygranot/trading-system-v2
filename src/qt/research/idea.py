@@ -141,6 +141,9 @@ def fundamentals_view(f: dict, s: dict, row: dict, sector_avg: dict, direction: 
     return out
 
 
+OUTLIER_MULTIPLE_X_MEDIAN = 1.5          # not from course: a yearly multiple this far above the median of the three is dropped
+
+
 def valuation(bars: list, f: dict, row: dict, sector_avg: dict) -> dict[str, Any]:
     """Premium vs the sector (S07-R19) and the target from the stock's own 3-year multiple (D-S07-4)."""
     out: dict[str, Any] = {}
@@ -185,11 +188,12 @@ def valuation(bars: list, f: dict, row: dict, sector_avg: dict) -> dict[str, Any
         if not lo <= r <= hi:
             out["eps_basis_mismatch"] = True
     # not from the course: a year with EPS near zero gives a P/E in the hundreds and a meaningless target. A
-    # multiple above twice the median of the three (or above the cap) is dropped and flagged; the target then
-    # uses the mean of the remaining years instead of falling back to the sector.
+    # multiple above 1.5x the median of the three (or above the cap) is dropped and flagged; the target then
+    # uses the mean of the remaining years instead of falling back to the sector. (3.11: at 2x the median GRNT kept
+    # a 46 beside 10 and 26, and the target came out +424%.)
     cap = 80.0 if profitable else 40.0
     med = statistics.median(hist) if hist else None
-    kept = [m for m in hist if m <= cap and (med is None or m <= 2 * med)]
+    kept = [m for m in hist if m <= cap and (med is None or m <= OUTLIER_MULTIPLE_X_MEDIAN * med)]
     out["flags"] = []
     if len(kept) < len(hist):
         out["dropped_multiples"] = [m for m in hist if m not in kept]
