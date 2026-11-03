@@ -133,8 +133,13 @@ def test_no_contact_means_no_http_and_an_error():
     assert out["errors"] == ["SEC_CONTACT not set"] and out["transcript"] is None
 
 
-def test_trade_plan_gets_heat(patched):
+def test_trade_plan_gets_heat(patched, monkeypatch):
     y, (u, screens) = FakeYahoo(), _universe()
+    # the fixture's own-multiple target (129.52) sits 53% above the synthetic bars' last close (84.67): 13.6 months by
+    # the monthly sigma, beyond decision 2's horizon, so since 3.11 it is no target. Put it 23% up, as in the dossier.
+    val = copy.deepcopy(FIX["ideas"][SYM]["valuation"])
+    val["target"]["price"] = round(_bars()[-1].close * 1.23, 2)
+    monkeypatch.setattr(idea, "valuation", lambda *a, **k: copy.deepcopy(val))
     rows = [{"id": "EV01", "date": "2026-10-29", "timing": "expected", "kind": "own_report", "class": "A",
              "direction": "for_idea", "priced_in": False, "persistence": "until_next_report", "what": "דוח רבעון"},
             {"id": "EV02", "date": "2027-03-05", "timing": "expected", "kind": "other_event", "class": "B",

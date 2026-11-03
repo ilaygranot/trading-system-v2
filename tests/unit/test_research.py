@@ -183,11 +183,47 @@ def test_agent_pick_of_an_unreliable_own_multiple_is_overridden():
                dict(source="all_time_high_target", price=140, rr=4.0)]
     j = {"target_source": "own_multiple_target"}
     chosen = run._choose_target(targets, j)
-    assert chosen["source"] == "all_time_high_target"
+    assert chosen["source"] == "technical_level"               # 3.11: the nearest level that meets 1:3 wins, not the best R:R
     assert j["code_overrides"][-1]["from"] == "own_multiple_target"
-    assert j["code_overrides"][-1]["to"] == "all_time_high_target"
+    assert j["code_overrides"][-1]["to"] == "technical_level"
     j2 = {"target_source": "technical_level"}
     assert run._choose_target(targets, j2)["source"] == "technical_level" and "code_overrides" not in j2
+    targets[1]["rr"] = 2.0                                     # the level is too close: the best usable R:R, the extreme
+    assert run._choose_target(targets, {"target_source": "own_multiple_target"})["source"] == "all_time_high_target"
+
+
+def test_nearest_level_meeting_the_minimum_beats_a_farther_one():
+    targets = [dict(source="technical_level", price=104, rank=1, rr=0.4),
+               dict(source="technical_level", price=135, rank=2, rr=3.5),
+               dict(source="technical_level", price=160, rank=3, rr=6.0),
+               dict(source="all_time_high_target", price=190, rr=9.0)]
+    assert run._choose_target(targets, {})["price"] == 135
+
+
+def test_target_beyond_the_horizon_is_never_chosen():
+    # TALO 31.10: the 8-year high at +90% needed 9.6 months by the monthly sigma; the plan then has no target
+    v = {"target": {"price": 17.0, "method": "pe", "multiple": 12, "multiple_source": "sector", "flags": ["unreliable_eps_basis"]}}
+    opts = run._target_options(16.46, "long", 31.34, v, {"nearest_resistance": 16.49}, monthly_sigma_pct=9.4)
+    ath = next(o for o in opts if o["source"] == "all_time_high_target")
+    assert ath["beyond_horizon"] and ath["horizon_months"] > 6
+    for o in opts:
+        o["rr"] = {"technical_level": 0.01, "own_multiple_target": 0.24, "all_time_high_target": 6.26}[o["source"]]
+    j = {"target_source": "all_time_high_target"}
+    chosen = run._choose_target(opts, j)                      # what is left is the honest nearest level: R:R 0.01, a watch entry
+    assert chosen["source"] == "technical_level" and chosen["price"] == 16.49
+    assert j["code_overrides"][-1]["rule_id"] == "horizon.extended_max_months" and j["code_overrides"][-1]["to"] == "technical_level"
+    only = [o for o in opts if o["source"] != "technical_level"]
+    j2 = {"target_source": "all_time_high_target"}
+    assert run._choose_target(only, j2) is None and j2["code_overrides"][-1]["to"] == "—"
+
+
+def test_target_options_offer_the_three_nearest_levels():
+    lv = {"nearest_resistance": 104, "resistances": [104, 112, 125], "supports": [95, 90]}
+    opts = run._target_options(100, "long", 130, {}, lv)
+    assert [(o["source"], o["price"], o.get("rank")) for o in opts][:3] == [("technical_level", 104, 1), ("technical_level", 112, 2),
+                                                                         ("technical_level", 125, 3)]
+    short = run._target_options(100, "short", 70, {}, lv)
+    assert [o["price"] for o in short if o["source"] == "technical_level"] == [95, 90]
 
 
 def test_open_skies_drops_the_extreme_and_keeps_the_own_multiple():
@@ -221,3 +257,11 @@ def test_report_opens_with_the_week_in_words_and_lists_the_critic_rejections():
     w = R._week(d)
     assert "בשבוע" in w and "סקטורים" in w and "own report is not C" in w
     assert R.plain("תיקון (S03-J5, S02-J5) והרוחב 47% (F-116, F-117).") == "תיקון והרוחב 47%."
+
+
+def test_historical_multiple_outlier_at_one_and_a_half_times_the_median():
+    # GRNT 31.10: P/E 9.9, 46.1, 26.1; at 2x the median the 46 stayed and the target came out +424%
+    bars = _bars({"2022": 10, "2023": 99, "2024": 461, "2025": 261})
+    v = idea.valuation(bars, _fund([10, 10, 10]), {"f0": 10, "f1": 11, "f2": 12}, {"pe1": 15})
+    assert v["dropped_multiples"] == [46.1] and v["target"]["multiple_source"] == "hist_trimmed"
+    assert round(v["target"]["multiple"], 2) == 18.0

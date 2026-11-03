@@ -105,6 +105,9 @@ def high_interval_veto(bars: Sequence[Bar]) -> str | None:
     return None
 
 
+LEVELS_SHOWN = 3                        # the nearest levels offered as target candidates (not from course: the count)
+
+
 def candidate_levels(bars: Sequence[Bar], price: float, kinds: Sequence[str] = ("month", "quarter")) -> dict:
     """Highs/lows of closed monthly and quarterly candles as level candidates (S09-R15). The agent decides
     which are significant; the code gives nearest support/resistance and the room to them."""
@@ -113,7 +116,11 @@ def candidate_levels(bars: Sequence[Bar], price: float, kinds: Sequence[str] = (
     res = min((p for p in pts if p > price), default=None)
     return dict(nearest_support=sup, nearest_resistance=res,
                 room_up_pct=None if res is None else round((res / price - 1) * 100, 2),
-                room_down_pct=None if sup is None else round((1 - sup / price) * 100, 2))
+                room_down_pct=None if sup is None else round((1 - sup / price) * 100, 2),
+                # the next levels too (decision 1, 20.10: the target is the significant level where the move is
+                # expected to stop, not necessarily the first; 3.11: the first alone gave R:R 0.04 on CRGY)
+                resistances=[p for p in pts if p > price][:LEVELS_SHOWN],
+                supports=[p for p in reversed(pts) if p < price][:LEVELS_SHOWN])
 
 
 def snapshot(daily: Sequence[Bar], direction: Direction = "long", levels_color: Color | None = None) -> TimingSnapshot:

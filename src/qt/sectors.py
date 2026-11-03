@@ -179,12 +179,14 @@ def scorecard(rs: Mapping[str, Mapping[str, float | None]], growth: Mapping[str,
             flags.append("fundamental_worst")
         if all(v is not None and v < 0 for v in rs[e].values()):
             flags.append("rs_down_all_periods_not_long")             # S04-R13
+        if all(v is not None and v > 0 for v in rs[e].values()):
+            flags.append("rs_up_all_periods_not_short")              # S04-R13 in the mirror (3.11: XLP short at RS +8%)
         out[e] = SectorScore(e, s.type[e], dict(rs[e]), avgs[e], tech[e], g, fund[e], pts, sign,
                              tech[e] + fund[e] + pts, flags=flags)
     order = sorted(etfs, key=lambda e: (out[e].total, out[e].tech_rank), reverse=True)
     nl, ns = s.buckets["long"], s.buckets["short"]
     longs = [e for e in order[:nl] if "rs_down_all_periods_not_long" not in out[e].flags]
-    shorts = order[-ns:] if len(order) > nl + ns else []
+    shorts = [e for e in order[-ns:] if "rs_up_all_periods_not_short" not in out[e].flags] if len(order) > nl + ns else []
     for e in order:
         out[e].bucket = "long" if e in longs else "short" if e in shorts else "neutral"
     picked = [out[e].type for e in longs + shorts]

@@ -151,31 +151,49 @@ def backfill(y: Yahoo, u: dict, screens: dict, wanted: list[dict], as_of: date) 
 def _choose_target(targets: list[dict], j: dict) -> dict | None:
     """The agent's target source when code has it and it is usable; else the usable source with the best R:R.
     Not from the course: an own multiple on an EPS that is not on the consensus basis is never taken, also when the
-    agent picked it (31.10: TALO, GRNT, CRGY); the override is written on the judgment for the report."""
+    agent picked it (31.10: TALO, GRNT, CRGY); the override is written on the judgment for the report.
+    Usable (3.11): not unreliable, not a sector multiple without the agent's word, and within the realism horizon
+    (decision 2: up to horizon.extended_max_months; 31.10: an 8-year high at +90% gave TALO 9.6 months). Among the
+    technical levels the nearest one that meets the minimum R:R is the target (decision 1, 20.10: the significant
+    level, not necessarily the first), so a farther level never wins only by its R:R. Nothing usable: no target,
+    and the plan says so, rather than an unreliable one."""
     chosen = next((t for t in targets if t["source"] == j.get("target_source")), None)
     override = None
-    if chosen is not None and chosen.get("unreliable"):
-        override = {"card": "DC-11", "from": chosen["source"], "to": "—", "rule_id": "verification.eps_basis",
-                    "why": "המכפיל העצמי נשען על EPS בבסיס שונה מהקונצנזוס (GAAP מול מתואם, ADR או מטבע)"}
+    if chosen is not None and (chosen.get("unreliable") or chosen.get("beyond_horizon")):
+        why = ("המכפיל העצמי נשען על EPS בבסיס שונה מהקונצנזוס (GAAP מול מתואם, ADR או מטבע)" if chosen.get("unreliable")
+               else f"היעד דורש {chosen.get('horizon_months', 0):.1f} חודשים לפי הסיגמה החודשית, מעל האופק המותר (החלטה 2)")
+        override = {"card": "DC-11", "from": chosen["source"], "to": "—",
+                    "rule_id": "verification.eps_basis" if chosen.get("unreliable") else "horizon.extended_max_months", "why": why}
         chosen = None
     if chosen is None and targets:
-        usable = [t for t in targets if not t.get("unreliable")
-                  and t.get("multiple_source") != "sector"] or targets
-        chosen = max(usable, key=lambda t: t["rr"])
+        usable = [t for t in targets if not t.get("unreliable") and not t.get("beyond_horizon")
+                  and t.get("multiple_source") != "sector"]
+        min_rr = float(load_policy().reward_risk.min_ratio)
+        levels = [t for t in usable if t["source"] == "technical_level" and t.get("rr") is not None and t["rr"] >= min_rr]
+        if levels:
+            chosen = min(levels, key=lambda t: t.get("rank", 1))
+        elif usable:
+            chosen = max(usable, key=lambda t: t.get("rr") or 0)
     if override:
         override["to"] = chosen["source"] if chosen else "—"
         j.setdefault("code_overrides", []).append(override)
     return chosen
 
 
-def _target_options(price: float, direction: str, ext: float, val: dict, levels: dict, sky: bool = False) -> list[dict]:
+def _target_options(price: float, direction: str, ext: float, val: dict, levels: dict, sky: bool = False,
+                    monthly_sigma_pct: float | None = None) -> list[dict]:
     """The three course target sources (reward_risk.target_sources) with their price, where code has one.
-    sky: the price is at the extreme (open_skies): the extreme is no target, the own multiple is (decision 1, 20.10)."""
+    sky: the price is at the extreme (open_skies): the extreme is no target, the own multiple is (decision 1, 20.10).
+    The technical level comes as the nearest LEVELS_SHOWN levels (rank 1..n), not only the first (3.11).
+    monthly_sigma_pct: with it every option carries horizon_months (move / sigma, 084:61) and beyond_horizon when
+    that exceeds horizon.extended_max_months (decision 2)."""
     up = direction == "long"
     out = []
+    many = levels.get("resistances" if up else "supports")
     res = levels.get("nearest_resistance" if up else "nearest_support")
-    if res:
-        out.append(dict(source="technical_level", price=res, note="הרמה הקרובה מנרות שנתיים, רבעוניים וחודשיים"))
+    for n, lv in enumerate(many if many else ([res] if res else []), start=1):
+        out.append(dict(source="technical_level", price=lv, rank=n,
+                        note=("הרמה הקרובה" if n == 1 else f"הרמה ה-{n}") + " מנרות שנתיים, רבעוניים וחודשיים"))
     t = val.get("target") or {}
     if t.get("price"):
         out.append(dict(source="own_multiple_target", price=t["price"], unreliable="unreliable_eps_basis" in t["flags"],
@@ -185,10 +203,18 @@ def _target_options(price: float, direction: str, ext: float, val: dict, levels:
         for o in out:
             if o["source"] == "own_multiple_target":
                 o["note"] += " · שמיים פתוחים: המחיר בשיא, ויעד המכפיל הוא היעד (החלטה 1, 20.10)"
-        return [o for o in out if (o["price"] > price) == up]
-    out.append(dict(source="all_time_high_target", price=ext,
-                    note=f"{'השיא' if up else 'השפל'} של {HISTORY_DAYS // 365} השנים האחרונות"))
-    return [o for o in out if (o["price"] > price) == up]
+    else:
+        out.append(dict(source="all_time_high_target", price=ext,
+                        note=f"{'השיא' if up else 'השפל'} של {HISTORY_DAYS // 365} השנים האחרונות"))
+    out = [o for o in out if (o["price"] > price) == up]
+    if monthly_sigma_pct:
+        cap = float(load_policy().horizon.extended_max_months)
+        for o in out:
+            o["horizon_months"] = round(T.horizon_months(T.pct_move(price, o["price"]), monthly_sigma_pct), 1)
+            o["beyond_horizon"] = o["horizon_months"] > cap
+            if o["beyond_horizon"]:
+                o["note"] += f" · {o['horizon_months']:.1f} חודשים לפי הסיגמה החודשית, מעל {cap:g} (החלטה 2): לא נבחר"
+    return out
 
 
 def peers_for(u: dict, screens: dict, sym: str, etf: str, on_list: set[str] | Callable[[], set[str]] = frozenset(),
@@ -268,7 +294,8 @@ def deep_dive(y: Yahoo, u: dict, screens: dict, sym: str, etf: str, direction: s
     levels = candidate_levels(bars, price, ("month", "quarter", "year"))
     k = float(j.get("k", load_policy().stop.k_default))
     stop = T.stop_price(price, adr(bars), k, direction)                       # type: ignore[arg-type]
-    targets = _target_options(price, direction, ext, val, levels, open_skies(price, ext, adr(bars)))
+    targets = _target_options(price, direction, ext, val, levels, open_skies(price, ext, adr(bars)),
+                              monthly_sigma_pct=idea.monthly_sigma(bars))
     for t in targets:
         t["rr"] = T.reward_risk(price, stop, t["price"], direction)          # type: ignore[arg-type]
         t["move_pct"] = T.pct_move(price, t["price"])
