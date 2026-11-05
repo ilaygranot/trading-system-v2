@@ -279,6 +279,12 @@ def handle_update(update: dict, bot: Telegram, queue: Queue, on_resume: Callable
         link = journal_link()
         bot.send(f"יומן המסחר: {link}" if link else "אין כתובת ציבורית (QT_PUBLIC_URL) לקישור ליומן")
         return "journal link"
+    if (msg.get("text") or "").strip() == "/digest":
+        from qt import digest
+        row = queue.db.one("SELECT id FROM uploads WHERE kind = 'digest' ORDER BY id DESC LIMIT 1")
+        link = digest.link(row["id"]) if row else None
+        bot.send(f"ה-digest האחרון: {link}" if link else "עוד אין digest (הוא נשלח כל בוקר ב-07:00)")
+        return "digest link"
     if (msg.get("text") or "").strip() == "/queue":
         items = queue.open_items()
         for it in items:

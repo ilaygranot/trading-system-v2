@@ -193,6 +193,9 @@ class App:
             m = re.fullmatch(r"/report/(\d+)", path)
             if m and method == "GET":
                 return self.report(env, start, int(m.group(1)))
+            m = re.fullmatch(r"/digest/(\d+)", path)
+            if m and method == "GET":
+                return self.digest(env, start, int(m.group(1)))
             m = re.fullmatch(r"/journal(?:/(trades|ideas|equity)\.csv)?", path)
             if m and method == "GET":
                 return self.journal(env, start, m.group(1))
@@ -328,6 +331,17 @@ class App:
         if row is None:
             return self._send(start, "404 Not Found", "not found", "text/plain")
         return self._send(start, "200 OK", row["content"])
+
+    def digest(self, env: dict, start: Start, upload_id: int) -> list[bytes]:
+        """The morning digest (qt.digest): by its signed link from Telegram, or after login."""
+        from qt import digest as D
+        sig = (parse_qs(env.get("QUERY_STRING", "")).get("sig") or [""])[0]
+        if not (D.verify(upload_id, sig, self.password) or self._authed(env)):
+            return self._deny(start)
+        row = self.db.one("SELECT content FROM uploads WHERE id = ? AND kind = 'digest'", (upload_id,))
+        if row is None:
+            return self._send(start, "404 Not Found", "not found", "text/plain")
+        return self._send(start, "200 OK", D.page(json.loads(row["content"])))
 
     def journal(self, env: dict, start: Start, csv_name: str | None) -> list[bytes]:
         """The trade journal (qt.learning.tables): the page with every table, or one table as CSV for Excel or
