@@ -1,6 +1,6 @@
 """Command line: `qt check trade.yaml`, `qt macro stance.yaml`, `qt rules`, `qt replay`,
 `qt run daily|premarket|open|weekly|monthly|resume|status [--scheduled]`, `qt research`, `qt eval agents`, `qt web`, `qt set-webhook`, `qt preflight [--offline]`, `qt dry-run`,
-`qt completeness <dossier.json>`."""
+`qt completeness <dossier.json>`, `qt digest [--scheduled]`."""
 from __future__ import annotations
 
 import argparse
@@ -196,6 +196,21 @@ def _macro_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _digest(args: argparse.Namespace) -> int:
+    """The morning digest (qt.digest): --scheduled for the cron (07:00 Israel time, once a day)."""
+    from qt import digest
+    from qt.db import DB
+    from qt.telegram import Telegram
+    db = DB(args.db) if args.db else DB()
+    bot = None if args.no_send else Telegram.from_env()
+    if args.scheduled:
+        print(digest.scheduled(db, bot))
+        return 0
+    r = digest.send(db, bot)
+    print(r["text"])
+    return 0
+
+
 def _preflight(args: argparse.Namespace) -> int:
     """Every service and source the weekly research needs, tried for real (qt.preflight); exit 1 on a failure."""
     from qt import preflight
@@ -291,6 +306,11 @@ def main(argv: list[str] | None = None) -> int:
     mf.add_argument("--save", action="store_true", help="write the merged file as the manual_macro upload")
     mf.add_argument("--db")
     mf.set_defaults(fn=_macro_fetch)
+    dg = sub.add_parser("digest", help="the morning digest: the last run, system health, the stocks and their news, macro")
+    dg.add_argument("--scheduled", action="store_true", help="cron mode: only at 07:00 Israel time, once a day")
+    dg.add_argument("--no-send", action="store_true", help="save and print, do not send to Telegram")
+    dg.add_argument("--db")
+    dg.set_defaults(fn=_digest)
     pf = sub.add_parser("preflight", help="try every key, service and data source the weekly research needs")
     pf.add_argument("--offline", action="store_true", help="only the checks without network or keys (CI)")
     pf.add_argument("--notify", action="store_true", help="send the result to Telegram")
