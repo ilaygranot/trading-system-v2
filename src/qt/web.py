@@ -427,8 +427,10 @@ class App:
         if self._gw is not None and now - self._gw[0] < 60:
             return self._gw[1]
         host, port = os.environ.get("IBKR_HOST"), os.environ.get("IBKR_PORT", "4004")
-        if not host:
-            res: tuple[str | None, str] = (None, "לא מוגדר בשירות הזה")
+        if os.environ.get("IBKR_SUSPENDED") == "1":               # suspended on purpose (24.10): not a fault
+            res: tuple[str | None, str] = (None, "מושהה (עד שלב הברוקר)")
+        elif not host:
+            res = (None, "לא מוגדר בשירות הזה")
         else:
             try:
                 socket.create_connection((host, int(port)), timeout=1.5).close()

@@ -42,6 +42,8 @@ STATUS_HE = {"opportunity": "🟢 הזדמנות", "ready": "🟢 מוכנה ל�
              "recheck": "🔎 לבדוק רמזור", "expired": "⌛ פג", "invalidated": "✗ בוטל", "stale": "⚠️ אין נתונים",
              "frozen": "🧊 קפואה"}
 DIR_HE = {"for_idea": "בעד", "against_idea": "נגד"}
+SHOW_NEWS = 2                            # headlines shown per stock; the rest and the agent's reasons in a fold
+ORDER = {"held": 0, "opportunity": 1, "ready": 1, "recheck": 2}   # the book first, then what is close to action
 
 
 def _now(now: datetime | None) -> datetime:
@@ -431,14 +433,19 @@ def page(d: dict) -> str:
                     + (f" · {_f(r['dist_to_trigger_pct'], 1)}% לטריגר {_f(r['trigger_level'], 2)}"
                        if r.get("dist_to_trigger_pct") is not None else "")
                     + f" · יחס {_f(r.get('rr'))} · עד היעד {_f(r.get('potential_pct'), 0)}%")
-        news = "".join(f"<li>{'<b>[' + e(n['klass']) + ', ' + e(DIR_HE.get(n.get('direction'), '?')) + ']</b> ' if n.get('klass') else ''}"
-                       f"<a href='{e(n['link'])}' target=_blank rel=noopener>{e(n['title'])}</a> "
-                       f"<span class=note>{e(n['publisher'])} · {e((n.get('published') or '')[5:])}</span>"
-                       + (f"<br><span class=note>{e(n['why'])}</span>" if n.get("why") else "") + "</li>"
-                       for n in r["news"])
+        def li(n: dict, why: bool) -> str:
+            tag = (f"<b>[{e(n['klass'])}, {e(DIR_HE.get(n.get('direction'), '?'))}]</b> " if n.get("klass") else "")
+            return (f"<li>{tag}<a href='{e(n['link'])}' target=_blank rel=noopener>{e(n['title'])}</a> "
+                    f"<span class=note>{e(n['publisher'])} · {e((n.get('published') or '')[5:])}</span>"
+                    + (f"<br><span class=note>{e(n['why'])}</span>" if why and n.get("why") else "") + "</li>")
+        top = "".join(li(n, False) for n in r["news"][:SHOW_NEWS])
+        more = ui.fold(f"כל הכותרות והסיווג המלא ({len(r['news'])})", "<ul>" + "".join(li(n, True) for n in r["news"])
+                       + "</ul>") if r["news"] else ""
         notes = f"<p class=note>{e('; '.join(r['notes']))}</p>" if r.get("notes") else ""
-        cards.append(f"<div class=card><h3>{ui.sym(r['symbol'])} <span class=note>{_ltr(head)}</span></h3>{notes}"
-                     + (f"<ul>{news}</ul>" if news else "") + "</div>")
+        cards.append((ORDER.get(r["status"], 3), 0 if r["news"] else 1,
+                      f"<div class=card><h3>{ui.sym(r['symbol'])} <span class=note>{_ltr(head)}</span></h3>{notes}"
+                      + (f"<ul>{top}</ul>" if top else "") + more + "</div>"))
+    cards = [c for *_, c in sorted(cards, key=lambda x: x[:2])]
     st = (f"<p class=note>מהריצה היומית של {e(s.get('as_of'))}. החדשות הן כותרות של 3 הימים האחרונים שהריצה ראתה לראשונה"
           + ("" if s.get("news_enabled") else " (החדשות כבויות בריצה הזו)") + ".</p>" if s["rows"] else "")
     if s["quiet"]:

@@ -104,3 +104,10 @@ def test_the_web_page_opens_only_with_its_signature(db, monkeypatch):
     assert got["status"] == "200 OK" and "Digest בוקר".encode() in body
     app({"PATH_INFO": f"/digest/{uid}", "REQUEST_METHOD": "GET", "QUERY_STRING": "sig=bad"}, start)
     assert got["status"].startswith("401")
+
+
+def test_a_suspended_gateway_is_not_a_fault(db, monkeypatch):
+    monkeypatch.setenv("IBKR_HOST", "10.255.255.1")              # nothing answers there
+    monkeypatch.setenv("IBKR_SUSPENDED", "1")
+    h = D.build(db, NOW, _get)["health"]
+    assert not any("IB Gateway" in t for t in h["issues"])

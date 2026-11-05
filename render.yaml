@@ -63,6 +63,8 @@ services:
         fromService: {type: pserv, name: qt-ibgateway, property: host}
       - key: IBKR_PORT
         value: "4004"                     # paper API (socat relay of 4002 inside the image)
+      - key: IBKR_SUSPENDED               # "1" while qt-ibgateway is suspended: the health dot shows it paused, not
+        value: "1"                        # failing. Set "0" here and on qt-digest when the gateway is resumed.
 
   # IB Gateway, headless (Ilay 22.10). Suspended 24.10 (Ilay approved): nothing reads it until the broker stage;
   # kept here so the IBKR_HOST copies resolve. Resume it in the dashboard when that stage starts. Image: gnzsnz/ib-gateway (IB Gateway + IBC + Xvfb + socat),
@@ -365,6 +367,8 @@ services:
         fromService: {type: web, name: qt-web, envVarKey: DASHBOARD_PASSWORD}
       - key: IBKR_HOST                    # the health line checks that IB Gateway answers, as the dashboard does
         fromService: {type: pserv, name: qt-ibgateway, property: host}
+      - key: IBKR_SUSPENDED               # see qt-web
+        value: "1"
       - key: IBKR_PORT
         value: "4004"
       - key: FMP_API_KEY
