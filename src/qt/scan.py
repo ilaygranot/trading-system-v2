@@ -1,7 +1,7 @@
 """The nightly scan (Ilay 08.11, stage 1 of the cadence proposal: breadth). Not from course: the course runs the funnel
 by hand once a week or two (060); the AI can run its code part every night, over the whole market.
 
-universe -> macro -> screen -> compare -> notify. Code only, no agent, nothing enters the watchlist or the queue:
+universe -> macro -> screen -> compare -> cascade -> notify. Code only, except the cascade; nothing enters the watchlist:
 
 universe: the whole universe (Yahoo screener, every sector, qt.research.universe), as in the weekly research.
 macro:    stages 1-3 every trading day (qt.research.macro_stage) after the ISM / NFIB / NAAIM refresh
@@ -14,6 +14,8 @@ screen:   the sector scorecard (S04) on tonight's stance, then the S06 screen an
           sector is "watch only" (information, never an entry); against its sector's side it is not listed (S04-R13).
 compare:  with the last scan: new green / orange stocks, oranges that turned green, and what moved in the macro
           picture and the sector sides.
+cascade:  a change in the stance (zone, bias, compass, cycle phase) sets off A1 on tonight's stance and A7 (DC-21) on
+          every open position (architecture 8, stage 2 of the proposal). Proposals only, to the approval queue.
 notify:   one Telegram message; a change in the macro picture gets its own line on top.
 
 The weekly research (deep dives, agents) and the monthly sector review are unchanged: the course refreshes sector
@@ -28,6 +30,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+from qt.approvals import Queue
 from qt.runs import RunContext, Step
 
 LIGHTS = ("green", "orange")
@@ -100,7 +103,8 @@ def macro(ctx: RunContext, _: str) -> dict:
             "activity_pct": round(st["activity"]["pct"], 1), "phase": phase, "phase_flags": phase_flags,
             "credit": s1["credit"]["state"], "curve": s1["curve"]["shape"], "market": s3["market"]["regime"],
             "drawdown_pct": round(s3["market"]["drawdown_pct"], 1), "flags": st.get("flags") or [],
-            "auto": None if auto is None else {k: auto.get(k) for k in ("added", "stale", "rejected", "error")}}
+            "auto": None if auto is None else {k: auto.get(k) for k in ("added", "stale", "rejected", "error")},
+            "stance": st}
 
 
 def classify(timing: list[dict], longs: list[str], shorts: list[str], on_list: set[str]) -> list[dict]:
@@ -151,12 +155,17 @@ MACRO_FIELDS = (("zone", "אזור"), ("bias", "הטיה"), ("compass", "מצפ�
                 ("credit", "מרווחי אשראי"), ("curve", "עקום"), ("market", "מצב השוק"))
 
 
+STANCE_FIELDS = ("zone", "bias", "compass", "phase")   # a change here sets off A1 and A7 (architecture 8)
+
+
 def diff(today_macro: dict, today: dict, prev: dict | None) -> dict:
     if prev is None:
-        return {"first": True, "macro": [], "sectors": [], "new": [], "upgraded": [], "dropped": 0}
+        return {"first": True, "macro": [], "stance_changed": False, "sectors": [], "new": [], "upgraded": [],
+                "dropped": 0}
     pm = prev.get("macro") or {}
     mac = [f"{he}: {pm.get(k) or '-'} → {today_macro.get(k) or '-'}" for k, he in MACRO_FIELDS
            if pm and pm.get(k) != today_macro.get(k)]
+    stance_changed = bool(pm) and any(pm.get(k) != today_macro.get(k) for k in STANCE_FIELDS)
     ps, ts = (prev["screen"].get("sectors") or {}), today["sectors"]
     sec = [f"{e}: {SECTORS_HE[a]} → {SECTORS_HE[b]}" for e in sorted(set().union(*ts.values()))
            for a in [next((k for k, v in ps.items() if e in v), None)] for b in [next(k for k, v in ts.items() if e in v)]
@@ -165,12 +174,55 @@ def diff(today_macro: dict, today: dict, prev: dict | None) -> dict:
     now = {(r["sym"], r["dir"]): r for r in today["radar"]}
     new = [r for k, r in now.items() if k not in before]
     up = [r for k, r in now.items() if k in before and before[k]["light"] == "orange" and r["light"] == "green"]
-    return {"first": False, "prev_as_of": prev["as_of"], "macro": mac, "sectors": sec, "new": new, "upgraded": up,
+    return {"first": False, "prev_as_of": prev["as_of"], "macro": mac, "stance_changed": stance_changed,
+            "sectors": sec, "new": new, "upgraded": up,
             "dropped": sum(1 for k in before if k not in now)}
 
 
 def compare(ctx: RunContext, _: str) -> dict:
     return diff(ctx.out("macro"), ctx.out("screen"), _previous(ctx))
+
+
+def cascade(ctx: RunContext, _: str) -> dict:
+    """Architecture 8: a change in the stance (zone, bias, compass, cycle phase) sets off A1 on tonight's stance, then
+    A7 (DC-21) on every open position, the change as its event. Proposals only: a money-moving answer goes to the
+    approval queue for Ilay, as in the daily run. Without the agents, the change is the message's top line only."""
+    c, runner = ctx.out("compare"), ctx.services.get("agents")
+    if not c.get("stance_changed") or runner is None:
+        return {"ran": False}
+    from qt import monthly as MO
+    from qt.daily import AGENT_KIND, event_card
+    from qt.intraday import _decided_today, _last_daily
+    ctx.outputs["stance"] = {"": {k: v for k, v in ctx.out("macro")["stance"].items()}}
+    a1 = MO.a1(ctx, "")
+    out: dict[str, Any] = {"ran": True, "a1": {k: (a1.get(k) or {}).get("choice") for k in ("DC-01", "DC-02", "DC-03",
+                                                                                         "DC-04") if a1.get(k)},
+                           "a1_error": a1.get("error"), "decisions": {}, "added": []}
+    base, pf = _last_daily(ctx), ctx.services.get("portfolio") or {}
+    if "calc" not in base or "rules" not in base or not pf.get("positions"):
+        return out
+    ctx.outputs.update(calc={"": base["calc"]}, rules={"": base["rules"]},
+                       fetch={"": {"sources": {}, "portfolio": pf, "stale": []}})
+    event = "שינוי בתמונת המקרו (סריקה לילית): " + " · ".join(c["macro"])
+    q = Queue(ctx.db)
+    for p in pf["positions"]:
+        sym = p["symbol"]
+        if _decided_today(ctx, sym):
+            continue
+        try:
+            d = event_card(ctx, runner, p, event, "code:scan", step="cascade")
+        except Exception as ex:                                      # noqa: BLE001 - the change is still in the message
+            ctx.event(f"{sym}: DC-21 {type(ex).__name__}: {ex}", "warn", "cascade")
+            continue
+        out["decisions"][sym] = d
+        if d["for_ilay"]:
+            iid = q.add(ctx.run_id, ctx.as_of, dict(kind=AGENT_KIND.get(d["option"], "flag"), rule_id="DC-21", symbol=sym,
+                                                   qty=None, price=None, preapproved=False, agent=d,
+                                                   detail=f"DC-21 (שינוי מקרו): {d['option']}. {d['reasoning']}"[:600]),
+                        (base["calc"].get("prices") or {}).get(sym), d["decision_id"])
+            if iid:
+                out["added"].append(iid)
+    return out
 
 
 def _name(r: dict) -> str:
@@ -180,12 +232,17 @@ def _name(r: dict) -> str:
             f"{', מעקב בלבד' if r['fit'] == 'watch_only' else ''}{', כבר ברשימה' if r['on_list'] else ''})")
 
 
-def message(as_of: date, u: dict, m: dict, s: dict, c: dict) -> str:
+def message(as_of: date, u: dict, m: dict, s: dict, c: dict, k: dict | None = None) -> str:
     radar = s["radar"]
     by = Counter((r["light"], r["fit"]) for r in radar)
     lines = []
     if c["macro"]:
         lines.append("⚠️ שינוי בתמונת המקרו: " + " · ".join(c["macro"]))
+    if k and k.get("ran"):
+        a1 = ", ".join(f"{card} {v}" for card, v in (k.get("a1") or {}).items()) or (k.get("a1_error") or "בלי תשובה")
+        lines.append(f"A1 על המקרו של הלילה: {a1}")
+        for sym, d in (k.get("decisions") or {}).items():
+            lines.append(f"A7 על {sym}: {d['option']}. {d['reasoning'][:200]}")
     if c["sectors"]:
         lines.append("⚠️ שינוי בצד של סקטור: " + " · ".join(c["sectors"]))
     lines.append(f"סריקה לילית {as_of.isoformat()} · {u['n']:,} מניות · {s['screened']} עברו סינון S06 בכל 11 הסקטורים")
@@ -212,17 +269,22 @@ def message(as_of: date, u: dict, m: dict, s: dict, c: dict) -> str:
 
 
 def notify(ctx: RunContext, _: str) -> dict:
-    text = message(ctx.as_of, ctx.out("universe"), ctx.out("macro"), ctx.out("screen"), ctx.out("compare"))
+    text = message(ctx.as_of, ctx.out("universe"), ctx.out("macro"), ctx.out("screen"), ctx.out("compare"),
+                   ctx.out("cascade"))
     bot = ctx.services.get("telegram")
     if bot is not None:
         bot.send(text)
+        from qt.telegram import send_item
+        q = Queue(ctx.db)
+        for iid in (ctx.out("cascade") or {}).get("added") or []:
+            send_item(bot, q, q.get(iid))
     if ctx.services.get("notifier") is not None:
         ctx.services["notifier"](text)
     return {"text": text}
 
 
 SCAN = (Step("universe", universe), Step("macro", macro), Step("screen", screen), Step("compare", compare),
-        Step("notify", notify))
+        Step("cascade", cascade), Step("notify", notify))
 
 
 def latest(db) -> dict[str, Any] | None:

@@ -246,6 +246,7 @@ runtime:                           # runtime plan 4-7; not from course (operatio
   daily_at: "18:30"                # after the close
   scan_at: "17:30"                 # the nightly scan of the whole market (qt.scan; Ilay 08.11), before the daily run
   premarket_at: "08:30"
+  intraday_at: ["10:30", "12:30", "14:30"]   # the intraday watch (qt.intraday; Ilay 08.11), three looks a session
   open_at: "09:35"                 # approved paper orders fill at the open (Ilay 23.10)
   weekly_at: "10:00"               # Saturday
   monthly_days: [8, 14]            # the Saturday after the first week of the month (S13)

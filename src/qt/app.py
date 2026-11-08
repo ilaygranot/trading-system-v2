@@ -70,6 +70,9 @@ def services(db: DB, portfolio_path: str | None = None) -> dict[str, Any]:
         s["watchlist"] = wl
     if os.environ.get("FRED_API_KEY"):
         s["fred"] = FRED(store)
+    if os.environ.get("SEC_CONTACT"):                                # 8-K / 6-K in the daily and intraday runs
+        from qt.data.filings import SECFilings
+        s["sec"] = SECFilings(store)
     from qt.agents.cli_client import agent_client
     client = agent_client()
     if client is not None:
@@ -115,7 +118,11 @@ def scheduled(kind: str, db: DB, svc: dict[str, Any] | None = None, now: datetim
     if not ok:
         return _auto_resume(kind, db, svc, now)
     _schema(db)
-    if db.one("SELECT id FROM runs WHERE kind = ? AND as_of = ? AND status = 'done'", (kind, as_of.isoformat())):
+    if kind == "intraday":                    # three a day: one per look (window), not one per day
+        since = ((now or datetime.now(timezone.utc)) - timedelta(minutes=90)).isoformat(timespec="seconds")
+        if db.one("SELECT id FROM runs WHERE kind = 'intraday' AND status = 'done' AND started_at >= ?", (since,)):
+            return f"skip: {kind} {as_of} done in this window"
+    elif db.one("SELECT id FROM runs WHERE kind = ? AND as_of = ? AND status = 'done'", (kind, as_of.isoformat())):
         return f"skip: {kind} {as_of} already done"
     svc = svc if svc is not None else services(db)
     r = runner(db, svc)

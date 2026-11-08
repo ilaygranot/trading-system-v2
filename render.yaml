@@ -179,6 +179,44 @@ services:
         value: "4004"
 
   - type: cron
+    name: qt-intraday                     # 10:30, 12:30, 14:30 New York, trading days: the intraday watch (qt.intraday, Ilay 08.11)
+    runtime: python
+    region: virginia
+    plan: starter
+    schedule: "30 14-19 * * 1-5"          # every hour 14:30-19:30 UTC; qt.schedule lets the three looks through (DST)
+    buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
+    startCommand: qt run intraday --scheduled
+    envVars:
+      - key: QT_PUBLIC_URL                # public https URL of qt-web, for the signed "details" links in Telegram
+        fromService: {type: web, name: qt-web, envVarKey: RENDER_EXTERNAL_URL}
+      - key: QT_DATABASE_URL
+        fromDatabase: {name: qt-db, property: connectionString}
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: CLAUDE_CODE_OAUTH_TOKEN
+        fromService: {type: web, name: qt-web, envVarKey: CLAUDE_CODE_OAUTH_TOKEN}
+      - key: DISABLE_AUTOUPDATER
+        value: "1"
+      - key: QT_START_EQUITY
+        value: "10000"                    # the paper book's cash until the first portfolio or fill exists
+      - key: TELEGRAM_BOT_TOKEN
+        fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_BOT_TOKEN}
+      - key: TELEGRAM_CHAT_ID
+        fromService: {type: web, name: qt-web, envVarKey: TELEGRAM_CHAT_ID}
+      - key: DASHBOARD_PASSWORD
+        fromService: {type: web, name: qt-web, envVarKey: DASHBOARD_PASSWORD}
+      - key: IBKR_HOST
+        fromService: {type: pserv, name: qt-ibgateway, property: host}
+      - key: FMP_API_KEY                  # second daily close (verify) and the price fallback when Yahoo fails
+        fromService: {type: web, name: qt-web, envVarKey: FMP_API_KEY}
+      - key: ALPHAVANTAGE_API_KEY
+        fromService: {type: web, name: qt-web, envVarKey: ALPHAVANTAGE_API_KEY}
+      - key: SEC_CONTACT
+        fromService: {type: web, name: qt-web, envVarKey: SEC_CONTACT}
+      - key: IBKR_PORT
+        value: "4004"
+
+  - type: cron
     name: qt-premarket                    # 08:30 New York, trading days
     runtime: python
     region: virginia

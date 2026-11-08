@@ -1,6 +1,6 @@
 """The daily run without agents (runtime plan 10, step 3): data, code numbers and rules only.
 
-fetch -> fill -> calc -> rules -> watch -> news -> agents -> journal -> queue -> book -> learn -> notify. The agents step runs
+fetch -> fill -> calc -> rules -> watch -> filings -> news -> agents -> journal -> queue -> book -> learn -> notify. The agents step runs
 A7 on positions with an event against them (from the portfolio or from today's news, qt.news; DC-21), on the regime's grey band
 (DC-22) and on technical profit-taking flags (DC-23) when an agent runner is configured, and A5's
 heat cards on the watchlist (DC-16 on an against move, DC-15 on a heat trigger; proposals only, approved by Ilay). The portfolio
@@ -472,6 +472,23 @@ def technical_cards(ctx: RunContext, runner, cut: list[str] | None = None) -> di
     return out
 
 
+def event_card(ctx: RunContext, runner, p: dict, event: str, source: str, step: str = "agents") -> dict:
+    """A7 on one open position with an event against it (DC-21): the daily run's news and portfolio events, and the
+    intraday watch's (qt.intraday). Reads the calc and rules outputs (the intraday watch primes them)."""
+    from qt.facts import FactSheet
+    r = ctx.out("rules")
+    fs = FactSheet()
+    _position_facts(ctx, p, fs)
+    _portfolio_facts(ctx, fs)
+    fs.add(f"{p['symbol']}.event", event, source, ctx.as_of)
+    world = {"position": p, "regime": r["regime"], "metrics": r["metrics"], "event": event}
+    res = runner.decide("A7", "DC-21", fs, world, run_id=ctx.run_id, step=step, subject=p["symbol"])
+    return {"agent": "A7", "card": "DC-21", "option": res.option, "status": res.status,
+            "decision_id": res.decision_id, "confidence": res.output.get("confidence"),
+            "reasoning": res.output.get("reasoning", ""), "deviations": res.output.get("deviations", []),
+            "critic": res.critic, "for_ilay": res.for_ilay, "event": event}
+
+
 def agents(ctx: RunContext, _: str) -> dict:
     """A7 on each open position with an event against it (DC-21), on the regime's grey band (DC-22) and on technical
     profit-taking flags (DC-23), and A5's heat cards on the watchlist (DC-15, DC-16). Without an agent runner (no API
@@ -479,24 +496,13 @@ def agents(ctx: RunContext, _: str) -> dict:
     runner = ctx.services.get("agents")
     if runner is None:
         return {"enabled": False}
-    from qt.facts import FactSheet
-    r = ctx.out("rules")
     out = {}
     news_events = (ctx.out("news") or {}).get("adverse") or {}
     for p in _pf(ctx).get("positions", []):
         if not (p.get("adverse_catalyst") or p["symbol"] in news_events):
             continue
-        fs = FactSheet()
-        _position_facts(ctx, p, fs)
-        _portfolio_facts(ctx, fs)
         event = p.get("event") or news_events.get(p["symbol"], "")
-        fs.add(f"{p['symbol']}.event", event, "news" if p["symbol"] in news_events else "portfolio", ctx.as_of)
-        world = {"position": p, "regime": r["regime"], "metrics": r["metrics"], "event": event}
-        res = runner.decide("A7", "DC-21", fs, world, run_id=ctx.run_id, step="agents", subject=p["symbol"])
-        out[p["symbol"]] = {"agent": "A7", "card": "DC-21", "option": res.option, "status": res.status,
-                            "decision_id": res.decision_id, "confidence": res.output.get("confidence"),
-                            "reasoning": res.output.get("reasoning", ""), "deviations": res.output.get("deviations", []),
-                            "critic": res.critic, "for_ilay": res.for_ilay}
+        out[p["symbol"]] = event_card(ctx, runner, p, event, "news" if p["symbol"] in news_events else "portfolio")
     try:
         regime = regime_card(ctx, runner)
     except Exception as ex:                                          # noqa: BLE001 - budget or API: the code's cuts stand
@@ -698,10 +704,10 @@ def day_summary(ctx: RunContext) -> str:
     return "\n".join(lines)
 
 
-from qt.news import chunks, diary_lines, digest_lines, news  # noqa: E402  (qt.news imports _pf from here)
+from qt.news import chunks, diary_lines, digest_lines, filings, news  # noqa: E402  (qt.news imports _pf from here)
 from qt.learning import idea_prediction, learn_daily  # noqa: E402
 
 DAILY = (Step("fetch", fetch), Step("fill", fill), Step("calc", calc), Step("rules", rules), Step("watch", watch),
-         Step("news", news), Step("agents", agents), Step("journal", journal),
+         Step("filings", filings), Step("news", news), Step("agents", agents), Step("journal", journal),
          Step("queue", queue), Step("book", book), Step("learn", learn_daily), Step("notify", notify))
 PIPELINES = {"daily": DAILY}

@@ -265,8 +265,8 @@ def main(argv: list[str] | None = None) -> int:
     m.set_defaults(fn=_macro)
     sub.add_parser("rules", help="list hard rules and playbook version").set_defaults(fn=_rules)
     sub.add_parser("replay", help="replay the lecturer's trades").set_defaults(fn=_replay)
-    r = sub.add_parser("run", help="runs: scan | daily | premarket | open | weekly | monthly | resume <run-id> | status")
-    r.add_argument("what", choices=["scan", "daily", "premarket", "open", "weekly", "monthly", "resume", "status"])
+    r = sub.add_parser("run", help="runs: scan | intraday | daily | premarket | open | weekly | monthly | resume <run-id> | status")
+    r.add_argument("what", choices=["scan", "intraday", "daily", "premarket", "open", "weekly", "monthly", "resume", "status"])
     r.add_argument("run_id", nargs="?")
     r.add_argument("--as-of")
     r.add_argument("--portfolio", help="cash, peak equity and open positions (YAML; default QT_PORTFOLIO, "

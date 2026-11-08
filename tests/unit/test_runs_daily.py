@@ -42,7 +42,7 @@ def test_daily_run_end_to_end(db):
     rid = r.start("daily", AS_OF)
     st = r.status()[0]
     assert st["id"] == rid and st["status"] == "done"
-    assert [s["step"] for s in st["steps"]] == ["fetch", "fill", "calc", "rules", "watch", "news", "agents", "journal", "queue",
+    assert [s["step"] for s in st["steps"]] == ["fetch", "fill", "calc", "rules", "watch", "filings", "news", "agents", "journal", "queue",
                                             "book", "learn", "notify"]
     items = db.all("SELECT rule_id, status FROM approval_queue", json_cols=())
     rules = {i["rule_id"]: i["status"] for i in items}
