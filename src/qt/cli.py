@@ -196,6 +196,19 @@ def _macro_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _theses(args: argparse.Namespace) -> int:
+    """The thesis store (qt.theses): backfill from every saved research report and the watchlist, or list it."""
+    from qt.db import DB
+    from qt.theses import Store, backfill
+    db = DB(args.db) if args.db else DB()
+    if args.what == "backfill":
+        print(json.dumps(backfill(db), ensure_ascii=False, indent=1))
+        return 0
+    for t in Store(db).all():
+        print(f"{t['kind']:8} {t['subject']:12} v{t['version']:<3} as of {t['as_of']}  fresh until {t['stale_after']}")
+    return 0
+
+
 def _digest(args: argparse.Namespace) -> int:
     """The morning digest (qt.digest): --scheduled for the cron (07:00 Israel time, once a day)."""
     from qt import digest
@@ -275,6 +288,10 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--db", help="database URL or SQLite path (default QT_DATABASE_URL)")
     r.add_argument("--limit", type=int, default=10)
     r.set_defaults(fn=_run)
+    th = sub.add_parser("theses", help="the thesis store: backfill from the saved reports, or list")
+    th.add_argument("what", choices=["backfill", "list"])
+    th.add_argument("--db", help="database URL or SQLite path (default QT_DATABASE_URL)")
+    th.set_defaults(fn=_theses)
     rs = sub.add_parser("research", help="one full research run (stages 0-11) into a dossier and an HTML report")
     rs.add_argument("--as-of", required=True)
     rs.add_argument("--manual", required=True, help="the ISM / NFIB values (YAML, with sources)")

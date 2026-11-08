@@ -298,6 +298,7 @@ def research(ctx: RunContext, _: str) -> dict:
     html = report.render(d)
     rid = q.upload("report", f"report-{ctx.as_of.isoformat()}.html", "<!doctype html><meta charset=utf-8>" + html)
     q.upload("dossier", f"dossier-{ctx.as_of.isoformat()}.json", json.dumps(d, ensure_ascii=False))  # the dashboard
+    theses = _sync_theses(ctx, d)
     old = ctx.services.get("watchlist")
     if done["status"] != "complete":           # 25.10: a partial report never adds to the list (SM, CHRD, MUR did)
         raise ResearchIncomplete("\n".join(completeness.lines(done)) + f"\n(report {rid}; resume the run to finish it)")
@@ -313,7 +314,18 @@ def research(ctx: RunContext, _: str) -> dict:
     return {"report_id": rid, "completeness": done, "ideas": ideas, "watchlist_n": len(wl["entries"]), "sector_growth": growth,
             "rejected_on_list": [x["symbol"] for x in ideas if x["bucket"] == "reject" and x["symbol"] in on_list],
             "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {}),
-            "continued": J.get("continued") or [], "macro_auto": auto}
+            "continued": J.get("continued") or [], "macro_auto": auto, "theses": theses}
+
+
+def _sync_theses(ctx: RunContext, d: dict) -> dict | None:
+    """The week's research into the thesis store (qt.theses, phase A: read by the dashboard only). A failure here
+    is logged and never fails the research: nothing downstream reads the store yet."""
+    from qt.theses import Store, sync_dossier
+    try:
+        return sync_dossier(Store(ctx.db), d)
+    except Exception as e:                                     # noqa: BLE001 - the store is a reader's aid
+        ctx.event(f"thesis store not updated: {type(e).__name__}: {e}", "warn", "research")
+        return None
 
 
 # ---------------------------------------------------------------- the message
