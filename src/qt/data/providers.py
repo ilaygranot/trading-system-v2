@@ -63,6 +63,18 @@ class Yahoo:
         body = get_json(url, self.store, session=self.session)
         return body["quoteSummary"]["result"][0], "yahoo:v10/quoteSummary"
 
+    def live(self, symbol: str, max_age_s: float = 120) -> dict[str, Any]:
+        """Today's price during the session (Yahoo's chart meta, ~15 minutes delayed): last, previous close, the day's
+        high and low, and the time of the last trade. A two-minute cache: the intraday watch (qt.intraday) needs it fresh."""
+        body = get_json(f"{self.BASE}/v8/finance/chart/{symbol}?range=1d&interval=5m", self.store,
+                        max_age_s=max_age_s, session=self.session)
+        m = body["chart"]["result"][0]["meta"]
+        t = m.get("regularMarketTime")
+        return dict(price=m.get("regularMarketPrice"), prev_close=m.get("chartPreviousClose") or m.get("previousClose"),
+                    high=m.get("regularMarketDayHigh"), low=m.get("regularMarketDayLow"),
+                    time=datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="minutes") if t else None,
+                    source="yahoo:v8/chart live")
+
     def quote(self, symbol: str) -> tuple[float | None, str]:
         """The latest price before the open: the pre-market price when Yahoo has one, else the last close."""
         pr = self.summary(symbol)[0].get("price", {})

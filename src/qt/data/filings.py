@@ -576,6 +576,7 @@ class SECFilings:
         self.failures = 0             # consecutive failed requests (a 404 is an answer, not a failure)
         self.down = False             # circuit breaker: SEC unreachable for the rest of this run
         self.deadline: float | None = None
+        self.submissions_max_age = SUBMISSIONS_MAX_AGE_S   # the intraday watch sets it shorter (qt.intraday)
 
     def ok(self) -> bool:
         return bool(self.contact)
@@ -620,7 +621,7 @@ class SECFilings:
         return next((int(v["cik_str"]) for v in body.values() if v["ticker"] in want), None)
 
     def submissions(self, cik: int) -> list[dict]:
-        j = self._json(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json", SUBMISSIONS_MAX_AGE_S)
+        j = self._json(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json", self.submissions_max_age)
         recent = (j.get("filings") or {}).get("recent") or {}
         cols = list(recent)
         rows = [dict(zip(cols, vals)) for vals in zip(*(recent[c] for c in cols))]

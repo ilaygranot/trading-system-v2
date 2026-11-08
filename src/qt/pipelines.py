@@ -328,4 +328,7 @@ MONTHLY = (Step("manual", manual), Step("fred", fred), Step("stance", stance), S
            Step("calendar", MO.calendar), Step("season", MO.season), Step("sentiment", MO.sentiment),
            Step("exposure", MO.exposure),
            Step("queue", monthly_queue), Step("learn", L.learn_monthly), Step("notify", monthly_notify))
-PIPELINES = {"daily": DAILY, "premarket": PREMARKET, "open": OPEN, "weekly": WEEKLY, "monthly": MONTHLY}
+from qt.intraday import INTRADAY  # noqa: E402
+from qt.scan import SCAN  # noqa: E402
+
+PIPELINES = {"scan": SCAN, "intraday": INTRADAY, "daily": DAILY, "premarket": PREMARKET, "open": OPEN, "weekly": WEEKLY, "monthly": MONTHLY}

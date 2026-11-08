@@ -4,7 +4,12 @@ by A5 on DC-14 (class Macro Lead / Macro Noise / A-D, for or against the idea, a
 A class A or B headline against an open position, not priced in, is an event for A7 (DC-21) in the agents step;
 against a watchlist idea it is a flag in the summary (a possible thesis breaker, S08-R30). The day's news diary
 (S13-R27: 3-5 events) is the strongest of the day's headlines. Without the agents the headlines are listed
-unclassified. A headline is classified once: news_seen keeps every link already handled.
+unclassified. A headline is classified once: news_seen keeps every link already handled. A link first seen earlier the
+same day (by the intraday watch, qt.intraday) comes back with its stored class for the day's diary and digest, and
+does not raise an event again: the watch already acted on it.
+
+SEC current reports (8-K, 8-K/A, 6-K; step `filings`) join the headlines as items of their own, so a company's own
+filing is classified and can reach A7 like a headline (not from course: the course reads the news flow by hand).
 
 Peers (S08-J25, code only): a strong headline (A/B, or a C about results) on one stock is recorded as a class C note
 on every other watchlist entry of the same sector ETF, or that names it as a peer. A note, never an action
@@ -33,7 +38,8 @@ CREATE TABLE IF NOT EXISTS news_seen (
 );
 """
 LOOKBACK_DAYS = 3                        # headlines this recent count as new (not from course)
-MAX_CLASSIFY = 12                        # DC-14 calls per day, positions first (not from course: cost)
+# DC-14 has no daily count cap (Ilay 08.11): positions first, then the watchlist, until the runner's daily budget.
+BUDGET_STOPS = ("BudgetExceeded", "AgentUnavailable")
 DIARY = 5                                # S13-R27: 3-5 events a day
 PER_SYMBOL = 4                           # headlines per stock in the per-stock digest (not from course: length)
 RANK = {"A": 0, "macro_lead": 1, "B": 2, "C": 3, "D": 4, "macro_noise": 5, None: 6}
@@ -51,6 +57,42 @@ def _facts(item: dict, ctx_info: dict, as_of: date) -> FactSheet:
     return fs
 
 
+FILINGS_DAYS = 3                         # current reports this recent count as new, as the headlines (not from course)
+FILINGS_PER_STOCK = 3
+
+
+def filing_item(sym: str, f: dict) -> dict:
+    """One SEC current report as a news item: the form, its items and the first exhibit's title as the headline."""
+    what = ", ".join(n for i, n in zip(f["items"], f["item_names"]) if i != "9.01") or f.get("title") or f["kind"]
+    ex = next((x["title"] for x in f.get("exhibits") or [] if x.get("title")), "")
+    title = f"{f['form']}: {what}" + (f" · {ex}" if ex else "")
+    return dict(title=title[:300], publisher="SEC", link=f["index_url"], published=f["date"], symbol=sym,
+                source=f"sec:{f['form']}", kind=f["kind"], lead=next((x["lead"] for x in f.get("exhibits") or []
+                                                                     if x.get("lead")), "")[:600])
+
+
+def filings(ctx: RunContext, _: str) -> dict:
+    """The SEC current reports of the positions and the watchlist (governance-only filings left out). Without
+    SEC_CONTACT the step records that it is off; a failure on one stock is a warning, never a stop."""
+    sec = ctx.services.get("sec")
+    if sec is None or (hasattr(sec, "ok") and not sec.ok()):
+        return {"enabled": False, "items": []}
+    from qt.daily import _pf
+    held = [p["symbol"] for p in _pf(ctx).get("positions", []) if p.get("instrument", "stock") == "stock"]
+    syms = list(dict.fromkeys(held + [e.symbol for e in W.load(ctx.services.get("watchlist"))]))
+    items, errors = [], {}
+    for sym in syms:
+        try:
+            rows = sec.current_reports(sym, ctx.as_of, days=FILINGS_DAYS, max_n=FILINGS_PER_STOCK)
+        except Exception as e:                                       # noqa: BLE001 - filings are never a blocker
+            errors[sym] = f"{type(e).__name__}: {str(e)[:120]}"
+            continue
+        items += [filing_item(sym, f) for f in rows if f["kind"] != "governance"]
+    if errors:
+        ctx.event(f"SEC filings: {len(errors)} stocks failed", "warn", "filings", data=errors)
+    return {"enabled": True, "items": items, "errors": errors}
+
+
 def news(ctx: RunContext, _: str) -> dict:
     prov = ctx.services.get("news") or ctx.services.get("prices")
     if prov is None or not hasattr(prov, "news"):
@@ -61,6 +103,16 @@ def news(ctx: RunContext, _: str) -> dict:
     watch = {e.symbol: e for e in W.load(ctx.services.get("watchlist")) if e.symbol not in held}
     since = (ctx.as_of - timedelta(days=LOOKBACK_DAYS)).isoformat()
     fresh: list[dict[str, Any]] = []
+
+    def add(it: dict, sym: str, src: str) -> None:
+        if any(f["link"] == it["link"] for f in fresh):
+            return
+        row = ctx.db.one("SELECT seen_on, klass, direction, priced_in FROM news_seen WHERE link = ?", (it["link"],))
+        if row is not None and row["seen_on"] != ctx.as_of.isoformat():
+            return                                                    # handled on an earlier day
+        known = {} if row is None else dict(known=True, klass=row["klass"], direction=row["direction"],
+                                            priced_in=None if row["priced_in"] is None else bool(row["priced_in"]))
+        fresh.append({**it, "symbol": sym, "held": sym in held, "source": src, **known})
     for sym in list(held) + list(watch):
         try:
             items, src = prov.news(sym)
@@ -70,16 +122,22 @@ def news(ctx: RunContext, _: str) -> dict:
         for it in items:
             if not it["link"] or it["published"] < since or it["published"] > ctx.as_of.isoformat():
                 continue
-            if ctx.db.one("SELECT link FROM news_seen WHERE link = ?", (it["link"],)) or \
-                    any(f["link"] == it["link"] for f in fresh):
-                continue
-            fresh.append({**it, "symbol": sym, "held": sym in held, "source": src})
+            add(it, sym, src)
+    for it in (ctx.out("filings") or {}).get("items") or []:
+        if it["symbol"] in held or it["symbol"] in watch:
+            add(it, it["symbol"], it["source"])
+    fresh.sort(key=lambda x: not x["held"])                          # positions first, before the budget can end
     runner = ctx.services.get("agents")
     calc = ctx.out("calc") or {}
     regime = (ctx.out("rules") or {}).get("regime")
-    for i, it in enumerate(fresh):
+    cut: list[str] = []                                              # headlines the budget left unclassified
+    for it in fresh:
         sym = it["symbol"]
-        if runner is not None and i < MAX_CLASSIFY:
+        if it.get("known"):
+            continue                                                  # classified earlier today
+        if runner is not None and cut:
+            cut.append(sym)
+        elif runner is not None:
             p, e = held.get(sym), watch.get(sym)
             info = dict(direction=(p or {}).get("direction") or (e.direction if e else None),
                         return_20d_pct=calc.get("ret_20d", {}).get(sym),
@@ -93,18 +151,27 @@ def news(ctx: RunContext, _: str) -> dict:
                           why=r.output.get("reasoning", ""), status=r.status)
             except Exception as ex:                                  # noqa: BLE001 - budget or API: listed raw
                 ctx.event(f"{sym}: DC-14 {type(ex).__name__}: {ex}", "warn", "news")
+                if type(ex).__name__ in BUDGET_STOPS:
+                    cut.append(sym)
         ctx.db.insert_new("news_seen", dict(link=it["link"], symbol=sym, title=it["title"], published=it["published"],
                                             seen_on=ctx.as_of.isoformat(), klass=it.get("klass"),
                                             direction=it.get("direction"),
                                             priced_in=None if it.get("priced_in") is None else int(bool(it["priced_in"]))),
                           ["link"])
     against = [it for it in fresh if it.get("klass") in STRONG and it.get("direction") == "against_idea"
-               and not it.get("priced_in")]
-    adverse = {it["symbol"]: f"{it['klass']}: {it['title']}" for it in against if it["held"]}
-    flags = {it["symbol"]: f"{it['klass']}: {it['title']}" for it in against if not it["held"]}
+               and not it.get("priced_in") and not it.get("known")]
+    adverse: dict[str, str] = {}
+    flags: dict[str, str] = {}
+    for it in against:                                  # every strong item, not only the last one per symbol
+        d = adverse if it["held"] else flags
+        line = f"{it['klass']}: {it['title']}"
+        d[it["symbol"]] = f"{d[it['symbol']]} · {line}" if it["symbol"] in d else line
     diary = sorted(fresh, key=lambda x: (RANK.get(x.get("klass"), 6), not x["held"]))[:DIARY]
     etf_of = {s: e.etf for s, e in watch.items()} | {s: p.get("sector") for s, p in held.items()}
+    if cut:
+        ctx.event(f"agent budget reached: {len(cut)} headlines not classified", "warn", "news", data={"budget_cut": cut})
     return {"enabled": True, "classified": sum(1 for x in fresh if x.get("klass")), "items": fresh,
+            "budget_cut": sorted(set(cut)),
             "symbols": [{"symbol": s, "held": s in held} for s in list(held) + list(watch)],
             "adverse": adverse, "watch_flags": flags, "diary": diary,
             "peer_notes": peer_notes(fresh, list(watch.values()), etf_of)}
