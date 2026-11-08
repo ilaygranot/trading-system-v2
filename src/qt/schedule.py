@@ -42,12 +42,14 @@ def _in_window(t: datetime, hhmm: str) -> bool:
 
 
 def due(kind: str, now_utc: datetime | None = None) -> tuple[bool, date]:
-    """(is it time, the as-of date). Daily/premarket/open: trading days only; weekly/monthly: Saturday,
+    """(is it time, the as-of date). Scan/daily/premarket/open: trading days only; weekly/monthly: Saturday,
     as of the last trading day; monthly only in the second week (after the first week, S13)."""
     t = ny(now_utc)
     r = _r()
     if kind == "daily":
         return is_trading_day(t.date()) and _in_window(t, r.daily_at), t.date()
+    if kind == "scan":
+        return is_trading_day(t.date()) and _in_window(t, r.scan_at), t.date()
     if kind == "premarket":
         return is_trading_day(t.date()) and _in_window(t, r.premarket_at), t.date()
     if kind == "open":
@@ -64,7 +66,7 @@ def due(kind: str, now_utc: datetime | None = None) -> tuple[bool, date]:
 def next_run(kind: str, now_utc: datetime | None = None) -> datetime | None:
     """When `kind` is next due (New York time), for the dashboard's schedule. Walks the days ahead with due()."""
     r = _r()
-    at = {"daily": r.daily_at, "premarket": r.premarket_at, "open": r.open_at, "weekly": r.weekly_at, "monthly": r.weekly_at}[kind]
+    at = {"scan": r.scan_at, "daily": r.daily_at, "premarket": r.premarket_at, "open": r.open_at, "weekly": r.weekly_at, "monthly": r.weekly_at}[kind]
     h, m = map(int, at.split(":"))
     t = ny(now_utc)
     for i in range(45):

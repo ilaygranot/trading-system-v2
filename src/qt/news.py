@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS news_seen (
 );
 """
 LOOKBACK_DAYS = 3                        # headlines this recent count as new (not from course)
-MAX_CLASSIFY = 12                        # DC-14 calls per day, positions first (not from course: cost)
+# DC-14 has no daily count cap (Ilay 08.11): positions first, then the watchlist, until the runner's daily budget.
+BUDGET_STOPS = ("BudgetExceeded", "AgentUnavailable")
 DIARY = 5                                # S13-R27: 3-5 events a day
 PER_SYMBOL = 4                           # headlines per stock in the per-stock digest (not from course: length)
 RANK = {"A": 0, "macro_lead": 1, "B": 2, "C": 3, "D": 4, "macro_noise": 5, None: 6}
@@ -77,9 +78,12 @@ def news(ctx: RunContext, _: str) -> dict:
     runner = ctx.services.get("agents")
     calc = ctx.out("calc") or {}
     regime = (ctx.out("rules") or {}).get("regime")
-    for i, it in enumerate(fresh):
+    cut: list[str] = []                                              # headlines the budget left unclassified
+    for it in fresh:
         sym = it["symbol"]
-        if runner is not None and i < MAX_CLASSIFY:
+        if runner is not None and cut:
+            cut.append(sym)
+        elif runner is not None:
             p, e = held.get(sym), watch.get(sym)
             info = dict(direction=(p or {}).get("direction") or (e.direction if e else None),
                         return_20d_pct=calc.get("ret_20d", {}).get(sym),
@@ -93,6 +97,8 @@ def news(ctx: RunContext, _: str) -> dict:
                           why=r.output.get("reasoning", ""), status=r.status)
             except Exception as ex:                                  # noqa: BLE001 - budget or API: listed raw
                 ctx.event(f"{sym}: DC-14 {type(ex).__name__}: {ex}", "warn", "news")
+                if type(ex).__name__ in BUDGET_STOPS:
+                    cut.append(sym)
         ctx.db.insert_new("news_seen", dict(link=it["link"], symbol=sym, title=it["title"], published=it["published"],
                                             seen_on=ctx.as_of.isoformat(), klass=it.get("klass"),
                                             direction=it.get("direction"),
@@ -104,7 +110,10 @@ def news(ctx: RunContext, _: str) -> dict:
     flags = {it["symbol"]: f"{it['klass']}: {it['title']}" for it in against if not it["held"]}
     diary = sorted(fresh, key=lambda x: (RANK.get(x.get("klass"), 6), not x["held"]))[:DIARY]
     etf_of = {s: e.etf for s, e in watch.items()} | {s: p.get("sector") for s, p in held.items()}
+    if cut:
+        ctx.event(f"agent budget reached: {len(cut)} headlines not classified", "warn", "news", data={"budget_cut": cut})
     return {"enabled": True, "classified": sum(1 for x in fresh if x.get("klass")), "items": fresh,
+            "budget_cut": sorted(set(cut)),
             "symbols": [{"symbol": s, "held": s in held} for s in list(held) + list(watch)],
             "adverse": adverse, "watch_flags": flags, "diary": diary,
             "peer_notes": peer_notes(fresh, list(watch.values()), etf_of)}

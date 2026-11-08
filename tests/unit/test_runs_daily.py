@@ -533,3 +533,31 @@ def test_bad_data_on_a_held_stock_still_holds_every_entry(db):
     _two(db, pf)
     assert not db.all("SELECT id FROM approval_queue WHERE kind='enter'")
     assert db.one("SELECT kind FROM approval_queue WHERE rule_id='DATA-MISMATCH'")["kind"] == "block_new_risk"
+
+
+# ---------------------------------------------------------------- the daily budget instead of count caps (Ilay 08.11)
+
+class BrokeAgents(FakeAgents):
+    """The daily budget is spent: every card but A7's raises like the runner does."""
+    def decide(self, agent, card, fs, world, **kw):
+        from qt.agents.runner import BudgetExceeded
+        if agent != "A7":
+            self.calls.append((card, kw.get("subject"), dict(world)))
+            raise BudgetExceeded("agent budget $40 reached: only A7, C run")
+        return super().decide(agent, card, fs, world, **kw)
+
+
+def test_news_cut_by_the_budget_is_said_in_the_summary(db):
+    sent, ag = [], BrokeAgents()
+    rid = _runner(db, prices=NewsPrices(), notifier=sent.append, agents=ag).start("daily", AS_OF)
+    assert [c[:2] for c in ag.calls if c[0] in ("DC-14", "DC-15", "DC-16")] == [("DC-14", "BA")]  # once, then no more
+    assert ("DC-23", "BA") in [c[:2] for c in ag.calls]                       # A7 is past the budget
+    out = db.one("SELECT output FROM run_steps WHERE run_id=? AND step='news'", (rid,), ["output"])["output"]
+    assert out["budget_cut"] == ["BA"]
+    assert "תקציב הסוכנים היומי נגמר: 1 בדיקות לא רצו (BA)" in sent[0]
+
+
+def test_no_count_cap_on_daily_cards():
+    import qt.daily as D
+    import qt.news as N
+    assert not hasattr(D, "MAX_HEAT") and not hasattr(D, "MAX_TECH") and not hasattr(N, "MAX_CLASSIFY")

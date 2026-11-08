@@ -244,6 +244,7 @@ verification:                      # peer-review plan stage 1: data checks in co
 runtime:                           # runtime plan 4-7; not from course (operations)
   timezone: America/New_York
   daily_at: "18:30"                # after the close
+  scan_at: "17:30"                 # the nightly scan of the whole market (qt.scan; Ilay 08.11), before the daily run
   premarket_at: "08:30"
   open_at: "09:35"                 # approved paper orders fill at the open (Ilay 23.10)
   weekly_at: "10:00"               # Saturday

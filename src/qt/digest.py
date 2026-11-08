@@ -29,7 +29,7 @@ TZ = ZoneInfo("Asia/Jerusalem")          # Ilay's morning (not from course)
 AT = time(7, 0)
 WINDOW = timedelta(minutes=30)
 MAIN = ("daily", "weekly", "monthly")
-KIND_HE = {"daily": "יומית", "weekly": "שבועית", "monthly": "חודשית", "premarket": "לפני פתיחה", "open": "בפתיחה"}
+KIND_HE = {"daily": "יומית", "scan": "סריקה לילית", "weekly": "שבועית", "monthly": "חודשית", "premarket": "לפני פתיחה", "open": "בפתיחה"}
 LOOKBACK = timedelta(hours=36)           # with no digest before: the runs of the last day and a half
 MAX_LOOKBACK = timedelta(days=4)         # a long gap still shows only the last few days
 CALENDAR_DAYS = 7

@@ -29,8 +29,10 @@ from qt import watch as W
 
 INDEX, VIX = "^GSPC", "^VIX"
 HISTORY_DAYS = 400                     # enough for ATR60 and the VIX low window
-MAX_HEAT = 8                           # DC-15/DC-16 calls a day (not from course: cost)
-MAX_TECH = 4                           # DC-23 calls a day (not from course: cost)
+# No count cap on the daily agent calls (Ilay 08.11: the cadence follows what the AI can do, not a human's day): the
+# runner's daily budget (agents/models.yaml) is the only limit. Calls go in order of priority, and when the budget is
+# reached the rest is listed in the summary, not dropped in silence.
+BUDGET_STOPS = ("BudgetExceeded", "AgentUnavailable")
 TECH_REPEAT_DAYS = 5                   # DC-23 asks again about the same position after 5 days (not from course)
 HEAT_RULES = ("S08-R26", "DC-16")      # approval-queue rule ids of a heat proposal
 
@@ -264,7 +266,7 @@ def day61_reviewed(ctx: RunContext, symbol: str, since: str) -> bool:
 DC16_HEAT = {"frozen_exit": "frozen"}                                # noise_continue keeps the heat
 
 
-def heat_cards(ctx: RunContext, runner) -> dict:
+def heat_cards(ctx: RunContext, runner, cut: list[str] | None = None) -> dict:
     """A5 on the watchlist (S08-R25, S08-R26, DC-15, DC-16): DC-16 when code saw an against move and the stock is not
     held; otherwise DC-15 on a code reason or today's A/B news for the idea not priced in. A changed heat is a proposal
     in the approval queue; the heat in force changes only once Ilay approves it (watch.check reads it back)."""
@@ -275,23 +277,20 @@ def heat_cards(ctx: RunContext, runner) -> dict:
     for it in nw.get("items") or []:
         if it.get("klass") in ("A", "B") and it.get("direction") == "for_idea" and it.get("priced_in") is False:
             news_for.setdefault(it["symbol"], []).append(f"{it['klass']}: {it['title']}")
-    q, out, n = Queue(ctx.db), {}, 0
+    q, out = Queue(ctx.db), {}
     waiting = {i["symbol"] for i in q.open_items() if i["kind"] == "heat"}   # one open proposal per symbol is enough
+    todo = []
     for c in w.get("checks") or []:
         e = entries.get(c["symbol"])
         if e is None or c.get("status") == "stale" or e.symbol in waiting:
             continue
         frozen = (c.get("heat") or e.heat) == "frozen"                # DC-16 can only say frozen again: no call
         if c.get("dc16") and not c.get("held") and not frozen:
-            card = "DC-16"
+            todo.append(("DC-16", c, e))
         elif c.get("dc15") or news_for.get(e.symbol):
-            card = "DC-15"
-        else:
-            continue
-        if n >= MAX_HEAT:
-            ctx.event(f"{e.symbol}: {card} skipped, {MAX_HEAT} heat calls today", "warn", "agents")
-            continue
-        n += 1
+            todo.append(("DC-15", c, e))
+    todo.sort(key=lambda t: t[0] != "DC-16")                         # an against move first: it may freeze the idea
+    for i, (card, c, e) in enumerate(todo):
         fs = FactSheet()
         for k in ("close", "since_add_pct", "potential_pct", "rr", "days_on_list", "trend_3m_pct"):
             if c.get(k) is not None:
@@ -304,6 +303,9 @@ def heat_cards(ctx: RunContext, runner) -> dict:
             r = runner.decide("A5", card, fs, world, run_id=ctx.run_id, step="agents", subject=e.symbol)
         except Exception as ex:                                      # noqa: BLE001 - budget or API: no change
             ctx.event(f"{e.symbol}: {card} {type(ex).__name__}: {ex}", "warn", "agents")
+            if type(ex).__name__ in BUDGET_STOPS and cut is not None:
+                cut.extend(f"{x.symbol} {k}" for k, _, x in todo[i:])
+                break
             continue
         if card == "DC-15" and "day_61" in world["reasons"]:
             ctx.event(REVIEW_EVENT.format(sym=e.symbol), "info", "agents")
@@ -418,7 +420,7 @@ def regime_card(ctx: RunContext, runner) -> dict | None:
 DC23_KIND = {"half": "sell", "all": "exit"}
 
 
-def technical_cards(ctx: RunContext, runner) -> dict:
+def technical_cards(ctx: RunContext, runner, cut: list[str] | None = None) -> dict:
     """A7 on technical profit-taking flags (DC-23): an open stock position in profit whose stop is not hit, with at
     least one flag from qt.timing.profit_flags. Not on options (60/40 is code, S12-R11). half / all go to Ilay as a
     sell or an exit; none is journalled and the flags stay open for the next close."""
@@ -427,7 +429,7 @@ def technical_cards(ctx: RunContext, runner) -> dict:
     snap, c, r = ctx.out("fetch"), ctx.out("calc"), ctx.out("rules")
     exits = {a["symbol"] for a in r["actions"] if a["kind"] == "exit"}
     since = (ctx.as_of - timedelta(days=TECH_REPEAT_DAYS)).isoformat()
-    out, n = {}, 0
+    out, todo = {}, []
     for p in _pf(ctx).get("positions", []):
         sym = p["symbol"]
         price, rows = c["prices"].get(sym), snap["bars"].get(sym)
@@ -442,10 +444,9 @@ def technical_cards(ctx: RunContext, runner) -> dict:
         if ctx.db.one("SELECT id FROM decisions WHERE card_id='DC-23' AND subject=? AND created_at>=? LIMIT 1",
                       (sym, since)):
             continue
-        if n >= MAX_TECH:
-            ctx.event(f"{sym}: DC-23 skipped, {MAX_TECH} calls today", "warn", "agents")
-            continue
-        n += 1
+        todo.append((sg * (price - p["entry"]) / p["entry"], p, sym, price, flags))
+    todo.sort(key=lambda t: -t[0])                                   # the largest open profit first
+    for i, (_, p, sym, price, flags) in enumerate(todo):              # A7 is past the budget (always_run)
         fs = FactSheet()
         _portfolio_facts(ctx, fs)
         _position_facts(ctx, p, fs)
@@ -457,6 +458,9 @@ def technical_cards(ctx: RunContext, runner) -> dict:
             res = runner.decide("A7", "DC-23", fs, world, run_id=ctx.run_id, step="agents", subject=sym)
         except Exception as ex:                                      # noqa: BLE001 - budget or API: no proposal
             ctx.event(f"{sym}: DC-23 {type(ex).__name__}: {ex}", "warn", "agents")
+            if type(ex).__name__ in BUDGET_STOPS and cut is not None:
+                cut.extend(f"{t[2]} DC-23" for t in todo[i:])
+                break
             continue
         kind = DC23_KIND.get(res.option)
         qty = None if kind is None else (float(int(abs(p["qty"]) // 2)) if kind == "sell" else p["qty"])
@@ -498,8 +502,14 @@ def agents(ctx: RunContext, _: str) -> dict:
     except Exception as ex:                                          # noqa: BLE001 - budget or API: the code's cuts stand
         ctx.event(f"DC-22 {type(ex).__name__}: {ex}", "warn", "agents")
         regime = None
-    return {"enabled": True, "decisions": out, "heat": heat_cards(ctx, runner), "regime": regime,
-            "technical": technical_cards(ctx, runner)}
+    cut: list[str] = []                       # what the daily budget left out, in priority order (A7 always runs)
+    heat = heat_cards(ctx, runner, cut)
+    technical = technical_cards(ctx, runner, cut)
+    if cut:
+        ctx.event(f"agent budget reached: {len(cut)} cards not asked ({', '.join(cut[:10])})", "warn", "agents",
+                  data={"budget_cut": cut})
+    return {"enabled": True, "decisions": out, "heat": heat, "regime": regime, "technical": technical,
+            "budget_cut": cut}
 
 
 def _actions(ctx: RunContext) -> list[dict]:
@@ -589,6 +599,9 @@ def notify(ctx: RunContext, _: str) -> dict:
             + (f" · ⚠️ פער בין מקורות: {', '.join(mism)}" if mism else "")
             + (f" · {len(filled)} עסקאות נייר בוצעו" if filled else "")
             + f" · {float(cost['c'] or 0):.2f}$")
+    cut = list((ctx.out("agents") or {}).get("budget_cut") or []) + list((ctx.out("news") or {}).get("budget_cut") or [])
+    if cut:                                   # gap 34: the budget's cut used to stay in the run log
+        text += f"\n⚠️ תקציב הסוכנים היומי נגמר: {len(cut)} בדיקות לא רצו ({', '.join(cut[:8])}{'…' if len(cut) > 8 else ''})"
     text += "\n\n" + day_summary(ctx)
     digest = chunks(digest_lines(ctx.out("news") or {}))
     sent = 0
