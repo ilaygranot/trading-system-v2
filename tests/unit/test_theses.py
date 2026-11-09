@@ -349,3 +349,31 @@ def test_the_weekly_research_revisits_a_position_whose_pillar_weakened(db):
     Runner(db, PIPELINES, {**svc, "agents": AgentRunner(db, CardClient()), "fred": object(), "research_run": research}).start("weekly", AS_OF)
     assert seen == {"wanted": [("SHEL", ["pillar"])], "store": True}
     assert any("🔁 SHEL (בתיק) נבדקה מחדש (עמוד נשבר או נחלש מאז הגרסה האחרונה): התזה נשארה כמו שהיא" in m for m in bot.sent)
+
+
+def test_a_watch_only_sector_entry_gets_no_backfill_deep_dive(db):
+    from dossiers import complete
+    from qt.agents import AgentRunner
+    from qt.pipelines import PIPELINES
+    from qt.runs import Runner
+    from test_judge import CardClient
+    from test_weekly import AS_OF, Bot, _svc
+    Queue(db).upload("manual_macro", "ism.yaml", "ism_pmi: {'2026-09': 49}\n")
+    seen = {}
+
+    def research(as_of, judge, manual_text, fred):
+        seen["wanted"] = [w["sym"] for w in judge.backfill_wanted]
+        d = complete(DOSSIER)
+        d["watch_sectors"] = {"etfs": ["XLF"], "timing": [dict(etf="XLF", sym="JPM", dir="long", combined="orange",
+                                                              price=300.0, adr=1.5, extreme=320.0)]}
+        return d
+    from test_weekly import _entry
+    wl = {"entries": [vars(_entry(symbol="BAC", added="2026-10-01", watch_sector=True))]}   # no full analysis wanted
+    bot = Bot()
+    Runner(db, PIPELINES, {**_svc(bot, wl), "agents": AgentRunner(db, CardClient()), "fred": object(),
+                           "research_run": research}).start("weekly", AS_OF)
+    assert seen["wanted"] == []                                      # and the report is not partial for it
+    assert any("👀 סקטורים נייטרליים עם רמזור ירוק, למעקב בלבד: XLF: JPM" in m for m in bot.sent)
+    new = yaml.safe_load(Queue(db).latest_upload("watchlist")["content"])
+    jpm = next(e for e in new["entries"] if e["symbol"] == "JPM")
+    assert jpm["bucket"] == "watch" and jpm["watch_sector"] is True

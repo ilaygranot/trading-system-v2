@@ -284,7 +284,7 @@ def research(ctx: RunContext, _: str) -> dict:
         entries = (ctx.services.get("watchlist") or {}).get("entries") or []
         cover = analysed(ctx.db, [e["symbol"] for e in entries], ctx.as_of)
         wanted = [dict(sym=e["symbol"], etf=e.get("etf"), dir=e.get("direction") or "long")
-                  for e in entries if e["symbol"] not in cover]
+                  for e in entries if e["symbol"] not in cover and not e.get("watch_sector")]   # watch only: no deep dive
         n = lim.get("max_backfill", len(wanted))                   # the dry run: fewer (qt.dryrun)
         from qt.theses import MAX_REVISIT, Store, due_for_review
         judge.theses = Store(ctx.db)                   # A4 updates the standing theses (qt.theses, phase C)
@@ -296,7 +296,8 @@ def research(ctx: RunContext, _: str) -> dict:
         runner.limit_usd = prev
     d = json.loads(json.dumps(d, default=str))
     d["meta"]["watchlist"] = {"analysed_before": cover, "deferred": [w["sym"] for w in wanted[n:]],
-                              "symbols": [e["symbol"] for e in entries]}
+                              "symbols": [e["symbol"] for e in entries if not e.get("watch_sector")],
+                              "watch_only": [e["symbol"] for e in entries if e.get("watch_sector")]}
     d["meta"]["revisited"] = [{k: r[k] for k in ("sym", "revisit", "held")} for r in revisit]
     from qt.research import completeness
     d["completeness"] = done = completeness.check(d)           # the report opens with it; a block fails the step
@@ -312,6 +313,7 @@ def research(ctx: RunContext, _: str) -> dict:
     on_list = {e["symbol"] for e in (old or {}).get("entries", [])}
     J = d.get("judgments") or {}
     ideas = [dict(symbol=s, bucket=i["bucket"], direction=i["direction"], rr=(i.get("plan") or {}).get("rr"),
+                  data_gap=bool((i.get("plan") or {}).get("data_gap")),
                   line=((i.get("judgment") or {}).get("tldr") or {}).get("line") or (i.get("judgment") or {}).get("why", ""))
              for s, i in d["ideas"].items()]
     sc = (d.get("sectors") or {}).get("scorecard") or {}
@@ -320,6 +322,8 @@ def research(ctx: RunContext, _: str) -> dict:
             "rejected_on_list": [x["symbol"] for x in ideas if x["bucket"] == "reject" and x["symbol"] in on_list],
             "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {}),
             "continued": J.get("continued") or [], "macro_auto": auto, "theses": theses,
+            "watch_sectors": {e: [t["sym"] for t in (d.get("watch_sectors") or {}).get("timing") or [] if t["etf"] == e]
+                              for e in (d.get("watch_sectors") or {}).get("etfs") or []},
             "revisited": [dict(symbol=r["sym"], why=r["revisit"], held=r["held"],
                                done=r["sym"] in d["ideas"], change=((d["ideas"].get(r["sym"]) or {}).get("judgment") or {})
                                .get("thesis_change")) for r in revisit]}
@@ -417,7 +421,12 @@ def summary(ctx: RunContext) -> str:
             lines += verdict_lines(rs["completeness"])
         for x in rs["ideas"]:
             if x["bucket"] in ("enter", "conditional"):
-                lines.append(f"• {x['symbol']} {BUCKET_HE[x['bucket']]} · יחס {_f(x['rr'], sign=False)} · {x['line']}")
+                lines.append(f"• {x['symbol']} {BUCKET_HE[x['bucket']]} · יחס {_f(x['rr'], sign=False)} · {x['line']}"
+                             + (" · ⚠️ פער נתונים ביעד (בסיס EPS)" if x.get("data_gap") else ""))
+        ws = rs.get("watch_sectors") or {}
+        if ws:
+            lines.append("👀 סקטורים נייטרליים עם רמזור ירוק, למעקב בלבד: "
+                         + " · ".join(f"{e}: {', '.join(v) or 'אין מניות כתומות או ירוקות'}" for e, v in ws.items()))
         from qt.theses import REVISIT_HE
         for r in rs.get("revisited") or []:
             why = ", ".join(REVISIT_HE.get(w, w) for w in r["why"])

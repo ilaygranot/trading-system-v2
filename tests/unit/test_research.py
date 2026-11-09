@@ -265,3 +265,43 @@ def test_historical_multiple_outlier_at_one_and_a_half_times_the_median():
     v = idea.valuation(bars, _fund([10, 10, 10]), {"f0": 10, "f1": 11, "f2": 12}, {"pe1": 15})
     assert v["dropped_multiples"] == [46.1] and v["target"]["multiple_source"] == "hist_trimmed"
     assert round(v["target"]["multiple"], 2) == 18.0
+
+
+def test_an_unreliable_own_multiple_is_the_target_of_last_resort_with_a_data_gap():
+    # Ilay 09.11: the idea comes to the table with the caveat, not dropped
+    targets = [dict(source="own_multiple_target", price=150, unreliable=True, multiple_source="hist_3y", rr=5.0),
+               dict(source="all_time_high_target", price=190, rr=9.0, beyond_horizon=True)]
+    j = {"target_source": "own_multiple_target"}
+    chosen = run._choose_target(targets, j)
+    assert chosen["source"] == "own_multiple_target" and "פער נתונים" in chosen["data_gap"]
+    assert j["code_overrides"][-1]["to"] == "own_multiple_target"
+    sector = [dict(targets[0], multiple_source="sector")]                # a sector multiple is still never the target
+    assert run._choose_target(sector, {}) is None
+    d = {"plan": {"verdict": {"status": "ok"}, "rr": 5.0, "data_gap": chosen["data_gap"]}, "timing": {"combined": "orange"},
+         "judgment": {}}
+    bucket, why = run.classify(d)
+    assert bucket == "conditional" and "פער נתונים" in why
+
+
+def test_a_green_neutral_sector_goes_on_the_watchlist_watch_only(monkeypatch):
+    # Ilay 09.11 (funnel audit 3.11, option b): seen, not entered, not deep-dived
+    from types import SimpleNamespace as NS
+    from qt.watch import from_dossier, load
+    light = {"XLF": "green", "XLY": "red"}
+    monkeypatch.setattr(run, "snapshot", lambda bars, direction: NS(overall=light[bars]))
+    monkeypatch.setattr(run.sector_screen, "screens", lambda rows, longs, shorts: {e: {} for e in longs})
+
+    def timing(y, screens, as_of):
+        assert list(screens) == ["XLF"]
+        return [dict(etf="XLF", sym=f"F{n}", dir="long", combined=c, rr_extreme=rr, price=10.0, adr=0.2, extreme=14.0)
+                for n, (c, rr) in enumerate([("orange", 2), ("green", 1), ("red", 9), ("orange", 5), ("orange", 4),
+                                             ("orange", 3), ("orange", 1)])] + [dict(etf="XLF", sym="ERR", error="x")]
+    monkeypatch.setattr(run, "stage_timing", timing)
+    y = NS(bars=lambda sym, start, end: sym)
+    w = run.watch_sectors(y, {"neutral": ["XLF", "XLY"]}, {}, date(2026, 11, 7))
+    assert w["etfs"] == ["XLF"] and [t["sym"] for t in w["timing"]] == ["F1", "F3", "F4", "F5", "F0"]   # green first, then R:R
+    d = {"meta": {"as_of": "2026-11-07"}, "ideas": {}, "timing": [], "watch_sectors": w}
+    entries = load(from_dossier(d))
+    assert [e.symbol for e in entries] == ["F1", "F3", "F4", "F5", "F0"]
+    assert all(e.bucket == "watch" and e.watch_sector and "מעקב בלבד" in e.why_not for e in entries)
+    assert run.watch_sectors(y, {"neutral": ["XLY"]}, {}, date(2026, 11, 7)) == {"etfs": [], "timing": []}
