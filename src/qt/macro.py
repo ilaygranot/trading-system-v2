@@ -10,7 +10,6 @@ trading day. Fetching them (FRED with ALFRED vintages, the ISM report, NFIB) is 
 """
 from __future__ import annotations
 
-import statistics
 from dataclasses import dataclass, field
 from typing import Literal, Sequence
 

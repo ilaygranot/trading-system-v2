@@ -264,8 +264,8 @@ def research_inputs(ctx: RunContext, what: str = "המחקר השבועי") -> t
 
 
 def research(ctx: RunContext, _: str) -> dict:
-    """The weekly research by the agents. Without the agents, FRED or the monthly manual file it is skipped and the
-    summary says what is missing; the rest of the weekly review stands."""
+    """The weekly research by the agents. Without the agents, FRED or a current macro file the step fails with what is
+    missing (research_inputs, DataMissing; Ilay 24.10): it is never skipped, and a resume runs it once the data is in."""
     q = Queue(ctx.db)
     runner, fred, manual, auto = research_inputs(ctx)
     import json

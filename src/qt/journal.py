@@ -6,7 +6,6 @@ what Ilay decided, and a measurable prediction with a check date. Outcomes are w
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path

@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 STAGES = [f"S{n:02d}" for n in range(1, 14)]
 WEEKLY_KEYS = ("QT_DATABASE_URL", "FRED_API_KEY", "SEC_CONTACT", "ROIC_API_KEY", "FMP_API_KEY", "TELEGRAM_BOT_TOKEN",
@@ -299,7 +299,3 @@ def main(offline: bool = False, notify: bool = False) -> int:
         if bot is not None:
             bot.send(out)
     return 0 if all(r.ok for r in results) else 1
-
-
-def as_dict(results: list[Result]) -> list[dict[str, Any]]:
-    return [vars(r) for r in results]

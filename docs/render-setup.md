@@ -1,6 +1,6 @@
 # הקמה ב-Render (צעד אחר צעד)
 
-כל מה שבקוד כבר מוכן: `render.yaml` מגדיר שירות web, ארבע משימות cron, Postgres ו-IB Gateway פרטי. אין מפתחות בקוד; כולם נכנסים בלוח של Render, ולא בצ'אט.
+כל מה שבקוד כבר מוכן: `render.yaml` מגדיר שירות web, עשר משימות cron (scan, daily, intraday, premarket, open, weekly, midweek, monthly, dryrun, digest), Postgres ו-IB Gateway פרטי. אין מפתחות בקוד; כולם נכנסים בלוח של Render, ולא בצ'אט.
 
 ## מה צריך לפני
 
@@ -16,7 +16,7 @@
 1. ב-Render: New → Blueprint → בוחרים את הריפו `trading-system-v2`. Render קורא את `render.yaml`.
 2. Render מבקש את הערכים שמסומנים `sync: false`, **פעם אחת בלבד**:
    - ב-`qt-web`: `ANTHROPIC_API_KEY` או `CLAUDE_CODE_OAUTH_TOKEN` (אחד מהם, השני נשאר ריק), `FRED_API_KEY`, `FMP_API_KEY`, `ROIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DASHBOARD_PASSWORD`.
-     ארבע משימות ה-cron מעתיקות אותם מ-`qt-web` לבד.
+     משימות ה-cron מעתיקות אותם מ-`qt-web` לבד.
    - ב-`qt-ibgateway`: `TWS_USERID`, `TWS_PASSWORD`.
    הסוכנים רצים על `ANTHROPIC_API_KEY` אם הוא מלא. אחרת הם רצים על `CLAUDE_CODE_OAUTH_TOKEN`, המנוי שלך ב-Claude, דרך Claude Code.
    הטוקן נוצר במחשב שלך עם `claude setup-token`. ה-build מתקין את Claude Code לבד, בגרסה נעולה.
@@ -54,17 +54,18 @@
 
 ## כל חודש
 
-הריצה החודשית (שבת בשבוע השני) מחכה לקובץ המקרו הידני (ISM PMI/NMI, NFIB) בפורמט YAML:
-`ism_pmi: {'2026-09': 49.1, ...}`. הבוט מזכיר; שולחים לו את הקובץ והריצה ממשיכה לבד.
+קובץ המקרו החודשי (ISM PMI/NMI וטבלאות התעשיות, NFIB, NAAIM) נמשך לבד מדפים ציבוריים (`qt/data/macro_auto.py`) לפני הריצה הלילית, השבועית והחודשית.
+כשמקור לא עונה, הריצות ממשיכות עם החודשים האחרונים הידועים ואומרות זאת. הקובץ הידני נשאר כגיבוי, בפורמט YAML:
+`ism_pmi: {'2026-09': 49.1, ...}`. כשהריצה החודשית לא מוצאת את החודש הנדרש, הבוט מזכיר; שולחים לו את הקובץ והריצה ממשיכה לבד.
 
-אפשר להוסיף לאותו קובץ את טבלת התעשיות מדוח ה-ISM (S05-R6, S05-R9). זה לא חובה, אבל בלי זה ההכנה החודשית מדלגת על הטבלה:
+אפשר להוסיף לאותו קובץ ידני את טבלת התעשיות מדוח ה-ISM (S05-R6, S05-R9). זה לא חובה, אבל בלי זה ההכנה החודשית מדלגת על הטבלה:
 ```yaml
 ism_growing: {'2026-09': [Machinery, Chemical Products]}      # בסדר של הדוח
 ism_contracting: {'2026-09': [Textiles, Paper Products]}
 ism_short_supply: {'2026-09': {Copper: 4, Electronic Components: 2}}   # מספר החודשים ברצף, כמו בדוח
 ```
 
-NAAIM (S09-R33) עבר למנויים באוגוסט 2026, ולכן גם הוא מגיע מהקובץ הידני: הערכים השבועיים מהחודש האחרון, `naaim: {'2026-09-30': 72.5, ...}`.
+NAAIM (S09-R33) עבר למנויים באוגוסט 2026, ולכן כשהדף שלו סגור הוא מגיע מהקובץ הידני: הערכים השבועיים מהחודש האחרון, `naaim: {'2026-09-30': 72.5, ...}`.
 עם שנה של ערכים ההכנה החודשית מחשבת גם קיצון (ממוצע ± סטיית תקן, D-S09-8). את ה-COT היא מושכת לבד מה-CFTC.
 
 תקרות החשיפה (D-S11-7) נכתבות בקובץ התיק, כחלק מההון: `caps: {long_max: 1.0, short_max: 0.3, net_max: 0.9}`.
@@ -72,10 +73,10 @@ NAAIM (S09-R33) עבר למנויים באוגוסט 2026, ולכן גם הוא 
 
 ## עלות צפויה
 
-web starter 7$ · Postgres basic-256mb כ-6$ · ארבע משימות cron לפי דקות ריצה (מעט דולרים; השבועית על standard כי המחקר צריך זיכרון) · IB Gateway על standard (2GB, דולק כל הזמן) כ-25$ · בסה"כ כ-45–50$ לחודש. לאמת במחירון של Render.
-סוכנים: עד 10$ ליום בריצות היומיות, ועד 25$ למחקר השבועי (models.yaml), בתוך התקרה החודשית של 150$.
+web starter 7$ · Postgres basic-256mb כ-6$ · משימות ה-cron לפי דקות ריצה (מעט דולרים; השבועית על standard כי המחקר צריך זיכרון) · IB Gateway על standard (2GB) כ-25$ כשהוא דולק (מושהה מאז 24.10) · בסה"כ כ-45–50$ לחודש. לאמת במחירון של Render.
+סוכנים (`models.yaml`, budget): עד 40$ ליום בריצות היומיות, עד 150$ למחקר השבועי ועד 60$ למחקר של אמצע השבוע, במחירון. על המנוי (`CLAUDE_CODE_OAUTH_TOKEN`) אלה תקרות נגד לולאה ולא חיוב; על `ANTHROPIC_API_KEY` הן כסף אמיתי.
 
 ## אופציונלי
 
-דופק (healthchecks.io): יוצרים בדיקה לכל ריצה ומוסיפים `HEALTHCHECK_DAILY`, `HEALTHCHECK_PREMARKET`,
-`HEALTHCHECK_WEEKLY`, `HEALTHCHECK_MONTHLY` עם הכתובת. אם ריצה לא דיווחה בזמן, מגיעה התראה.
+דופק (healthchecks.io): יוצרים בדיקה לכל ריצה ומוסיפים `HEALTHCHECK_<KIND>` עם הכתובת, לכל ריצה מתוזמנת:
+`HEALTHCHECK_SCAN`, `HEALTHCHECK_DAILY`, `HEALTHCHECK_INTRADAY`, `HEALTHCHECK_PREMARKET`, `HEALTHCHECK_OPEN`, `HEALTHCHECK_WEEKLY`, `HEALTHCHECK_MIDWEEK`, `HEALTHCHECK_MONTHLY`. אם ריצה לא דיווחה בזמן, מגיעה התראה.

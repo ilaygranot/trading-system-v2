@@ -175,7 +175,6 @@ def test_merge_watchlist_keeps_old_entries_and_the_first_added_date():
 
 
 def test_weekly_research_saves_report_updates_watchlist_and_links_it(db, monkeypatch):
-    import copy
     import json as _json
     from pathlib import Path
 
@@ -281,7 +280,6 @@ def test_hindsight_says_when_not_entering_was_wrong_or_right():
 def test_a_research_cut_by_the_budget_fails_the_run_after_the_partial_report(db):
     """Ilay 24.10: a run the budget cut is not done. The partial report is up, the run fails (the bot offers the
     resume), and the resume asks the agents only for what is missing (test_research_state)."""
-    import copy
     import json as _json
     from pathlib import Path
 

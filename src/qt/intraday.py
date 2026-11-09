@@ -22,7 +22,7 @@ Nothing here changes a stop, a size or a rule: the watch sees sooner, it does no
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from qt.approvals import Queue

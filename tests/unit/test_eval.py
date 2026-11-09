@@ -1,6 +1,5 @@
 """The course test set (qt.agents.eval) with a fake client: the cases are well formed, the traps pass the code
 checks, the agents see a blind Playbook, scoring and the pass bar."""
-from types import SimpleNamespace as NS
 
 from qt.agents import AgentRunner, load_cards
 from qt.agents.blind import blind, leaks

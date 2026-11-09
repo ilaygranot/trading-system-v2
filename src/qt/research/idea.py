@@ -4,7 +4,6 @@ size, horizon, option candidates) and the rules engine's verdict. Code computes;
 (story, thesis, growth engines, levels color, trigger) come from the agent cards and are merged later."""
 from __future__ import annotations
 
-import math
 import statistics
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone

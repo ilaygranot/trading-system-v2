@@ -528,7 +528,8 @@ FED_STATE_HE = {
 
 
 def _was(d: dict, what: str) -> str:
-    """A part the agents did not write this time and that stays from an earlier research (weekly.carry_forward)."""
+    """A part the agents did not write this time and that stays from an earlier research. Only reports saved before 24.10 carry it: nothing is
+    copied between weeks any more (completeness.py flags it)."""
     c = (d.get("judgments") or {}).get("carried") or {}
     return f' · מהמחקר של {E(c.get("from") or "")}' if what in (c.get("what") or []) else ""
 
