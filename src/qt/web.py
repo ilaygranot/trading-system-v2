@@ -219,6 +219,14 @@ class App:
             if m and method == "GET":
                 sym = m.group(1).upper()
                 return self._live(env, start, sym, lambda: self.stock_html(sym), "/ideas", css=ui.report_css(), head=False)
+            if path == "/theses" and method == "GET":
+                return self._live(env, start, "מאגר התזות", self.theses_html, "/research",
+                                  sub="מה כל רעיון נשען עליו: מקרו, סקטור, חברה. לקריאה בלבד")
+            m = re.fullmatch(r"/thesis/(macro|sector|company|idea)/([\w.:%\-]{1,24})", path)
+            if m and method == "GET":
+                from urllib.parse import unquote
+                kind, subj = m.group(1), unquote(m.group(2))
+                return self._live(env, start, f"תזה: {subj}", lambda: self.thesis_html(kind, subj), "/research")
             if path == "/macro" and method == "GET":
                 return self._live(env, start, "דוח מקרו", self.macro_html, "/research", css=ui.report_css())
             if path == "/sectors" and method == "GET":
@@ -280,6 +288,11 @@ class App:
             except (ValueError, KeyError, TypeError) as e:
                 return f"הקובץ לא נקרא כ-dossier של מחקר: {e}"
             Queue(self.db).upload("dossier", name, content)
+            try:                                               # the thesis store reads the same report (qt.theses)
+                from qt.theses import Store, sync_dossier
+                sync_dossier(Store(self.db), d, f"upload:{name}")
+            except Exception as e:                             # noqa: BLE001 - the report is already saved
+                print(json.dumps({"level": "warn", "theses": f"{type(e).__name__}: {e}"}), flush=True)
             return f"דוח המחקר מ-{d['meta']['as_of']} עלה ללוח הבקרה"
         try:
             yaml.safe_load(content)
@@ -1288,10 +1301,28 @@ class App:
             f"<a class=row href='/report/{r['id']}'><span class=l><b>{_e(r['name'])}</b></span><span class=r>"
             f"<span>{ui.when(r['created_at'])}</span></span></a>" for r in reps) + "</div></div>")
             if reps else ui.empty("הדוח השבועי הראשון יגיע אחרי הריצה השבועית"), id="reports")
-        rail = list(nav) + [("reports", "כל הדוחות")] if nav else []
+        past += ui.section("מאגר התזות", "<div class='panel'><div class=rows><a class=row href='/theses'><span class=l><b>"
+                           "כל התזות</b><span class=note> מקרו, סקטורים, חברות ורעיונות, עם מה שכל אחד נשען עליו</span>"
+                           "</span></a></div></div>", id="theses")
+        rail = list(nav) + [("reports", "כל הדוחות"), ("theses", "תזות")] if nav else []
         h = self.health()
         return self._send(start, "200 OK", ui.page("מחקר", rep + past, "/research", sub=sub, rail=rail,
                                                    css=ui.report_css() if report else "", health=(h["state"], h["text"])))
+
+    def _theses(self):
+        from qt.theses import Store, backfill
+        store = Store(self.db)
+        if not store.all() and self.db.one("SELECT id FROM uploads WHERE kind = 'dossier' LIMIT 1"):
+            backfill(self.db)                          # the first visit fills the store from the saved reports
+        return store
+
+    def theses_html(self) -> str:
+        from qt import thesis_page
+        return thesis_page.list_html(self._theses())
+
+    def thesis_html(self, kind: str, subject: str) -> str:
+        from qt import thesis_page
+        return thesis_page.thesis_html(self._theses(), kind, subject)
 
     # ---- drill-down pages: one stock, the macro report, the sectors (Ilay, 22.10: "click a stock, see everything")
     @staticmethod
