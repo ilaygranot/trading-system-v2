@@ -408,6 +408,44 @@ class Store:
 
 
 MATERIAL_KEYS = ("direction", "bucket", "story_type", "target", "stop")
+MAX_REVISIT = 4      # standing theses re-researched a week, beside the new ideas' deep dives (not from course: cost)
+REVISIT_HE = {"pillar": "עמוד נשבר או נחלש מאז הגרסה האחרונה", "report": "דוח רבעוני פורסם מאז",
+              "upstream": "התזה שמעליה השתנתה"}
+
+
+def due_for_review(store: Store, as_of: date | str, held: Iterable[str] = (), limit: int = MAX_REVISIT) -> list[dict]:
+    """The standing theses the weekly research looks at again (thesis-store spec 3.4, phase D), open positions first:
+    a pillar that broke or weakened after the thesis was last written, a quarterly report since (the company thesis
+    is stale on its next-earnings date), or a thesis upstream that changed. Only stocks with an active idea or an
+    open position: a rejected stock is not re-researched. [{sym, etf, dir, revisit: [reason keys], held}]"""
+    day, held = _d(as_of).isoformat(), set(held)
+    ideas = {t["subject"].split(":")[0]: t for t in store.all("idea")}
+    out = []
+    for sym in sorted(set(ideas) | held):
+        c = store.get("company", sym)
+        i = store.get("idea", ideas[sym]["subject"]) if sym in ideas else None
+        if c is None and i is None:
+            continue
+        why = []
+        for t in [x for x in (c, i) if x]:
+            for p in t["pillars"]:
+                if p["status"] != "holding" and any((e.get("linked_at") or "")[:10] > t["as_of"]
+                                                    for e in store.evidence_for(p["id"], 3)):
+                    why.append("pillar")
+        if c is not None and c["stale_after"] and c["stale_after"] <= day and (c["body"] or {}).get("next_earnings") \
+                and c["body"]["next_earnings"] <= day:
+            why.append("report")
+        if any(store.behind(t) for t in (c, i) if t):
+            why.append("upstream")
+        if not why:
+            continue
+        why = sorted(set(why), key=list(REVISIT_HE).index)
+        etf = ((c or {}).get("body") or {}).get("etf") or next((r["subject"] for r in (i or {}).get("rests_on") or []
+                                                               if r["kind"] == "sector"), None)
+        out.append({"sym": sym, "etf": etf, "dir": i["subject"].split(":")[1] if i else "long", "revisit": why,
+                    "held": sym in held})
+    out.sort(key=lambda x: (not x["held"], list(REVISIT_HE).index(x["revisit"][0]), x["sym"]))
+    return out[:limit]
 
 
 def thesis_facts(fs, prior: dict | None, symbol: str, as_of: date | str) -> int:

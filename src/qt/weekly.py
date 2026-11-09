@@ -286,15 +286,18 @@ def research(ctx: RunContext, _: str) -> dict:
         wanted = [dict(sym=e["symbol"], etf=e.get("etf"), dir=e.get("direction") or "long")
                   for e in entries if e["symbol"] not in cover]
         n = lim.get("max_backfill", len(wanted))                   # the dry run: fewer (qt.dryrun)
-        judge.backfill_wanted = wanted[:n]
-        from qt.theses import Store
+        from qt.theses import MAX_REVISIT, Store, due_for_review
         judge.theses = Store(ctx.db)                   # A4 updates the standing theses (qt.theses, phase C)
+        revisit = _revisits(ctx, judge.theses, {w["sym"] for w in wanted[:n]}, lim.get("max_revisit", MAX_REVISIT),
+                            due_for_review)
+        judge.backfill_wanted = wanted[:n] + revisit   # the revisits do not take a new idea's place (phase D)
         d = (ctx.services.get("research_run") or _run_research)(ctx.as_of, judge, manual["content"], fred)
     finally:
         runner.limit_usd = prev
     d = json.loads(json.dumps(d, default=str))
     d["meta"]["watchlist"] = {"analysed_before": cover, "deferred": [w["sym"] for w in wanted[n:]],
                               "symbols": [e["symbol"] for e in entries]}
+    d["meta"]["revisited"] = [{k: r[k] for k in ("sym", "revisit", "held")} for r in revisit]
     from qt.research import completeness
     d["completeness"] = done = completeness.check(d)           # the report opens with it; a block fails the step
     html = report.render(d)
@@ -316,7 +319,21 @@ def research(ctx: RunContext, _: str) -> dict:
     return {"report_id": rid, "completeness": done, "ideas": ideas, "watchlist_n": len(wl["entries"]), "sector_growth": growth,
             "rejected_on_list": [x["symbol"] for x in ideas if x["bucket"] == "reject" and x["symbol"] in on_list],
             "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {}),
-            "continued": J.get("continued") or [], "macro_auto": auto, "theses": theses}
+            "continued": J.get("continued") or [], "macro_auto": auto, "theses": theses,
+            "revisited": [dict(symbol=r["sym"], why=r["revisit"], held=r["held"],
+                               done=r["sym"] in d["ideas"], change=((d["ideas"].get(r["sym"]) or {}).get("judgment") or {})
+                               .get("thesis_change")) for r in revisit]}
+
+
+def _revisits(ctx: RunContext, store, taken: set[str], limit: int, due_for_review) -> list[dict]:
+    """The standing theses due for a fresh look this week (qt.theses.due_for_review), open positions first, beside
+    the new ideas and the watchlist backfill. A failure here leaves the research as it was."""
+    try:
+        held = [p["symbol"] for p in _pf(ctx).get("positions", [])]
+        return [r for r in due_for_review(store, ctx.as_of, held, limit + len(taken)) if r["sym"] not in taken][:limit]
+    except Exception as e:                                     # noqa: BLE001 - the research goes on without them
+        ctx.event(f"thesis revisits not chosen: {type(e).__name__}: {e}", "warn", "research")
+        return []
 
 
 def _sync_theses(ctx: RunContext, d: dict) -> dict | None:
@@ -401,6 +418,11 @@ def summary(ctx: RunContext) -> str:
         for x in rs["ideas"]:
             if x["bucket"] in ("enter", "conditional"):
                 lines.append(f"• {x['symbol']} {BUCKET_HE[x['bucket']]} · יחס {_f(x['rr'], sign=False)} · {x['line']}")
+        from qt.theses import REVISIT_HE
+        for r in rs.get("revisited") or []:
+            why = ", ".join(REVISIT_HE.get(w, w) for w in r["why"])
+            lines.append(f"🔁 {r['symbol']}{' (בתיק)' if r['held'] else ''} נבדקה מחדש ({why}): "
+                         + ((r.get("change") or "התזה נשארה כמו שהיא") if r["done"] else "לא הושלם השבוע"))
         th = rs.get("theses") or {}
         if th.get("pending"):
             lines.append(f"🧱 {len(th['pending'])} עדכוני תזה בפוזיציות פתוחות מחכים לאישורך: "

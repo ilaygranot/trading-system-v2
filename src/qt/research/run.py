@@ -144,7 +144,8 @@ def backfill(y: Yahoo, u: dict, screens: dict, wanted: list[dict], as_of: date) 
         if t.get("error"):
             errors[sym] = t["error"]
             continue
-        timing.append(t | {"backfill": True, "backfill_failed": c["backfill_failed"]})
+        timing.append(t | {"backfill": True, "backfill_failed": c["backfill_failed"],
+                           **({"revisit": w["revisit"]} if w.get("revisit") else {})})
     return extra, timing, errors
 
 
@@ -528,6 +529,8 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
                                extra=extra)
         if j.get("backfill"):
             ideas[sym]["backfill"] = {"failed": (extra.get(sym) or {}).get("backfill_failed") or []}
+        if j.get("revisit"):
+            ideas[sym]["revisit"] = j["revisit"]
         ideas[sym]["bucket"], ideas[sym]["bucket_reason"] = classify(ideas[sym])
         ideas[sym]["exit"] = exit_plan(ideas[sym]["plan"], j["direction"], ideas[sym]["bucket"], as_of,
                                        ideas[sym]["catalysts"].get("next_earnings"), j)

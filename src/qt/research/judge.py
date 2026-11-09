@@ -373,6 +373,11 @@ PRIOR_HOW = ("The standing thesis on this stock from earlier weeks (thesis store
              "one Hebrew line on what changed in the thesis since the last version and why, empty when nothing did.")
 
 
+REVISIT_WHY = {"pillar": "a pillar broke or weakened since the thesis was last written (see its evidence)",
+               "report": "a quarterly report came out since the thesis was last written",
+               "upstream": "the macro or sector thesis it rests on changed since it was written"}
+
+
 class Judge:
     """Calls the cards for one research run and assembles the judgments dict."""
 
@@ -623,7 +628,11 @@ class Judge:
         if prior:                                       # thesis store, phase C: update the standing thesis
             thesis_facts(fs, prior, sym, as_of)
             world["prior_thesis"] = {"how": PRIOR_HOW, **prior}
-        if t.get("backfill"):                           # on the watchlist with no full analysis: judged on this week
+        if t.get("revisit"):                            # a standing thesis due for a fresh look (thesis store, phase D)
+            world["revisit"] = {"why": "a standing thesis due for a fresh look, not a new idea: update it",
+                                "reasons": [REVISIT_WHY[r] for r in t["revisit"] if r in REVISIT_WHY],
+                                "failed_this_weeks_screen": t.get("backfill_failed") or []}
+        elif t.get("backfill"):                         # on the watchlist with no full analysis: judged on this week
             world["backfill"] = {"why": "on the watchlist from an earlier week without a full analysis",
                                  "failed_this_weeks_screen": t.get("backfill_failed") or []}
 
@@ -781,6 +790,8 @@ class Judge:
             try:
                 j, d, world = self._idea(t, deep_dive, macro, as_of)
                 j["backfill"] = True
+                if t.get("revisit"):
+                    j["revisit"] = list(t["revisit"])
                 J["ideas"][t["sym"]] = j
                 done.append((j, d, world))
             except Exception as e:                       # noqa: BLE001 - as a picked idea's failure

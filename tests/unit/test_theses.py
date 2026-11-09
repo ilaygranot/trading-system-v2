@@ -293,3 +293,59 @@ def test_a_stance_change_at_night_writes_the_macro_thesis_and_marks_the_chain(db
     assert "שינוי בתמונת המקרו" in s.history("macro", "stance")[0]["change"]
     assert s.get("idea", "SHEL:long")["stale_after"] <= "2026-11-06" and s.behind(s.get("idea", "SHEL:long"))   # due now
     assert "🧱 תזת המקרו עודכנה לגרסה 2" in bot.sent[-1]
+
+
+# ---------------------------------------------------------------------- phase D: the research looks again
+def test_due_for_review_puts_positions_first_and_skips_rejected_stocks():
+    from qt.theses import due_for_review
+    s = Store(DB())
+    sync_dossier(s, DOSSIER)
+    assert due_for_review(s, "2026-10-23", held=["SHEL"]) == []                  # nothing moved yet
+    p = s.get("company", "SHEL")["pillars"][1]
+    s.link(s.add_evidence("SHEL", "news", "https://x/buyback", "2026-10-22", "buyback paused"), p, "weakens",
+           "agent:A5", None, "2026-10-22")
+    got = due_for_review(s, "2026-11-07", held=["SHEL"])                   # and TALO reported on 3.11
+    assert [(r["sym"], r["revisit"], r["held"]) for r in got] == [("SHEL", ["pillar", "report"], True),
+                                                                   ("TALO", ["report"], False)]
+    assert got[0]["etf"] == "XLE" and got[0]["dir"] == "long"
+    s.put("macro", "stance", *macro_thesis(_next_week(DOSSIER, DC_01="cold")), as_of="2026-10-27", author="agents")
+    got = due_for_review(s, "2026-10-27", held=[], limit=5)
+    assert {r["sym"] for r in got} == {"SHEL", "TALO"} and all("upstream" in r["revisit"] for r in got)   # not MAA
+    assert len(due_for_review(s, "2026-10-27", limit=1)) == 1
+
+
+def test_a_revisit_tells_a4_why_it_looks_again(db):
+    from qt.agents import AgentRunner
+    from qt.research import judge as JG
+    from test_judge import AS_OF, CardClient, _dc, _deep_dive, _timing, _world
+    client = CardClient()
+    JG.Judge(AgentRunner(db, client), run_id="weekly-x").idea(
+        _timing(1)[0] | {"sym": "SHEL", "backfill": True, "revisit": ["pillar"]}, _deep_dive([]), DOSSIER["macro"], AS_OF)
+    w = _world(_dc(client, "DC-10")[0])
+    assert "backfill" not in w and w["revisit"]["reasons"] == [JG.REVISIT_WHY["pillar"]]
+
+
+def test_the_weekly_research_revisits_a_position_whose_pillar_weakened(db):
+    from dossiers import complete
+    from qt.agents import AgentRunner
+    from qt.pipelines import PIPELINES
+    from qt.runs import Runner
+    from test_judge import CardClient
+    from test_weekly import AS_OF, Bot, _svc
+    s = Store(db)
+    sync_dossier(s, DOSSIER)
+    s.link(s.add_evidence("SHEL", "news", "https://x/b", "2026-10-22", "buyback paused"),
+           s.get("company", "SHEL")["pillars"][1], "weakens", "agent:A5", None, "2026-10-22")
+    Queue(db).upload("manual_macro", "ism.yaml", "ism_pmi: {'2026-09': 49}\n")
+    seen = {}
+
+    def research(as_of, judge, manual_text, fred):
+        seen["wanted"] = [(w["sym"], w.get("revisit")) for w in judge.backfill_wanted]
+        seen["store"] = judge.theses is not None
+        return complete(DOSSIER)
+    bot = Bot()
+    svc = _svc(bot, None)
+    svc["portfolio"]["positions"].append({"symbol": "SHEL", "direction": "long", "qty": 10, "entry": 30.0, "stop": 25.0})
+    Runner(db, PIPELINES, {**svc, "agents": AgentRunner(db, CardClient()), "fred": object(), "research_run": research}).start("weekly", AS_OF)
+    assert seen == {"wanted": [("SHEL", ["pillar"])], "store": True}
+    assert any("🔁 SHEL (בתיק) נבדקה מחדש (עמוד נשבר או נחלש מאז הגרסה האחרונה): התזה נשארה כמו שהיא" in m for m in bot.sent)
