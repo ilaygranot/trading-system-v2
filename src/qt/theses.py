@@ -11,8 +11,9 @@ Here each link is a standing thesis that is updated, not recomputed:
 
 A thesis has pillars (what it stands on, each with a check and a state: holding / weakened / broken) and versions.
 A version records what it rested on (kind, subject, version), so a change upstream finds exactly the ideas built
-on the old one. Evidence (filings, transcripts, headlines) and its links to pillars come in phase B; the tables
-are created here so the schema is whole.
+on the old one. Evidence (phase B): every headline and 8-K that A5 classifies is kept once, and A5 links it to the
+pillars it bears on (DC-14 `pillars`: supports / weakens / breaks / neutral). A pillar that breaks or weakens
+changes state here; the thesis itself changes only through a new version (phase C).
 
 Phase A changes no behaviour: the store is filled from what the system already produces (the weekly research
 dossier and the watchlist) and read by the dashboard. No rule of the course changes, nothing trades.
@@ -82,7 +83,7 @@ CREATE TABLE IF NOT EXISTS evidence_links (
   id {ID},
   evidence_id BIGINT NOT NULL,
   pillar_id BIGINT NOT NULL,
-  stance TEXT NOT NULL,                  -- supports | against | neutral
+  stance TEXT NOT NULL,                  -- the DC-14 effect: supports | weakens | breaks | neutral
   decided_by TEXT NOT NULL,
   decision_id BIGINT,
   created_at {TS} NOT NULL
@@ -209,17 +210,62 @@ class Store:
         return version
 
     def _pillars(self, tid: int, version: int, pillars: list[dict], as_of: date) -> None:
-        """The current pillars: a pillar whose claim did not change keeps its state and its first version."""
+        """The current pillars, updated in place (their evidence links stay attached): a pillar whose claim did not
+        change keeps its state and its first version; a new claim starts holding; a dropped key is removed."""
         old = {p["key"]: p for p in self.pillars(tid)}
-        self.db.execute("DELETE FROM pillars WHERE thesis_id = ?", (tid,))
+        keep = {p["key"] for p in pillars}
+        for k, o in old.items():
+            if k not in keep:
+                self.db.execute("DELETE FROM pillars WHERE id = ?", (o["id"],))
         for p in pillars:
             o = old.get(p["key"])
             same = o is not None and o["claim"] == p["claim"]
-            self.db.insert("pillars", dict(thesis_id=tid, key=p["key"], claim=p["claim"], kind=p.get("kind"),
-                                           check_text=p.get("check"),
-                                           status=p.get("status") or (o["status"] if same else "holding"),
-                                           since_version=o["since_version"] if same else version,
-                                           last_checked=as_of.isoformat()))
+            row = dict(claim=p["claim"], kind=p.get("kind"), check_text=p.get("check"),
+                       status=p.get("status") or (o["status"] if same else "holding"),
+                       since_version=o["since_version"] if same else version, last_checked=as_of.isoformat())
+            if o is None:
+                self.db.insert("pillars", dict(thesis_id=tid, key=p["key"], **row))
+            else:
+                self.db.execute("UPDATE pillars SET " + ", ".join(f"{c} = ?" for c in row) + " WHERE id = ?",
+                                (*row.values(), o["id"]))
+
+    # ------------------------------------------------------------------ evidence (phase B)
+    def ticker_pillars(self, symbol: str) -> list[dict]:
+        """The pillars a headline about `symbol` can bear on: its company thesis and its active ideas, each with a
+        qualified key (company:b1, idea:b2) so A5 can name it."""
+        out = []
+        for kind, subject in [("company", symbol)] + [("idea", t["subject"]) for t in self.all("idea")
+                                                       if t["subject"].split(":")[0] == symbol]:
+            t = self.get(kind, subject)
+            for p in (t or {}).get("pillars") or []:
+                out.append({**p, "qkey": f"{kind}:{p['key']}", "thesis_kind": kind, "subject": subject})
+        return out
+
+    def add_evidence(self, subject: str, kind: str, url: str, published: str | None, title: str | None,
+                     summary: str | None = None, body: str | None = None) -> int:
+        self.db.insert_new("evidence", dict(subject=subject, kind=kind, url=url, published=published, title=title,
+                                            summary=summary, body=body, created_at=_now()), ["url"])
+        return self.db.one("SELECT id FROM evidence WHERE url = ?", (url,))["id"]
+
+    def link(self, evidence_id: int, pillar: dict, effect: str, decided_by: str, decision_id: int | None,
+             as_of: date | str) -> str | None:
+        """Record what the evidence does to the pillar. breaks -> broken; weakens -> weakened (a broken pillar stays
+        broken). Supports never restores a pillar: that takes a new thesis version. Returns the new state when it
+        changed."""
+        self.db.insert("evidence_links", dict(evidence_id=evidence_id, pillar_id=pillar["id"], stance=effect,
+                                              decided_by=decided_by, decision_id=decision_id, created_at=_now()))
+        new = {"breaks": "broken", "weakens": "weakened"}.get(effect)
+        if new is None or pillar["status"] == "broken" or pillar["status"] == new:
+            self.db.execute("UPDATE pillars SET last_checked = ? WHERE id = ?", (_d(as_of).isoformat(), pillar["id"]))
+            return None
+        self.db.execute("UPDATE pillars SET status = ?, last_checked = ? WHERE id = ?",
+                        (new, _d(as_of).isoformat(), pillar["id"]))
+        return new
+
+    def evidence_for(self, pillar_id: int, limit: int = 10) -> list[dict]:
+        return self.db.all("SELECT e.*, l.stance AS effect, l.decided_by, l.created_at AS linked_at FROM evidence_links l "
+                           "JOIN evidence e ON e.id = l.evidence_id WHERE l.pillar_id = ? ORDER BY l.id DESC LIMIT ?",
+                           (pillar_id, limit))
 
     def archive(self, kind: str, subject: str) -> None:
         self.db.execute("UPDATE theses SET status = 'archived', updated_at = ? WHERE kind = ? AND subject = ?",

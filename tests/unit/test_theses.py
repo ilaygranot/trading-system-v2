@@ -109,3 +109,60 @@ def test_the_dashboard_fills_the_store_on_first_visit_and_shows_the_chain(web, d
     assert "הורדות תחזית" in page and "מחזיק" in page and "נשענות עליה" in page
     assert "אין תזה כזאת" in _call(web, "/thesis/company/NOPE")[2]
     assert "/theses" in _call(web, "/research")[2]
+
+
+# ---------------------------------------------------------------------- phase B: evidence and pillar links
+class PillarAgents:
+    """DC-14: class C for the idea (never an adverse event by itself), but it breaks the company's first pillar."""
+    def __init__(self):
+        self.calls = []
+
+    def decide(self, agent, card, fs, world, **kw):
+        from types import SimpleNamespace as NS
+        self.calls.append((card, kw.get("subject"), dict(world), fs))
+        out = {"direction": "for_idea", "priced_in": False, "reasoning": "x", "what": "FAA עוצרת מסירות",
+               "pillars": [{"key": "BA.pillar.company:b1", "effect": "breaks"}, {"key": "company:nope", "effect": "breaks"}]} \
+            if card == "DC-14" else {}
+        return NS(option="C" if card == "DC-14" else "hold", output=out, status="decided", decision_id=7, critic=None,
+                  for_ilay="", cost_usd=0.0)
+
+
+def test_a_headline_that_breaks_a_pillar_is_kept_as_evidence_and_reaches_a7(db):
+    from datetime import timedelta
+    from test_runs_daily import AS_OF, NewsPrices, _runner
+    s = Store(db)
+    s.put("company", "BA", {"name": "Boeing"}, [{"key": "b1", "claim": "המסירות של 737 ממשיכות", "kind": "kpi",
+                                                 "check": "עצירת מסירות"},
+                                                {"key": "b2", "claim": "התזרים חיובי", "kind": "kpi", "check": "FCF שלילי"}],
+          as_of=AS_OF, author="agents")
+    sent, ag = [], PillarAgents()
+    r = _runner(db, prices=NewsPrices(), notifier=sent.append, agents=ag)
+    r.start("daily", AS_OF)
+    dc14 = next(c for c in ag.calls if c[0] == "DC-14")
+    assert any(f.key == "BA.pillar.company:b1" and "שובר תזה" in str(f.value) and "עצירת מסירות" in str(f.value) for f in dc14[3]._facts.values())
+    ba = {p["key"]: p for p in s.get("company", "BA")["pillars"]}
+    assert ba["b1"]["status"] == "broken" and ba["b2"]["status"] == "holding"
+    ev = s.evidence_for(ba["b1"]["id"])
+    assert len(ev) == 1 and ev[0]["effect"] == "breaks" and ev[0]["url"] == "https://x/1" and ev[0]["summary"] == "FAA עוצרת מסירות"
+    dc21 = [c for c in ag.calls if c[0] == "DC-21"]
+    assert len(dc21) == 1 and "עמוד בתזה נשבר: המסירות של 737 ממשיכות" in dc21[0][2]["event"]   # C alone never asks A7
+    assert any("🧱 BA" in m for m in sent)
+    # a new version keeps the pillar row, so its evidence stays attached; supports never restores it
+    s.put("company", "BA", {"name": "Boeing Co"}, [{"key": "b1", "claim": "המסירות של 737 ממשיכות", "kind": "kpi",
+                                                    "check": "עצירת מסירות"}], as_of=AS_OF + timedelta(days=1), author="agents")
+    b1 = s.get("company", "BA")["pillars"][0]
+    assert b1["id"] == ba["b1"]["id"] and b1["status"] == "broken" and len(s.get("company", "BA")["pillars"]) == 1
+    assert s.link(ev[0]["id"], b1, "supports", "agent:A5", None, AS_OF) is None
+    assert s.get("company", "BA")["pillars"][0]["status"] == "broken"
+
+
+def test_the_thesis_page_lists_each_pillars_evidence(web, db):
+    s = Store(db)
+    s.put("company", "BA", {"name": "Boeing"}, [{"key": "b1", "claim": "המסירות ממשיכות", "check": "עצירה"}],
+          as_of="2026-10-20", author="agents")
+    p = s.get("company", "BA")["pillars"][0]
+    eid = s.add_evidence("BA", "8-K", "https://sec/1", "2026-10-21", "8-K: halt")
+    assert s.add_evidence("BA", "8-K", "https://sec/1", "2026-10-21", "8-K: halt") == eid       # kept once
+    assert s.link(eid, p, "weakens", "agent:A5", None, "2026-10-21") == "weakened"
+    page = _call(web, "/thesis/company/BA")[2]
+    assert "8-K: halt" in page and "מחלישה" in page and "נחלש" in page

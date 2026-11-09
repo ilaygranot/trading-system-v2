@@ -43,7 +43,10 @@ DC-14: {agent: A5, options: [macro_lead, macro_noise, A, B, C, D], undecided: lo
                 strength: {type: string, description: "Hebrew words; the course has no scale"},
                 flow_technical: {type: boolean},
                 peers_affected: {type: array, items: {type: string}},
-                what: {type: string, description: "Hebrew, one line: what happened or is expected"}}}
+                what: {type: string, description: "Hebrew, one line: what happened or is expected"},
+                pillars: {type: array, description: "the thesis pillars in the fact sheet (pillar.<key>) this event bears on; empty when none or when the sheet has no pillars (thesis store, Ilay 09.11, not from course)",
+                          items: {type: object, properties: {key: {type: string}, effect: {enum: [supports, weakens, breaks, neutral]}},
+                                  required: [key, effect], additionalProperties: false}}}}
 DC-15: {agent: A5, options: [cold, hot, boiling, frozen], undecided: current_state, approval: required}
 DC-16: {agent: A5, options: [noise_continue, frozen_exit], undecided: noise_continue, approval: required}
 DC-17: {agent: A6, options: [color_change, level_break, retest, base_below_or_above, monthly_breakout_a_plus, short_from_above, wait],

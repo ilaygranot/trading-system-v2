@@ -47,14 +47,58 @@ STRONG = ("A", "B")
 RESULTS_WORDS = re.compile(r"result|earning|quarter|revenue|guidance|outlook|profit", re.IGNORECASE)
 
 
-def _facts(item: dict, ctx_info: dict, as_of: date) -> FactSheet:
+def _facts(item: dict, ctx_info: dict, as_of: date, pillars: list[dict] = ()) -> FactSheet:
     fs = FactSheet()
     s = item["symbol"]
     fs.add(f"{s}.headline", item["title"], f"{item['source']} ({item['publisher']})", date.fromisoformat(item["published"]))
     for k, v in ctx_info.items():
         if v not in (None, "", []):
             fs.add(f"{s}.{k}", v, "code:daily", as_of)
+    for p in pillars:                                  # the thesis store (qt.theses): what the idea stands on
+        # the deep dive writes its pillars as DC-12 breakers: the event that happens is what breaks the pillar
+        lead = "שובר תזה (אם קורה, העמוד נשבר): " if p.get("kind") in BREAKER_KINDS or p["qkey"].startswith("idea:") else ""
+        fs.add(f"{s}.pillar.{p['qkey']}", lead + p["claim"] + (f" · בדיקה: {p['check_text']}" if p.get("check_text") else ""),
+               f"thesis:{p['subject']}", as_of)
     return fs
+
+
+STATE_HE = {"broken": "נשבר", "weakened": "נחלש"}
+BREAKER_KINDS = {"kpi", "risk_10k", "estimates_surprises", "liquidity_dilution", "contract"}      # DC-12
+
+
+def _store(ctx: RunContext):
+    try:
+        from qt.theses import Store
+        return Store(ctx.db)
+    except Exception as e:                                           # noqa: BLE001 - the store never stops the news
+        ctx.event(f"thesis store unavailable: {type(e).__name__}: {e}", "warn", "news")
+        return None
+
+
+def record_evidence(ctx: RunContext, store, it: dict, r, pillars: list[dict]) -> list[dict]:
+    """The classified item kept once as evidence, and DC-14's pillar links applied (qt.theses, phase B). Returns
+    the pillars whose state changed. Never raises: the evidence is a reader's aid until phase C."""
+    if store is None:
+        return []
+    try:
+        src = it.get("source") or ""
+        eid = store.add_evidence(it["symbol"], src.split(":", 1)[1] if src.startswith("sec:") else "news", it["link"],
+                                 it.get("published"), it.get("title"), (r.output or {}).get("what"))
+        by_key = {p["qkey"]: p for p in pillars}
+        changed = []
+        for x in (r.output or {}).get("pillars") or []:
+            key = str(x.get("key", "")).split("pillar.")[-1]
+            p = by_key.get(key)
+            if p is None or x.get("effect") not in ("supports", "weakens", "breaks", "neutral"):
+                continue
+            new = store.link(eid, p, x["effect"], "agent:A5", getattr(r, "decision_id", None), ctx.as_of)
+            if new:
+                changed.append(dict(symbol=it["symbol"], held=it["held"], key=key, claim=p["claim"], state=new,
+                                    subject=p["subject"], title=it.get("title")))
+        return changed
+    except Exception as e:                                           # noqa: BLE001
+        ctx.event(f"{it['symbol']}: evidence not recorded: {type(e).__name__}: {e}", "warn", "news")
+        return []
 
 
 FILINGS_DAYS = 3                         # current reports this recent count as new, as the headlines (not from course)
@@ -131,6 +175,8 @@ def news(ctx: RunContext, _: str) -> dict:
     calc = ctx.out("calc") or {}
     regime = (ctx.out("rules") or {}).get("regime")
     cut: list[str] = []                                              # headlines the budget left unclassified
+    store = _store(ctx) if runner is not None else None
+    pillar_changes: list[dict] = []
     for it in fresh:
         sym = it["symbol"]
         if it.get("known"):
@@ -143,12 +189,19 @@ def news(ctx: RunContext, _: str) -> dict:
                         return_20d_pct=calc.get("ret_20d", {}).get(sym),
                         idea=(e.tldr if e else (p or {}).get("thesis")), thesis_breakers=(e.breakers if e else None),
                         on_list="position" if p else "watchlist")
+            pillars = []
+            if store is not None:
+                try:
+                    pillars = store.ticker_pillars(sym)
+                except Exception as ex:                              # noqa: BLE001
+                    ctx.event(f"{sym}: pillars not read: {type(ex).__name__}: {ex}", "warn", "news")
             try:
-                r = runner.decide("A5", "DC-14", _facts(it, info, ctx.as_of),
+                r = runner.decide("A5", "DC-14", _facts(it, info, ctx.as_of, pillars),
                                   {"symbol": sym, "regime": regime, "held": bool(p), "write_in": "Hebrew"},
                                   run_id=ctx.run_id, step="news", subject=sym)
                 it.update(klass=r.option, direction=r.output.get("direction"), priced_in=r.output.get("priced_in"),
                           why=r.output.get("reasoning", ""), status=r.status)
+                pillar_changes += record_evidence(ctx, store, it, r, pillars)
             except Exception as ex:                                  # noqa: BLE001 - budget or API: listed raw
                 ctx.event(f"{sym}: DC-14 {type(ex).__name__}: {ex}", "warn", "news")
                 if type(ex).__name__ in BUDGET_STOPS:
@@ -166,6 +219,10 @@ def news(ctx: RunContext, _: str) -> dict:
         d = adverse if it["held"] else flags
         line = f"{it['klass']}: {it['title']}"
         d[it["symbol"]] = f"{d[it['symbol']]} · {line}" if it["symbol"] in d else line
+    for c in pillar_changes:                            # a pillar that broke or weakened is an event on its own
+        d = adverse if c["held"] else flags
+        line = f"עמוד בתזה {STATE_HE[c['state']]}: {c['claim']} ({c['title']})"
+        d[c["symbol"]] = f"{d[c['symbol']]} · {line}" if c["symbol"] in d else line
     diary = sorted(fresh, key=lambda x: (RANK.get(x.get("klass"), 6), not x["held"]))[:DIARY]
     etf_of = {s: e.etf for s, e in watch.items()} | {s: p.get("sector") for s, p in held.items()}
     if cut:
@@ -173,7 +230,7 @@ def news(ctx: RunContext, _: str) -> dict:
     return {"enabled": True, "classified": sum(1 for x in fresh if x.get("klass")), "items": fresh,
             "budget_cut": sorted(set(cut)),
             "symbols": [{"symbol": s, "held": s in held} for s in list(held) + list(watch)],
-            "adverse": adverse, "watch_flags": flags, "diary": diary,
+            "adverse": adverse, "watch_flags": flags, "diary": diary, "pillar_changes": pillar_changes,
             "peer_notes": peer_notes(fresh, list(watch.values()), etf_of)}
 
 
@@ -220,6 +277,8 @@ def digest_lines(out: dict) -> list[str]:
     for it in out["items"]:
         by.setdefault(it["symbol"], []).append(it)
     lines, quiet = ["📰 חדשות לפי מניה (3 ימים אחרונים, רק כותרות שלא הוצגו קודם)"], []
+    for c in out.get("pillar_changes") or []:           # the thesis store: a pillar the day's news broke or weakened
+        lines.append(f"🧱 {c['symbol']}: עמוד בתזה {STATE_HE[c['state']]}: {c['claim']} ← {c['title']}")
     for s in out["symbols"]:
         got = sorted(by.get(s["symbol"], []), key=lambda x: (RANK.get(x.get("klass"), 6), x["published"]))
         if not got:

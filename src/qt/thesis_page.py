@@ -64,6 +64,17 @@ def _value(v: Any) -> str:
     return ui.e("—" if v in (None, "") else v)
 
 
+EFFECT = {"supports": ("תומכת", "ok"), "weakens": ("מחלישה", "warn"), "breaks": ("שוברת", "bad"), "neutral": ("ניטרלית", "mute")}
+
+
+def _evidence(store: Store, pillar_id: int) -> str:
+    """The latest evidence A5 linked to the pillar (phase B), newest first."""
+    ev = store.evidence_for(pillar_id, 3)
+    return "<br>".join(f"{ui.pill(*EFFECT.get(x['effect'], (x['effect'], '')))} <a href='{ui.e(x['url'])}' rel=noopener "
+                       f"target=_blank>{ui.e((x.get('title') or x['url'])[:90])}</a> <span class=note>{ui.e((x.get('published') or '')[:10])}</span>"
+                       for x in ev) or "<span class=note>—</span>"
+
+
 def thesis_html(store: Store, kind: str, subject: str, today: date | None = None) -> str:
     today = today or date.today()
     t = store.get(kind, subject)
@@ -82,8 +93,9 @@ def thesis_html(store: Store, kind: str, subject: str, today: date | None = None
         parts.append(ui.section("השרשרת", f"<div class=panel><div class=rows>{steps}</div></div>", id="chain"))
     ps = t.get("pillars") or []
     prow = [[ui.pill(STATUS_HE.get(p["status"], p["status"]), PILL.get(p["status"], "")), ui.e(p["claim"]),
-             f"<span class=note>{ui.e(p.get('check_text') or '')}</span>", f"<td class=t>מ-v{p['since_version']}</td>"] for p in ps]
-    parts.append(ui.section("העמודים", ui.table(("מצב", "טענה", "מה יפריך", ""), prow) if prow else
+             f"<span class=note>{ui.e(p.get('check_text') or '')}</span>", _evidence(store, p["id"]),
+             f"<td class=t>מ-v{p['since_version']}</td>"] for p in ps]
+    parts.append(ui.section("העמודים", ui.table(("מצב", "טענה", "מה יפריך", "ראיות", ""), prow) if prow else
                             ui.empty("לתזה הזו אין עמודים רשומים"), id="pillars"))
     body = t.get("body") or {}
     rows = [[f"<b>{ui.e(k)}</b>", _value(v)] for k, v in body.items() if v not in (None, "", [], {})]
