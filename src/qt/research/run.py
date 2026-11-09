@@ -122,6 +122,27 @@ def timing_row(y: Yahoo, e: str, c: dict, as_of: date, spy: list, etf_bars: list
         return dict(etf=e, sym=s, dir=dr, profile=c["profile"], error=f"{type(ex).__name__}: {ex}")
 
 
+WATCH_PER_SECTOR = 5      # not from course: the best of each green neutral sector, so the list is not flooded
+
+
+def watch_sectors(y: Yahoo, sectors: dict, rows_by: dict, as_of: date) -> dict[str, Any]:
+    """Ilay 09.11 (funnel audit 3.11, option b; not from course): a neutral sector whose own S09 light is green is
+    screened for longs too, watch only. Its best green and orange stocks (WATCH_PER_SECTOR, green first, then R:R)
+    go on the watchlist with no entry and no deep dive, so healthy stocks outside the three long sectors are seen
+    (S08-R2: ideas do not evaporate). The sector card's choice of long sectors is unchanged."""
+    start = as_of - timedelta(days=HISTORY_DAYS)
+    green = [e for e in sectors.get("neutral") or [] if snapshot(y.bars(e, start, as_of), "long").overall == "green"]
+    if not green:
+        return {"etfs": [], "timing": []}
+    tm = [t for t in stage_timing(y, sector_screen.screens(rows_by, green, []), as_of)
+          if not t.get("error") and t.get("combined") in ("green", "orange")]
+    keep = []
+    for e in green:
+        keep += sorted((t for t in tm if t["etf"] == e),
+                       key=lambda t: (t["combined"] != "green", -(t.get("rr_extreme") or 0)))[:WATCH_PER_SECTOR]
+    return {"etfs": green, "timing": keep}
+
+
 def backfill(y: Yahoo, u: dict, screens: dict, wanted: list[dict], as_of: date) -> tuple[dict, list[dict], dict]:
     """The watchlist stocks with no full analysis (Ilay 25.10): their screen rows (by the group's screen of this week,
     with what they failed), their S09 rows, and the ones that cannot be analysed with the reason."""
@@ -144,8 +165,13 @@ def backfill(y: Yahoo, u: dict, screens: dict, wanted: list[dict], as_of: date) 
         if t.get("error"):
             errors[sym] = t["error"]
             continue
-        timing.append(t | {"backfill": True, "backfill_failed": c["backfill_failed"]})
+        timing.append(t | {"backfill": True, "backfill_failed": c["backfill_failed"],
+                           **({"revisit": w["revisit"]} if w.get("revisit") else {})})
     return extra, timing, errors
+
+
+DATA_GAP_HE = ("פער נתונים: היעד מהמכפיל העצמי נשען על EPS היסטורי בבסיס שונה מהקונצנזוס (GAAP מול מתואם). "
+               "הרעיון מגיע עם הסתייגות, לא נפסל (אילי 09.11)")
 
 
 def _choose_target(targets: list[dict], j: dict) -> dict | None:
@@ -155,8 +181,9 @@ def _choose_target(targets: list[dict], j: dict) -> dict | None:
     Usable (3.11): not unreliable, not a sector multiple without the agent's word, and within the realism horizon
     (decision 2: up to horizon.extended_max_months; 31.10: an 8-year high at +90% gave TALO 9.6 months). Among the
     technical levels the nearest one that meets the minimum R:R is the target (decision 1, 20.10: the significant
-    level, not necessarily the first), so a farther level never wins only by its R:R. Nothing usable: no target,
-    and the plan says so, rather than an unreliable one."""
+    level, not necessarily the first), so a farther level never wins only by its R:R. Nothing usable: the own
+    multiple on the other EPS basis is the target after all, marked as a data gap (Ilay 09.11: the idea comes to
+    the table with the caveat, not dropped); with no such target either, no target, and the plan says so."""
     chosen = next((t for t in targets if t["source"] == j.get("target_source")), None)
     override = None
     if chosen is not None and (chosen.get("unreliable") or chosen.get("beyond_horizon")):
@@ -174,6 +201,12 @@ def _choose_target(targets: list[dict], j: dict) -> dict | None:
             chosen = min(levels, key=lambda t: t.get("rank", 1))
         elif usable:
             chosen = max(usable, key=lambda t: t.get("rr") or 0)
+        else:                            # Ilay 09.11: a data gap is said, not a reason to drop the idea
+            gap = [t for t in targets if t.get("unreliable") and not t.get("beyond_horizon")
+                   and t.get("multiple_source") != "sector"]
+            if gap:
+                chosen = gap[0]
+                chosen["data_gap"] = DATA_GAP_HE
     if override:
         override["to"] = chosen["source"] if chosen else "—"
         j.setdefault("code_overrides", []).append(override)
@@ -306,6 +339,8 @@ def deep_dive(y: Yahoo, u: dict, screens: dict, sym: str, etf: str, direction: s
                            j.get("catalyst_expected"), unhealthy, j.get("catalyst_chain", ""),
                            catalysts=_rows_with_ids(j.get("catalysts")), as_of=as_of, next_earnings=cat.get("next_earnings"),
                            heat=j.get("heat") or None, news_adverse=bool(j.get("news_adverse")))
+    if chosen and chosen.get("data_gap"):
+        plan["data_gap"] = chosen["data_gap"]
     opts = []
     if chosen and j.get("options", True):
         opts = idea.option_candidates(y, sym, direction, price, chosen["price"], plan.get("horizon_months") or 3, as_of)
@@ -335,10 +370,11 @@ def classify(d: dict) -> tuple[str, str]:
     if v == "blocked":
         return "reject", "מנוע הכללים חוסם: " + "; ".join(f["rule_id"] for f in d["plan"]["verdict"]["findings"]
                                                              if f["severity"] == "block")
+    gap = d["plan"].get("data_gap")
     if tl == "green" and ok_rr:
-        return "enter", ""
+        return "enter", gap or ""
     if tl == "orange" and ok_rr:
-        return "conditional", "כתום: כניסה רק בטריגר"
+        return "conditional", "כתום: כניסה רק בטריגר" + (f" · {gap}" if gap else "")
     if tl == "red":
         return "watch", "רמזור אדום"
     return "watch", f"יחס סיכוי-סיכון {rr:.1f}, מתחת ל-{load_policy().reward_risk.min_ratio:.0f}"
@@ -479,10 +515,11 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     rows = _rows_by_etf(u)
     sectors = cached("sectors.json", lambda: sector_screen.run(y, rows, phase, phase_flags, st["zone"], as_of))
     screens = cached("screens.json", lambda: sector_screen.screens(rows, sectors["long"], sectors["short"]))
-    if judge is not None and hasattr(judge, "rescue"):            # DC-08 before the traffic light: rescued ideas get one
+    if judge is not None and hasattr(judge, "rescue") and getattr(judge, "only", None) is None:   # DC-08 first (not midweek)
         screens = cached("screens_dc08.json", lambda: judge.rescue(screens, macro, sectors, as_of,
                                                                            lambda s: price_moves(y, s, as_of)))
     timing = cached("timing.json", lambda: stage_timing(y, screens, as_of))
+    watch = cached("watch_sectors.json", lambda: watch_sectors(y, sectors, rows, as_of))
 
     bias = st.get("bias") or "neutral"
     buckets = {e: ("long" if e in sectors["long"] else "short" if e in sectors["short"] else "neutral")
@@ -528,6 +565,8 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
                                extra=extra)
         if j.get("backfill"):
             ideas[sym]["backfill"] = {"failed": (extra.get(sym) or {}).get("backfill_failed") or []}
+        if j.get("revisit"):
+            ideas[sym]["revisit"] = j["revisit"]
         ideas[sym]["bucket"], ideas[sym]["bucket_reason"] = classify(ideas[sym])
         ideas[sym]["exit"] = exit_plan(ideas[sym]["plan"], j["direction"], ideas[sym]["bucket"], as_of,
                                        ideas[sym]["catalysts"].get("next_earnings"), j)
@@ -562,7 +601,8 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
                   backfill={"wanted": [w["sym"] for w in wanted], "errors": bf_errors},
                   documents={"fetched": len(docs_memo),
                              "with_errors": sorted(s for s, x in docs_memo.items() if x.get("errors"))}),
-        macro=macro, sectors=sectors, screens=screens, timing=timing, ideas=ideas, funnel=funnel, portfolio=fit,
+        macro=macro, sectors=sectors, screens=screens, timing=timing, watch_sectors=watch, ideas=ideas, funnel=funnel,
+        portfolio=fit,
         judgments={k: v for k, v in J.items() if k != "ideas"})
     from qt.data.store import Store
     check = lambda: verify.run(d, **verify.default_sources(Store(str(work / "verify.sqlite"))))  # noqa: E731

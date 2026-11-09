@@ -11,7 +11,7 @@ OPTIONAL = {"ANTHROPIC_API_KEY"}
 # the second daily close and the price fallback; set on qt-web 24.10, copied to every cron
 PRICE_KEYS = {"FMP_API_KEY", "ALPHAVANTAGE_API_KEY"}
 # read by the macro stance and the weekly research only; set on qt-web before this file syncs
-FRED_CRONS = {"qt-weekly", "qt-dryrun", "qt-monthly", "qt-scan"}
+FRED_CRONS = {"qt-weekly", "qt-midweek", "qt-dryrun", "qt-monthly", "qt-scan"}
 # the research run's documents: the SEC filings and the roic.ai earnings call (set on qt-web 24.10)
 RESEARCH_KEYS = {"SEC_CONTACT", "ROIC_API_KEY"}
 
@@ -28,13 +28,13 @@ def test_blueprint_parses_and_every_cron_gets_the_secrets_from_qt_web():
     services = _services()
     web = _env(services["qt-web"])
     assert all(web[k].get("sync") is False for k in SECRETS | OPTIONAL | PRICE_KEYS | RESEARCH_KEYS | {"FRED_API_KEY"})
-    for name in ("qt-weekly", "qt-dryrun"):
+    for name in ("qt-weekly", "qt-midweek", "qt-dryrun"):
         weekly = _env(services[name])
         for k in RESEARCH_KEYS:
             assert weekly[k]["fromService"] == {"type": "web", "name": "qt-web", "envVarKey": k}, (name, k)
     crons = [s for s in services.values() if s["type"] == "cron"]
-    assert {c["name"] for c in crons} == {"qt-scan", "qt-intraday", "qt-daily", "qt-premarket", "qt-open", "qt-weekly", "qt-dryrun", "qt-monthly",
-                                         "qt-digest"}
+    assert {c["name"] for c in crons} == {"qt-scan", "qt-intraday", "qt-daily", "qt-premarket", "qt-open", "qt-weekly", "qt-midweek",
+                                         "qt-dryrun", "qt-monthly", "qt-digest"}
     for c in crons:
         env = _env(c)
         for k in SECRETS | PRICE_KEYS:
@@ -79,3 +79,13 @@ def test_the_dry_run_is_the_weekly_job_a_day_before():
     assert dry["schedule"].split()[-1] == "5" and int(dry["schedule"].split()[1]) >= 21     # after 16:00 New York
     for k in ("buildCommand", "plan", "runtime", "region", "envVars"):
         assert dry[k] == weekly[k], k
+
+
+def test_the_midweek_job_is_the_weekly_job_on_wednesday_night():
+    """Same build, plan and keys as qt-weekly (the same research stages), Wednesday 20:00 New York = Thursday UTC."""
+    s = _services()
+    mid, weekly = s["qt-midweek"], s["qt-weekly"]
+    assert mid["startCommand"] == "qt run midweek --scheduled"
+    assert mid["schedule"].split()[:2] == ["0", "0,1"] and mid["schedule"].split()[-1] == "4"
+    for k in ("buildCommand", "plan", "runtime", "region", "envVars"):
+        assert mid[k] == weekly[k], k

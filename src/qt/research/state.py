@@ -30,8 +30,9 @@ BLOB_PART = 2_000_000                              # characters of base64 per ro
 
 
 class State:
-    def __init__(self, db, as_of: date):
-        self.db, self.as_of = db, as_of.isoformat()
+    def __init__(self, db, as_of: date, tag: str = ""):
+        """tag: a run of its own on the same date (the midweek run, qt.midweek) keeps its pieces apart."""
+        self.db, self.as_of = db, as_of.isoformat() + (f":{tag}" if tag else "")
         db.ddl(SCHEMA)
 
     def _raw(self, key: str) -> str | None:

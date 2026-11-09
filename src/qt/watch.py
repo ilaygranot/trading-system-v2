@@ -59,6 +59,7 @@ class WatchEntry:
     catalyst_expected: bool | None = None   # S07-R13 from the research's catalyst code
     catalysts: list = field(default_factory=list)   # the research's catalyst rows still active or expected
     peers: list[str] = field(default_factory=list)  # S08-J25: the peers named in the deep dive
+    watch_sector: bool = False              # Ilay 09.11: from a green neutral sector, watch only (no backfill deep dive)
 
 
 @dataclass
@@ -177,6 +178,19 @@ def from_dossier(d: dict) -> dict[str, Any]:
             target_source=None if t.get("open_skies") else "all_time_high_target", price_at_add=round(t["price"], 2),
             risk_pct_at_add=round(k * t["adr"], 2) if t.get("adr") else None, green_at_add=True,
             why_not=why or "ירוקה שלא נותחה לעומק", tldr=why)))
+    have = {e["symbol"] for e in out}
+    for t in (d.get("watch_sectors") or {}).get("timing") or []:   # Ilay 09.11: a green neutral sector, watch only
+        if t["sym"] in have or t.get("error"):
+            continue
+        have.add(t["sym"])
+        why = f"סקטור נייטרלי שהרמזור שלו ירוק ({t['etf']}): מעקב בלבד, בלי כניסה ובלי ניתוח עומק (אילי 09.11, לא מהקורס)"
+        out.append(asdict(WatchEntry(
+            symbol=t["sym"], direction=t["dir"], etf=t["etf"], bucket="watch", added=as_of, trigger_kind="now",
+            trigger_level=None, k=k,
+            target=round(t["extreme"], 2) if t.get("extreme") and not t.get("open_skies") else None,
+            target_source=None if t.get("open_skies") else "all_time_high_target", price_at_add=round(t["price"], 2),
+            risk_pct_at_add=round(k * t["adr"], 2) if t.get("adr") else None, green_at_add=t.get("combined") == "green",
+            why_not=why, tldr=why, watch_sector=True)))
     return {"as_of": as_of, "source": "research " + as_of, "entries": out}
 
 

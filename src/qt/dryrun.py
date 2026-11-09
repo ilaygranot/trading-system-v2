@@ -21,7 +21,7 @@ from qt.approvals import Queue
 from qt.db import DB
 
 DRY_SCHEMA = "qt_dry"
-LIMITS = {"max_deep": 2, "max_rescue": 2, "max_backfill": 1}   # cost only: every stage and card still runs (not from course)
+LIMITS = {"max_deep": 2, "max_rescue": 2, "max_backfill": 1, "max_revisit": 1}   # cost only: every stage and card still runs (not from course)
 COPY = ("portfolio", "watchlist", "manual_macro")
 UNIVERSE = "stage:universe.pkl"
 DOSSIERS = 8

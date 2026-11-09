@@ -792,7 +792,15 @@ def _idea(i: dict, checks: list[dict] | None = None, appendix: bool = False) -> 
     vchip = vbadge(worst, "נתונים " + VSTAT_HE[worst]) if checks else ""
     full = i["bucket"] in ("enter", "conditional") or j.get("thesis")
     story_chip = f'<span class="chip">{E(STORY_HE.get(j["story_type"], j["story_type"]))}</span>' if j.get("story_type") else ""
-    if i.get("backfill") is not None:                  # Ilay 25.10: a watchlist stock analysed to fill the list
+    if (p or {}).get("data_gap"):                     # Ilay 09.11: brought to the table with the caveat
+        story_chip += f'<span class="chip" title="{E(p["data_gap"])}">⚠️ פער נתונים ביעד</span>'
+    if i.get("revisit"):                               # a standing thesis looked at again (thesis store, phase D)
+        from qt.theses import REVISIT_HE
+        why = ", ".join(REVISIT_HE.get(w, w) for w in i["revisit"])
+        story_chip += f'<span class="chip" title="{E(why)}">בדיקה חוזרת של התזה</span>'
+        if j.get("thesis_change"):
+            story_chip += f'<span class="chip" title="{E(j["thesis_change"])}">התזה עודכנה</span>'
+    elif i.get("backfill") is not None:                # Ilay 25.10: a watchlist stock analysed to fill the list
         failed = (i["backfill"] or {}).get("failed") or []
         story_chip += (f'<span class="chip" title="{E("לא עברה את הסינון השבוע: " + ", ".join(failed)) if failed else ""}">'
                        f'מרשימת המעקב{" · לא עברה את הסינון" if failed else ""}</span>')

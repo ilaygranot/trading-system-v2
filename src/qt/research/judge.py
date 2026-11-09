@@ -39,6 +39,7 @@ from qt.research import macro_story as MS
 from qt.theses import thesis_facts
 
 STOPS = ("BudgetExceeded", "AgentUnavailable")   # the run's agents are gone: stop, cut the rest, a resume continues
+MIDWEEK_SKIP = "אמצע השבוע: נבדקות רק המניות שהסריקה הלילית העלתה לירוק (השאר בשבת)"
 MIN_DEEP, MAX_DEEP = 8, 12     # DC-09: up to 12 green and orange stocks all pass; above, the agent ranks and 8 to 12
                                 # go on (Ilay 22.10, to start; the card had 8-15 per direction; not from course)
 MAX_RESCUE = 6                 # DC-08 calls per research run (not from course: cost)
@@ -373,6 +374,11 @@ PRIOR_HOW = ("The standing thesis on this stock from earlier weeks (thesis store
              "one Hebrew line on what changed in the thesis since the last version and why, empty when nothing did.")
 
 
+REVISIT_WHY = {"pillar": "a pillar broke or weakened since the thesis was last written (see its evidence)",
+               "report": "a quarterly report came out since the thesis was last written",
+               "upstream": "the macro or sector thesis it rests on changed since it was written"}
+
+
 class Judge:
     """Calls the cards for one research run and assembles the judgments dict."""
 
@@ -388,6 +394,8 @@ class Judge:
         self.selection: dict[str, Any] = {}
         self.reused: list[str] = []
         self.theses = None                     # qt.theses.Store: the standing theses A4 updates (phase C)
+        self.only: list[str] | None = None     # the midweek run (qt.midweek): these stocks only, no DC-09 pick
+        self.prior_a1: dict | None = None      # ... and Saturday's A1 with its story, not asked again
 
     def _saved(self, key: str) -> Any:
         got = self.state.get(f"agents:{key}") if self.state is not None else None
@@ -623,7 +631,11 @@ class Judge:
         if prior:                                       # thesis store, phase C: update the standing thesis
             thesis_facts(fs, prior, sym, as_of)
             world["prior_thesis"] = {"how": PRIOR_HOW, **prior}
-        if t.get("backfill"):                           # on the watchlist with no full analysis: judged on this week
+        if t.get("revisit"):                            # a standing thesis due for a fresh look (thesis store, phase D)
+            world["revisit"] = {"why": "a standing thesis due for a fresh look, not a new idea: update it",
+                                "reasons": [REVISIT_WHY[r] for r in t["revisit"] if r in REVISIT_WHY],
+                                "failed_this_weeks_screen": t.get("backfill_failed") or []}
+        elif t.get("backfill"):                         # on the watchlist with no full analysis: judged on this week
             world["backfill"] = {"why": "on the watchlist from an earlier week without a full analysis",
                                  "failed_this_weeks_screen": t.get("backfill_failed") or []}
 
@@ -739,22 +751,44 @@ class Judge:
             return {"error": f"DC-27: {o.get('status')} ({o.get('reasoning', '')})"}
         return MS.verify(o, fs, by_id) | {"status": o.get("status")}
 
+    def _midweek(self, timing: list[dict]) -> list[dict]:
+        """The midweek run's stocks (qt.midweek): the ones the nightly scan turned green that are still green on
+        this run's traffic light, in the scan's order. Every other green or orange stock is skipped with the reason,
+        so the report says why it was not analysed."""
+        sel = self._saved("A3")
+        by = {t["sym"]: t for t in candidates(timing)}
+        if sel:
+            self.selection = {**sel, "skipped": dict(sel.get("skipped") or {})}
+            return [by[s] for s in sel.get("picked") or [] if s in by]
+        picked = [by[s] for s in self.only or [] if s in by and by[s]["combined"] == "green"]
+        names = {t["sym"] for t in picked}
+        self.selection = {"picked": [t["sym"] for t in picked], "midweek": True,
+                          "dropped": {s: "כבר לא ירוקה ברמזור של ריצת המחקר" for s in self.only or [] if s not in names},
+                          "skipped": {s: MIDWEEK_SKIP for s in by if s not in names}}
+        self._save("A3", self.selection)
+        return picked
+
     def __call__(self, stages: dict, deep_dive: DeepDive) -> dict:
         as_of, macro = stages["as_of"], stages["macro"]
-        a1 = self._saved("A1")
+        a1 = self._saved("A1") or (self.prior_a1 if self.only is not None else None)
         if not a1:
             a1 = self.macro(macro, as_of)
             self._save("A1", a1)
-        story = self._saved("A1.narrative")
-        if not story:
-            story = self.narrative(macro, as_of, stages.get("macro_news"), a1)
-            if MS.complete(story):
-                self._save("A1.narrative", story)
-        a1 = {**a1, **{k: story[k] for k in ("story", "fed", "events") if story.get(k)},
-              "narrative": {k: story.get(k) for k in ("status", "stats", "dropped", "error") if story.get(k) is not None}}
+        if self.only is not None:                    # midweek: Saturday's A1 and story stand (the scan's cascade
+            story = {k: a1.get(k) for k in ("story", "fed", "events")}   # re-asks A1 when the stance moves)
+        else:
+            story = self._saved("A1.narrative")
+            if not story:
+                story = self.narrative(macro, as_of, stages.get("macro_news"), a1)
+                if MS.complete(story):
+                    self._save("A1.narrative", story)
+            a1 = {**a1, **{k: story[k] for k in ("story", "fed", "events") if story.get(k)},
+                  "narrative": {k: story.get(k) for k in ("status", "stats", "dropped", "error")
+                                if story.get(k) is not None}}
         J: dict[str, Any] = {"judged_by": JUDGED_BY, "A1": a1, "ideas": {}}
         self.sectors, self.a1 = stages.get("sectors"), a1
-        picked = self._picked(stages["timing"], macro, as_of, stages.get("screens"), stages.get("watchlist") or ())
+        picked = self._midweek(stages["timing"]) if self.only is not None else \
+            self._picked(stages["timing"], macro, as_of, stages.get("screens"), stages.get("watchlist") or ())
         done: list[tuple[dict, dict, dict]] = []
         for n, t in enumerate(picked):
             try:
@@ -781,6 +815,8 @@ class Judge:
             try:
                 j, d, world = self._idea(t, deep_dive, macro, as_of)
                 j["backfill"] = True
+                if t.get("revisit"):
+                    j["revisit"] = list(t["revisit"])
                 J["ideas"][t["sym"]] = j
                 done.append((j, d, world))
             except Exception as e:                       # noqa: BLE001 - as a picked idea's failure
@@ -799,7 +835,7 @@ class Judge:
         # Ilay 24.10: a report with picked stocks unanalysed or without their article is not a finished report
         cut = list(J.get("errors") or {}) + [s for s in self.selection.get("cut_by_budget") or [] if s not in (J.get("errors") or {})]
         cut += [f"{s}:article" for s, j in J["ideas"].items() if not j.get("article")]
-        if not MS.complete(story):
+        if self.only is None and not MS.complete(story):
             cut.insert(0, "A1:narrative")
         if cut:
             J["incomplete"] = cut                                 # the weekly step fails, a resume asks for these

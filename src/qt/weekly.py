@@ -222,7 +222,8 @@ def analysed(db, symbols: list[str], as_of: date, depth: int = 30) -> dict[str, 
     25.10: a stock on the watchlist from a broken run or a session by hand has none, and gets one)."""
     import json
     want, out = set(symbols), {}
-    for r in db.all("SELECT id FROM uploads WHERE kind = 'dossier' ORDER BY id DESC LIMIT ?", (depth,)):
+    for r in db.all("SELECT id FROM uploads WHERE kind IN ('dossier', 'midweek_dossier') ORDER BY id DESC LIMIT ?",
+                    (depth,)):
         try:
             d = json.loads(db.one("SELECT content FROM uploads WHERE id = ?", (r["id"],))["content"])
         except ValueError:
@@ -243,16 +244,14 @@ def _run_research(as_of: date, judge, manual_text: str, fred) -> dict:
     return R.run(as_of, work, None, None, work / "yahoo", fred, judge=judge, manual_text=manual_text, state=judge.state)
 
 
-def research(ctx: RunContext, _: str) -> dict:
-    """The weekly research by the agents. Without the agents, FRED or the monthly manual file it is skipped and the
-    summary says what is missing; the rest of the weekly review stands."""
+def research_inputs(ctx: RunContext, what: str = "המחקר השבועי") -> tuple[Any, Any, dict, dict | None]:
+    """(the agents, FRED, the monthly macro file, the automatic macro refresh) or DataMissing with what is missing."""
     runner, fred = ctx.services.get("agents"), ctx.services.get("fred")
-    q = Queue(ctx.db)
     auto = None
     if ctx.services.get("macro_auto") is not None:
         from qt.pipelines import refresh_macro
         auto = refresh_macro(ctx, ctx.services["macro_auto"])
-    manual = q.latest_upload("manual_macro")
+    manual = Queue(ctx.db).latest_upload("manual_macro")
     missing = [n for n, v in (("Claude (ANTHROPIC_API_KEY או CLAUDE_CODE_OAUTH_TOKEN)", runner), ("FRED_API_KEY", fred), ("קובץ המקרו החודשי", manual))
                if v is None]
     if auto is not None:                       # the monthly macro file the research reads must be current
@@ -260,7 +259,15 @@ def research(ctx: RunContext, _: str) -> dict:
         if auto.get("error") or auto.get("stale") or auto.get("rejected"):
             missing += macro_lines(auto)
     if missing:                                # Ilay 24.10: the research never goes on, or is skipped, without its data
-        raise DataMissing("המחקר השבועי לא רץ: חסר " + "; ".join(missing))
+        raise DataMissing(f"{what} לא רץ: חסר " + "; ".join(missing))
+    return runner, fred, manual, auto
+
+
+def research(ctx: RunContext, _: str) -> dict:
+    """The weekly research by the agents. Without the agents, FRED or the monthly manual file it is skipped and the
+    summary says what is missing; the rest of the weekly review stands."""
+    q = Queue(ctx.db)
+    runner, fred, manual, auto = research_inputs(ctx)
     import json
     import yaml
     from qt.agents.runner import config
@@ -284,17 +291,21 @@ def research(ctx: RunContext, _: str) -> dict:
         entries = (ctx.services.get("watchlist") or {}).get("entries") or []
         cover = analysed(ctx.db, [e["symbol"] for e in entries], ctx.as_of)
         wanted = [dict(sym=e["symbol"], etf=e.get("etf"), dir=e.get("direction") or "long")
-                  for e in entries if e["symbol"] not in cover]
+                  for e in entries if e["symbol"] not in cover and not e.get("watch_sector")]   # watch only: no deep dive
         n = lim.get("max_backfill", len(wanted))                   # the dry run: fewer (qt.dryrun)
-        judge.backfill_wanted = wanted[:n]
-        from qt.theses import Store
+        from qt.theses import MAX_REVISIT, Store, due_for_review
         judge.theses = Store(ctx.db)                   # A4 updates the standing theses (qt.theses, phase C)
+        revisit = _revisits(ctx, judge.theses, {w["sym"] for w in wanted[:n]}, lim.get("max_revisit", MAX_REVISIT),
+                            due_for_review)
+        judge.backfill_wanted = wanted[:n] + revisit   # the revisits do not take a new idea's place (phase D)
         d = (ctx.services.get("research_run") or _run_research)(ctx.as_of, judge, manual["content"], fred)
     finally:
         runner.limit_usd = prev
     d = json.loads(json.dumps(d, default=str))
     d["meta"]["watchlist"] = {"analysed_before": cover, "deferred": [w["sym"] for w in wanted[n:]],
-                              "symbols": [e["symbol"] for e in entries]}
+                              "symbols": [e["symbol"] for e in entries if not e.get("watch_sector")],
+                              "watch_only": [e["symbol"] for e in entries if e.get("watch_sector")]}
+    d["meta"]["revisited"] = [{k: r[k] for k in ("sym", "revisit", "held")} for r in revisit]
     from qt.research import completeness
     d["completeness"] = done = completeness.check(d)           # the report opens with it; a block fails the step
     html = report.render(d)
@@ -309,6 +320,7 @@ def research(ctx: RunContext, _: str) -> dict:
     on_list = {e["symbol"] for e in (old or {}).get("entries", [])}
     J = d.get("judgments") or {}
     ideas = [dict(symbol=s, bucket=i["bucket"], direction=i["direction"], rr=(i.get("plan") or {}).get("rr"),
+                  data_gap=bool((i.get("plan") or {}).get("data_gap")),
                   line=((i.get("judgment") or {}).get("tldr") or {}).get("line") or (i.get("judgment") or {}).get("why", ""))
              for s, i in d["ideas"].items()]
     sc = (d.get("sectors") or {}).get("scorecard") or {}
@@ -316,7 +328,23 @@ def research(ctx: RunContext, _: str) -> dict:
     return {"report_id": rid, "completeness": done, "ideas": ideas, "watchlist_n": len(wl["entries"]), "sector_growth": growth,
             "rejected_on_list": [x["symbol"] for x in ideas if x["bucket"] == "reject" and x["symbol"] in on_list],
             "cost_usd": round(sum(x.get("cost", 0) for x in J.get("agent_log", [])), 2), "errors": J.get("errors", {}),
-            "continued": J.get("continued") or [], "macro_auto": auto, "theses": theses}
+            "continued": J.get("continued") or [], "macro_auto": auto, "theses": theses,
+            "watch_sectors": {e: [t["sym"] for t in (d.get("watch_sectors") or {}).get("timing") or [] if t["etf"] == e]
+                              for e in (d.get("watch_sectors") or {}).get("etfs") or []},
+            "revisited": [dict(symbol=r["sym"], why=r["revisit"], held=r["held"],
+                               done=r["sym"] in d["ideas"], change=((d["ideas"].get(r["sym"]) or {}).get("judgment") or {})
+                               .get("thesis_change")) for r in revisit]}
+
+
+def _revisits(ctx: RunContext, store, taken: set[str], limit: int, due_for_review) -> list[dict]:
+    """The standing theses due for a fresh look this week (qt.theses.due_for_review), open positions first, beside
+    the new ideas and the watchlist backfill. A failure here leaves the research as it was."""
+    try:
+        held = [p["symbol"] for p in _pf(ctx).get("positions", [])]
+        return [r for r in due_for_review(store, ctx.as_of, held, limit + len(taken)) if r["sym"] not in taken][:limit]
+    except Exception as e:                                     # noqa: BLE001 - the research goes on without them
+        ctx.event(f"thesis revisits not chosen: {type(e).__name__}: {e}", "warn", "research")
+        return []
 
 
 def _sync_theses(ctx: RunContext, d: dict) -> dict | None:
@@ -400,7 +428,17 @@ def summary(ctx: RunContext) -> str:
             lines += verdict_lines(rs["completeness"])
         for x in rs["ideas"]:
             if x["bucket"] in ("enter", "conditional"):
-                lines.append(f"• {x['symbol']} {BUCKET_HE[x['bucket']]} · יחס {_f(x['rr'], sign=False)} · {x['line']}")
+                lines.append(f"• {x['symbol']} {BUCKET_HE[x['bucket']]} · יחס {_f(x['rr'], sign=False)} · {x['line']}"
+                             + (" · ⚠️ פער נתונים ביעד (בסיס EPS)" if x.get("data_gap") else ""))
+        ws = rs.get("watch_sectors") or {}
+        if ws:
+            lines.append("👀 סקטורים נייטרליים עם רמזור ירוק, למעקב בלבד: "
+                         + " · ".join(f"{e}: {', '.join(v) or 'אין מניות כתומות או ירוקות'}" for e, v in ws.items()))
+        from qt.theses import REVISIT_HE
+        for r in rs.get("revisited") or []:
+            why = ", ".join(REVISIT_HE.get(w, w) for w in r["why"])
+            lines.append(f"🔁 {r['symbol']}{' (בתיק)' if r['held'] else ''} נבדקה מחדש ({why}): "
+                         + ((r.get("change") or "התזה נשארה כמו שהיא") if r["done"] else "לא הושלם השבוע"))
         th = rs.get("theses") or {}
         if th.get("pending"):
             lines.append(f"🧱 {len(th['pending'])} עדכוני תזה בפוזיציות פתוחות מחכים לאישורך: "
