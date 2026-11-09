@@ -222,7 +222,8 @@ def analysed(db, symbols: list[str], as_of: date, depth: int = 30) -> dict[str, 
     25.10: a stock on the watchlist from a broken run or a session by hand has none, and gets one)."""
     import json
     want, out = set(symbols), {}
-    for r in db.all("SELECT id FROM uploads WHERE kind = 'dossier' ORDER BY id DESC LIMIT ?", (depth,)):
+    for r in db.all("SELECT id FROM uploads WHERE kind IN ('dossier', 'midweek_dossier') ORDER BY id DESC LIMIT ?",
+                    (depth,)):
         try:
             d = json.loads(db.one("SELECT content FROM uploads WHERE id = ?", (r["id"],))["content"])
         except ValueError:
@@ -243,16 +244,14 @@ def _run_research(as_of: date, judge, manual_text: str, fred) -> dict:
     return R.run(as_of, work, None, None, work / "yahoo", fred, judge=judge, manual_text=manual_text, state=judge.state)
 
 
-def research(ctx: RunContext, _: str) -> dict:
-    """The weekly research by the agents. Without the agents, FRED or the monthly manual file it is skipped and the
-    summary says what is missing; the rest of the weekly review stands."""
+def research_inputs(ctx: RunContext, what: str = "המחקר השבועי") -> tuple[Any, Any, dict, dict | None]:
+    """(the agents, FRED, the monthly macro file, the automatic macro refresh) or DataMissing with what is missing."""
     runner, fred = ctx.services.get("agents"), ctx.services.get("fred")
-    q = Queue(ctx.db)
     auto = None
     if ctx.services.get("macro_auto") is not None:
         from qt.pipelines import refresh_macro
         auto = refresh_macro(ctx, ctx.services["macro_auto"])
-    manual = q.latest_upload("manual_macro")
+    manual = Queue(ctx.db).latest_upload("manual_macro")
     missing = [n for n, v in (("Claude (ANTHROPIC_API_KEY או CLAUDE_CODE_OAUTH_TOKEN)", runner), ("FRED_API_KEY", fred), ("קובץ המקרו החודשי", manual))
                if v is None]
     if auto is not None:                       # the monthly macro file the research reads must be current
@@ -260,7 +259,15 @@ def research(ctx: RunContext, _: str) -> dict:
         if auto.get("error") or auto.get("stale") or auto.get("rejected"):
             missing += macro_lines(auto)
     if missing:                                # Ilay 24.10: the research never goes on, or is skipped, without its data
-        raise DataMissing("המחקר השבועי לא רץ: חסר " + "; ".join(missing))
+        raise DataMissing(f"{what} לא רץ: חסר " + "; ".join(missing))
+    return runner, fred, manual, auto
+
+
+def research(ctx: RunContext, _: str) -> dict:
+    """The weekly research by the agents. Without the agents, FRED or the monthly manual file it is skipped and the
+    summary says what is missing; the rest of the weekly review stands."""
+    q = Queue(ctx.db)
+    runner, fred, manual, auto = research_inputs(ctx)
     import json
     import yaml
     from qt.agents.runner import config

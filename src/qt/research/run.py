@@ -515,7 +515,7 @@ def run(as_of: date, work: Path, manual_path: Path, judgments_path: Path | None,
     rows = _rows_by_etf(u)
     sectors = cached("sectors.json", lambda: sector_screen.run(y, rows, phase, phase_flags, st["zone"], as_of))
     screens = cached("screens.json", lambda: sector_screen.screens(rows, sectors["long"], sectors["short"]))
-    if judge is not None and hasattr(judge, "rescue"):            # DC-08 before the traffic light: rescued ideas get one
+    if judge is not None and hasattr(judge, "rescue") and getattr(judge, "only", None) is None:   # DC-08 first (not midweek)
         screens = cached("screens_dc08.json", lambda: judge.rescue(screens, macro, sectors, as_of,
                                                                            lambda s: price_moves(y, s, as_of)))
     timing = cached("timing.json", lambda: stage_timing(y, screens, as_of))

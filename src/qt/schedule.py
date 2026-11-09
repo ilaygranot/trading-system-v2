@@ -56,6 +56,8 @@ def due(kind: str, now_utc: datetime | None = None) -> tuple[bool, date]:
         return is_trading_day(t.date()) and any(_in_window(t, at) for at in r.intraday_at), t.date()
     if kind == "open":
         return is_trading_day(t.date()) and _in_window(t, r.open_at), t.date()
+    if kind == "midweek":
+        return t.weekday() == 2 and is_trading_day(t.date()) and _in_window(t, r.midweek_at), t.date()
     as_of = previous_trading_day(t.date() + timedelta(days=1))
     if kind == "weekly":
         return t.weekday() == 5 and _in_window(t, r.weekly_at), as_of
@@ -70,7 +72,7 @@ def next_run(kind: str, now_utc: datetime | None = None) -> datetime | None:
     r = _r()
     ats = list(r.intraday_at) if kind == "intraday" else \
         [{"scan": r.scan_at, "daily": r.daily_at, "premarket": r.premarket_at, "open": r.open_at, "weekly": r.weekly_at,
-          "monthly": r.weekly_at}[kind]]
+          "monthly": r.weekly_at, "midweek": r.midweek_at}[kind]]
     t = ny(now_utc)
     for i in range(45):
         for at in ats:

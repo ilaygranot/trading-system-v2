@@ -32,6 +32,8 @@ budget:
   monthly_usd: 150            # the Anthropic console limit when on the API (runtime plan 8.4); not read by code
   daily_usd: 40               # over it, only A7 and the Critic keep running, and Ilay gets a message
   weekly_research_usd: 150    # the Saturday research run (A1, A3, A4, A6 + Critic), instead of the daily cap (not from course)
+  midweek_research_usd: 60   # the Wednesday-night deep dives on the scan's new greens (qt.midweek, Ilay 09.11), apart
+                             # from Saturday's cap (not from course)
   always_run: [A7, C]
 eval:                         # the course test set, `qt eval agents` (runtime plan 8.3; Ilay 24.10, not from course)
   limit_usd: 100              # one cap over the whole run, at list price (on the subscription it is not billed)
