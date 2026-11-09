@@ -472,6 +472,19 @@ def technical_cards(ctx: RunContext, runner, cut: list[str] | None = None) -> di
     return out
 
 
+def position_thesis(ctx: RunContext, p: dict, fs) -> dict | None:
+    """The standing thesis of the position (qt.theses, phase C) on A7's sheet: DC-21's first input is "the original
+    thesis and the breakers written at entry (DC-12)". None when the store has none; never fails the card."""
+    from qt.theses import Store, thesis_facts
+    try:
+        prior = Store(ctx.db).prior(p["symbol"], p.get("direction") or "long")
+        thesis_facts(fs, prior, p["symbol"], ctx.as_of)
+        return prior
+    except Exception as ex:                                          # noqa: BLE001 - the card goes on without it
+        ctx.event(f"{p['symbol']}: thesis not read: {type(ex).__name__}: {ex}", "warn", "agents")
+        return None
+
+
 def event_card(ctx: RunContext, runner, p: dict, event: str, source: str, step: str = "agents") -> dict:
     """A7 on one open position with an event against it (DC-21): the daily run's news and portfolio events, and the
     intraday watch's (qt.intraday). Reads the calc and rules outputs (the intraday watch primes them)."""
@@ -482,6 +495,9 @@ def event_card(ctx: RunContext, runner, p: dict, event: str, source: str, step: 
     _portfolio_facts(ctx, fs)
     fs.add(f"{p['symbol']}.event", event, source, ctx.as_of)
     world = {"position": p, "regime": r["regime"], "metrics": r["metrics"], "event": event}
+    thesis = position_thesis(ctx, p, fs)
+    if thesis:
+        world["thesis"] = thesis
     res = runner.decide("A7", "DC-21", fs, world, run_id=ctx.run_id, step=step, subject=p["symbol"])
     return {"agent": "A7", "card": "DC-21", "option": res.option, "status": res.status,
             "decision_id": res.decision_id, "confidence": res.output.get("confidence"),

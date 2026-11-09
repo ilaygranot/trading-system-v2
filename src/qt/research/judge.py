@@ -36,6 +36,7 @@ from qt.research import article as AR
 from qt.research import catalyst_chain as CC
 from qt.research import earnings_call as EC
 from qt.research import macro_story as MS
+from qt.theses import thesis_facts
 
 STOPS = ("BudgetExceeded", "AgentUnavailable")   # the run's agents are gone: stop, cut the rest, a resume continues
 MIN_DEEP, MAX_DEEP = 8, 12     # DC-09: up to 12 green and orange stocks all pass; above, the agent ranks and 8 to 12
@@ -364,6 +365,14 @@ def _world_from(j: dict, t: dict) -> dict:
                if j.get("trigger") else {})}
 
 
+PRIOR_HOW = ("The standing thesis on this stock from earlier weeks (thesis store, Ilay 09.11, not from course), with each "
+             "pillar's state and its latest evidence (facts <sym>.thesis.* and <sym>.pillar.*). Update it, do not start "
+             "over: in DC-12 keep a breaker that still holds word for word (its state and evidence stay attached to "
+             "it); rewrite or drop one only when this week's facts or its evidence moved it, and add what is new. A "
+             "broken or weakened pillar is a reason to look again at the story, not a breaker to repeat. DC-12 `change`: "
+             "one Hebrew line on what changed in the thesis since the last version and why, empty when nothing did.")
+
+
 class Judge:
     """Calls the cards for one research run and assembles the judgments dict."""
 
@@ -378,6 +387,7 @@ class Judge:
         self.log: list[dict] = []
         self.selection: dict[str, Any] = {}
         self.reused: list[str] = []
+        self.theses = None                     # qt.theses.Store: the standing theses A4 updates (phase C)
 
     def _saved(self, key: str) -> Any:
         got = self.state.get(f"agents:{key}") if self.state is not None else None
@@ -388,6 +398,15 @@ class Judge:
     def _save(self, key: str, value: Any) -> None:
         if self.state is not None:
             self.state.put(f"agents:{key}", value)
+
+    def _prior(self, sym: str, direction: str) -> dict | None:
+        if self.theses is None:
+            return None
+        try:
+            return self.theses.prior(sym, direction)
+        except Exception as e:                           # noqa: BLE001 - the cards go on from this week's facts
+            self.log.append(dict(card="theses", subject=sym, option=None, status="error", cost=0, why=str(e)[:200]))
+            return None
 
     def _decide(self, agent: str, card: str, fs: FactSheet, world: dict, subject: str) -> dict:
         r = self.runner.decide(agent, card, fs, world, run_id=self.run_id, step=self.step, subject=subject)
@@ -600,6 +619,10 @@ class Judge:
         context_facts(fs, d, macro, as_of, self.sectors, self.a1)
         world: dict[str, Any] = {"symbol": sym, "direction": dr, "etf": etf, "traffic_light": t.get("combined"),
                                  "code_decides": CODE_DECIDES, "write_in": LANGUAGE}
+        prior = self._prior(sym, dr)
+        if prior:                                       # thesis store, phase C: update the standing thesis
+            thesis_facts(fs, prior, sym, as_of)
+            world["prior_thesis"] = {"how": PRIOR_HOW, **prior}
         if t.get("backfill"):                           # on the watchlist with no full analysis: judged on this week
             world["backfill"] = {"why": "on the watchlist from an earlier week without a full analysis",
                                  "failed_this_weeks_screen": t.get("backfill_failed") or []}
@@ -613,6 +636,8 @@ class Judge:
         j.update(story_type=story["option"], story=story.get("reasoning", ""), thesis=prem.get("reasoning", ""),
                  premium={"choice": prem["option"], "why": prem.get("reasoning", "")},
                  breakers=[dict(b) for b in brk.get("thesis_breakers") or []])
+        if prior and (brk.get("change") or "").strip():
+            j["thesis_change"] = brk["change"].strip()
 
         # A5 DC-14 on the events code could not decide, then the code's catalyst gate (S07-R13, S08-R33, S10-R9)
         cat = d.get("catalysts") or {}

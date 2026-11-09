@@ -26,7 +26,8 @@ DC-11: {agent: A4, options: [justified, unjustified, unclear], undecided: unclea
         extra: {target_price: {type: number}, target_method: {enum: [hist_3y, sector, other]}}}
 DC-12: {agent: A4, options: [breakers], undecided: missing_breakers, approval: journal,
         extra: {thesis_breakers: {type: array, items: {type: object, properties: {kind: {enum: [kpi, risk_10k, estimates_surprises, liquidity_dilution, contract]},
-                text: {type: string}, check: {type: string}}, required: [kind, text, check], additionalProperties: false}}}}
+                text: {type: string}, check: {type: string}}, required: [kind, text, check], additionalProperties: false}},
+                change: {type: string, description: "Hebrew, one line: what changed in the standing thesis since its last version and why; empty when there is no standing thesis or nothing changed (thesis store, Ilay 09.11, not from course)"}}}
 DC-13: {agent: A4, options: ["no", cold, hot], undecided: cold, approval: required,
         extra: {tldr: {type: object, description: "Tell-a-friend summary in Hebrew, one short sentence each (Ilay's request, not from course). No numbers for gain or loss: the code adds them from the plan.",
                 properties: {line: {type: string}, macro: {type: string}, sector: {type: string}, company: {type: string}, why_now: {type: string}, wrong: {type: string}},

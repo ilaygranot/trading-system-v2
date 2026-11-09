@@ -13,7 +13,14 @@ A thesis has pillars (what it stands on, each with a check and a state: holding 
 A version records what it rested on (kind, subject, version), so a change upstream finds exactly the ideas built
 on the old one. Evidence (phase B): every headline and 8-K that A5 classifies is kept once, and A5 links it to the
 pillars it bears on (DC-14 `pillars`: supports / weakens / breaks / neutral). A pillar that breaks or weakens
-changes state here; the thesis itself changes only through a new version (phase C).
+changes state here; the thesis itself changes only through a new version.
+
+Phase C: the agents work from the store. A4 gets the current company thesis, its pillars and their evidence before
+it writes the week's cards, and writes what changed (DC-12 `change`); a pillar whose claim stays keeps its key, its
+state and its evidence. A7 (DC-21) gets the thesis and its pillars with every event on a position (the course
+card's first input). A new version upstream marks the theses still built on the old one as due for a fresh look.
+A material change to the thesis of an open position (a pillar dropped or rewritten, the side, bucket, story type or
+target changed) waits for Ilay in the approval queue (DC-12: "changing or deleting a breaker is flagged to Ilay").
 
 Phase A changes no behaviour: the store is filled from what the system already produces (the weekly research
 dossier and the watchlist) and read by the dashboard. No rule of the course changes, nothing trades.
@@ -87,6 +94,22 @@ CREATE TABLE IF NOT EXISTS evidence_links (
   decided_by TEXT NOT NULL,
   decision_id BIGINT,
   created_at {TS} NOT NULL
+);
+CREATE TABLE IF NOT EXISTS thesis_pending (
+  id {ID},
+  kind TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  as_of TEXT NOT NULL,
+  author TEXT NOT NULL,
+  source TEXT,
+  body {JSON} NOT NULL,
+  pillars {JSON},
+  rests_on {JSON},
+  stale_after TEXT,
+  change TEXT,                           -- what would change, one line (shown to Ilay)
+  status TEXT NOT NULL,                  -- pending | approved | rejected | expired | superseded
+  created_at {TS} NOT NULL,
+  decided_at {TS}
 );
 """
 
@@ -271,6 +294,145 @@ class Store:
         self.db.execute("UPDATE theses SET status = 'archived', updated_at = ? WHERE kind = ? AND subject = ?",
                         (_now(), kind, subject))
 
+    # ------------------------------------------------------------------ phase C: cascade and Ilay's approval
+    def behind(self, t: dict | None) -> list[dict]:
+        """The links of `t`'s rests_on whose thesis has a newer version than the one `t` was written on."""
+        return [r for r in (t or {}).get("rests_on") or []
+                if (self.get(r["kind"], r["subject"]) or {}).get("version", r["version"]) != r["version"]]
+
+    def mark_due(self, kind: str, subject: str, old_version: int, as_of: date | str) -> list[dict]:
+        """After (kind, subject) got a new version: the active theses still resting on `old_version` are due for a
+        fresh look now (spec 3.4). Returns them."""
+        due = self.dependents(kind, subject, version=old_version)
+        day = _d(as_of).isoformat()
+        for t in due:
+            if not t["stale_after"] or t["stale_after"] > day:
+                self.db.execute("UPDATE theses SET stale_after = ? WHERE id = ?", (day, t["id"]))
+        return due
+
+    def material(self, kind: str, subject: str, body: dict, pillars: list[dict]) -> str | None:
+        """What Ilay has to see before a new version of an open position's thesis goes in, or None: a pillar dropped
+        or rewritten (DC-12: changing or deleting a breaker is flagged), or the side, bucket, story type or target
+        changed. A new pillar alone, or new wording elsewhere, goes in directly."""
+        cur = self.get(kind, subject)
+        if cur is None:
+            return None
+        new = {p["key"]: p["claim"] for p in pillars}
+        out = [f"עמוד הוסר: {p['claim']}" if p["key"] not in new else f"עמוד שונה: {p['claim']} → {new[p['key']]}"
+               for p in cur["pillars"] if new.get(p["key"]) != p["claim"]]
+        for k in MATERIAL_KEYS:
+            if k in body and (cur["body"] or {}).get(k) != body.get(k) and (cur["body"] or {}).get(k) is not None:
+                out.append(f"{k}: {(cur['body'] or {}).get(k)} → {body.get(k)}")
+        return "; ".join(out) or None
+
+    def hold(self, kind: str, subject: str, body: dict, pillars: Iterable[dict] = (), rests_on: Iterable[dict] = (),
+             *, as_of: date | str, author: str, source: str | None = None, change: str | None = None,
+             stale_after: date | str | None = None) -> int:
+        """A new version kept aside until Ilay answers (resolve). An earlier pending one for the thesis is replaced."""
+        self.db.execute("UPDATE thesis_pending SET status = 'superseded', decided_at = ? WHERE kind = ? AND subject = ? "
+                        "AND status = 'pending'", (_now(), kind, subject))
+        return self.db.insert("thesis_pending", dict(
+            kind=kind, subject=subject, as_of=_d(as_of).isoformat(), author=author, source=source, body=dumps(body),
+            pillars=dumps(list(pillars)), rests_on=dumps(list(rests_on)),
+            stale_after=_d(stale_after).isoformat() if stale_after else None, change=change, status="pending",
+            created_at=_now()))
+
+    def pending(self, pending_id: int | None = None) -> list[dict]:
+        q, args = "SELECT * FROM thesis_pending WHERE status = 'pending'", []
+        if pending_id is not None:
+            q, args = "SELECT * FROM thesis_pending WHERE id = ?", [pending_id]
+        return self.db.all(q + " ORDER BY id", args, json_cols=("body", "pillars", "rests_on"))
+
+    def resolve(self, pending_id: int, verdict: str) -> int | None:
+        """approved -> the version goes in (by Ilay's hand, as the author of record says); rejected or expired -> it
+        is kept for the record only. Returns the new version, if one went in."""
+        rows = self.pending(pending_id)
+        if not rows or rows[0]["status"] != "pending":
+            return None
+        p = rows[0]
+        self.db.execute("UPDATE thesis_pending SET status = ?, decided_at = ? WHERE id = ?", (verdict, _now(), pending_id))
+        if verdict != "approved":
+            return None
+        cur = self.get(p["kind"], p["subject"])
+        v = self.put(p["kind"], p["subject"], p["body"], p["pillars"] or [], p["rests_on"] or [], as_of=p["as_of"],
+                     author=f"{p['author']}+ilay", source=p["source"], change=p["change"], stale_after=p["stale_after"])
+        if v and cur is not None:
+            self.mark_due(p["kind"], p["subject"], cur["version"], p["as_of"])
+        return v
+
+    def keep_keys(self, kind: str, subject: str, pillars: list[dict]) -> list[dict]:
+        """A pillar whose claim is already in the thesis keeps its key (so its state and evidence stay attached),
+        whatever order the agent wrote it in this week; a new claim gets the next free key."""
+        cur = {p["claim"]: p["key"] for p in (self.get(kind, subject) or {}).get("pillars") or []}
+        if not cur:
+            return pillars
+        used = set(cur.values())
+        out, n = [], 0
+        for p in pillars:
+            k = cur.get(p["claim"])
+            if k is None:
+                n += 1
+                while f"b{n}" in used:
+                    n += 1
+                k = f"b{n}"
+            used.add(k)
+            out.append({**p, "key": k})
+        return out
+
+    def prior(self, symbol: str, direction: str | None = None, evidence: int = 3) -> dict | None:
+        """The standing company thesis of `symbol` and its idea, with each pillar's state and latest evidence: what
+        A4 updates and what A7 weighs an event against. None when the store has neither."""
+        c = self.get("company", symbol)
+        ideas = [t for t in self.all("idea") if t["subject"].split(":")[0] == symbol
+                 and (direction is None or t["subject"].endswith(f":{direction}"))]
+        if c is None and not ideas:
+            return None
+
+        def ps(t):
+            return [{"key": p["key"], "claim": p["claim"], "kind": p["kind"], "check": p["check_text"],
+                     "status": p["status"], "since_version": p["since_version"],
+                     "evidence": [{"effect": e["effect"], "title": e.get("title") or e.get("summary"),
+                                   "published": (e.get("published") or "")[:10]} for e in self.evidence_for(p["id"], evidence)]}
+                    for p in self.pillars(t["id"])]
+        out: dict[str, Any] = {}
+        if c is not None:
+            b = c["body"] or {}
+            out["company"] = {"version": c["version"], "as_of": c["as_of"], "story_type": b.get("story_type"),
+                              "story": b.get("story"), "thesis": b.get("thesis"), "target": b.get("target"),
+                              "growth_engines": b.get("growth_engines") or [], "pillars": ps(c)}
+        for t in ideas:
+            b = t["body"] or {}
+            out.setdefault("ideas", []).append({"subject": t["subject"], "version": t["version"], "as_of": t["as_of"],
+                                                "bucket": b.get("bucket"), "line": b.get("line"), "pillars": ps(t)})
+        return out
+
+
+MATERIAL_KEYS = ("direction", "bucket", "story_type", "target", "stop")
+
+
+def thesis_facts(fs, prior: dict | None, symbol: str, as_of: date | str) -> int:
+    """The standing thesis on a fact sheet (A4's update, A7's event): the story and each pillar with its state, its
+    check and its latest evidence. Returns how many pillars went in."""
+    if not prior:
+        return 0
+    n, src = 0, "code:theses"
+    day = _d(as_of)
+    c = prior.get("company")
+    if c:
+        fs.add(f"{symbol}.thesis.company", f"v{c['version']} ({c['as_of']}) {c.get('story_type') or ''}: "
+               f"{c.get('story') or ''} | {c.get('thesis') or ''}"[:900], src, day)
+    for kind, t in ([("company", c)] if c else []) + [("idea", i) for i in prior.get("ideas") or []]:
+        if kind == "idea":
+            fs.add(f"{symbol}.thesis.idea", f"{t['subject']} v{t['version']}: {t.get('bucket') or ''} · {t.get('line') or ''}"[:600],
+                   src, day)
+        for p in t["pillars"]:
+            ev = " · ".join(f"{e['effect']}: {e['title']} ({e['published']})" for e in p["evidence"])
+            fs.add(f"{symbol}.pillar.{kind}:{p['key']}",
+                   f"[{STATUS_HE.get(p['status'], p['status'])}] {p['claim']}" + (f" · בדיקה: {p['check']}" if p.get("check") else "")
+                   + (f" · ראיות: {ev}" if ev else ""), src, day)
+            n += 1
+    return n
+
 
 def _diff(old: dict, new: dict) -> str:
     """One line: the fields that changed (the agents write their own line from phase C)."""
@@ -354,18 +516,39 @@ def idea_thesis(i: dict, bucket: str) -> dict:
             "tldr": tldr or None, "line": tldr.get("line") or j.get("why")}
 
 
-def sync_dossier(store: Store, d: dict, source: str | None = None) -> dict[str, int]:
+def sync_dossier(store: Store, d: dict, source: str | None = None, held: Iterable[str] = ()) -> dict[str, Any]:
     """Every link of one weekly research into the store: the stance, the 11 sectors, each deep-dived company and
-    each idea, with what each rests on. Returns how many theses got a new version, by kind."""
+    each idea, with what each rests on. Returns how many theses got a new version, by kind; under "pending" the
+    open positions' changes that wait for Ilay (held: the symbols of the open positions) and under "due" the
+    theses a change upstream left on an old version."""
     as_of, author = d["meta"]["as_of"], _author(d)
     source = source or f"dossier:{as_of}"
-    out = dict.fromkeys(KINDS, 0)
+    held = set(held)
+    out: dict[str, Any] = dict.fromkeys(KINDS, 0)
+    pending: list[dict] = []
+    due: dict[tuple[str, str], dict] = {}
 
-    def put(kind, subject, body, pillars=(), rests=(), stale=None):
-        v = store.put(kind, subject, body, pillars, [r for r in rests if r], as_of=as_of, author=author, source=source,
-                      stale_after=stale)
+    def put(kind, subject, body, pillars=(), rests=(), stale=None, change=None):
+        pillars = store.keep_keys(kind, subject, list(pillars)) if kind in ("company", "idea") else list(pillars)
+        rests = [r for r in rests if r]
+        sym = subject.split(":")[0]
+        if kind in ("company", "idea") and sym in held:
+            what = store.material(kind, subject, body, pillars)
+            if what:
+                pid = store.hold(kind, subject, body, pillars, rests, as_of=as_of, author=author, source=source,
+                                 change=change or what, stale_after=stale)
+                pending.append({"id": pid, "kind": kind, "subject": subject, "symbol": sym, "what": what,
+                                "change": change})
+                t = store.get(kind, subject)
+                return t["version"] if t else None
+        cur = store.get(kind, subject)
+        v = store.put(kind, subject, body, pillars, rests, as_of=as_of, author=author, source=source,
+                      stale_after=stale, change=change)
         if v:
             out[kind] += 1
+            if cur is not None:
+                for t in store.mark_due(kind, subject, cur["version"], as_of):
+                    due[(t["kind"], t["subject"])] = t
         t = store.get(kind, subject)
         return t["version"] if t else None
 
@@ -382,16 +565,21 @@ def sync_dossier(store: Store, d: dict, source: str | None = None) -> dict[str, 
         body, pillars = company_thesis(i)
         ne = body.get("next_earnings")
         stale = ne if ne and ne > as_of else None
-        cv = put("company", sym, body, pillars, rests=[_ref("sector", etf, sv.get(etf))], stale=stale)
+        cv = put("company", sym, body, pillars, rests=[_ref("sector", etf, sv.get(etf))], stale=stale,
+                 change=(i.get("judgment") or {}).get("thesis_change") or None)
         subject = f"{sym}:{i.get('direction') or 'long'}"
         if i.get("bucket") == "reject":
             if store.get("idea", subject):
                 put("idea", subject, idea_thesis(i, "reject"), rests=[_ref("macro", MACRO, mv),
                     _ref("sector", etf, sv.get(etf)), _ref("company", sym, cv)])
-                store.archive("idea", subject)
+                if not any(p["subject"] == subject for p in pending):
+                    store.archive("idea", subject)
             continue
         put("idea", subject, idea_thesis(i, i["bucket"]), rests=[_ref("macro", MACRO, mv), _ref("sector", etf, sv.get(etf)),
                                                                   _ref("company", sym, cv)])
+    # a thesis this report rewrote is not due any more (its rests_on is current)
+    out["due"] = sorted(f"{k}:{s}" for (k, s) in due if store.behind(store.get(k, s)))
+    out["pending"] = pending
     return out
 
 
@@ -429,8 +617,9 @@ def backfill(db: DB) -> dict[str, Any]:
             d["meta"]["as_of"]
         except (ValueError, KeyError, TypeError):
             continue
-        for k, v in sync_dossier(store, d, f"dossier:{d['meta']['as_of']}").items():
-            total[k] += v
+        got = sync_dossier(store, d, f"dossier:{d['meta']['as_of']}")
+        for k in KINDS:
+            total[k] += got[k]
         reports += 1
     wl = Queue(db).latest_upload("watchlist")
     extra = 0
