@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS approval_queue (
   as_of TEXT NOT NULL,
   item_key TEXT NOT NULL UNIQUE,         -- as_of + symbol + rule + kind: one item per day per action
   kind TEXT NOT NULL,                    -- enter | add | exit | reduce | sell | tighten_stop | block_new_risk | flag
-                                         -- | review (post-trade, qt.learning)
+                                         -- | review (post-trade, qt.learning) | thesis (qt.theses, phase C)
   rule_id TEXT NOT NULL,
   symbol TEXT,
   status TEXT NOT NULL,                  -- pending | postponed | changed | approved | rejected | expired
@@ -61,8 +61,8 @@ CREATE TABLE IF NOT EXISTS uploads (
 
 ORDER_KINDS = {"enter", "add", "exit", "reduce", "sell"}     # a paper order; tighten_stop / flags are not orders
 REVIEW_DAYS = 7                  # a post-trade review waits a week for Ilay, not one session (not from course)
-LONG_KINDS = ("review", "heat")  # wait REVIEW_DAYS: a heat proposal (S08-R26) is not tied to one session's price
-NO_PRICE_KINDS = ("heat", "flag", "review")                  # no price: the premarket recheck never touches them
+LONG_KINDS = ("review", "heat", "thesis")  # wait REVIEW_DAYS: a heat proposal (S08-R26) is not tied to one session's price
+NO_PRICE_KINDS = ("heat", "flag", "review", "thesis")                  # no price: the premarket recheck never touches them
 OPEN_STATUSES = ("pending", "postponed", "changed")          # still waiting for Ilay
 CHOICES = {"approve": ("approved", "approved"), "reject": ("rejected", "rejected"), "postpone": ("postponed", None)}
 
@@ -145,7 +145,17 @@ class Queue:
             self.journal.review(item["decision_id"], verdict, note)
         if choice == "approve" and item["kind"] in ORDER_KINDS:
             self._paper(item_id, item["payload"], datetime.fromisoformat(item["valid_until"]).date())
+        if verdict and item["kind"] == "thesis":
+            self._thesis(item, verdict)
         return self.get(item_id)
+
+    def _thesis(self, item: dict, verdict: str) -> None:
+        """A thesis change on an open position (qt.theses): approved goes in as the new version; rejected or expired
+        stays out (kept for the record)."""
+        from qt.theses import Store
+        pid = (item.get("payload") or {}).get("pending_id")
+        if pid:
+            Store(self.db).resolve(int(pid), verdict)
 
     def note(self, item_id: int, text: str) -> None:
         """A rejection reason sent after the button (a reply to the bot's question)."""
@@ -158,6 +168,8 @@ class Queue:
         gone = [r for r in self.open_items() if datetime.fromisoformat(r["valid_until"]) <= now]
         for r in gone:
             self.db.execute("UPDATE approval_queue SET status='expired', decided_at=? WHERE id=?", (_iso(now), r["id"]))
+            if r["kind"] == "thesis":
+                self._thesis(r, "expired")
             if r["decision_id"]:
                 self.journal.review(r["decision_id"], "not_reviewed", "expired at the open")
         return [r["id"] for r in gone]

@@ -14,7 +14,8 @@ screen:   the sector scorecard (S04) on tonight's stance, then the S06 screen an
           sector is "watch only" (information, never an entry); against its sector's side it is not listed (S04-R13).
 compare:  with the last scan: new green / orange stocks, oranges that turned green, and what moved in the macro
           picture and the sector sides.
-cascade:  a change in the stance (zone, bias, compass, cycle phase) sets off A1 on tonight's stance and A7 (DC-21) on
+cascade:  a change in the stance (zone, bias, compass, cycle phase) writes a new version of the macro thesis
+          (qt.theses) and marks the theses built on the old one due; it sets off A1 on tonight's stance and A7 (DC-21) on
           every open position (architecture 8, stage 2 of the proposal). Proposals only, to the approval queue.
 notify:   one Telegram message; a change in the macro picture gets its own line on top.
 
@@ -188,8 +189,11 @@ def cascade(ctx: RunContext, _: str) -> dict:
     A7 (DC-21) on every open position, the change as its event. Proposals only: a money-moving answer goes to the
     approval queue for Ilay, as in the daily run. Without the agents, the change is the message's top line only."""
     c, runner = ctx.out("compare"), ctx.services.get("agents")
-    if not c.get("stance_changed") or runner is None:
+    if not c.get("stance_changed"):
         return {"ran": False}
+    event = "שינוי בתמונת המקרו (סריקה לילית): " + " · ".join(c["macro"])
+    if runner is None:
+        return {"ran": False, "theses": macro_thesis(ctx, {}, event)}
     from qt import monthly as MO
     from qt.daily import AGENT_KIND, event_card
     from qt.intraday import _decided_today, _last_daily
@@ -197,17 +201,22 @@ def cascade(ctx: RunContext, _: str) -> dict:
     a1 = MO.a1(ctx, "")
     out: dict[str, Any] = {"ran": True, "a1": {k: (a1.get(k) or {}).get("choice") for k in ("DC-01", "DC-02", "DC-03",
                                                                                          "DC-04") if a1.get(k)},
-                           "a1_error": a1.get("error"), "decisions": {}, "added": []}
+                           "a1_error": a1.get("error"), "decisions": {}, "added": [],
+                           "theses": macro_thesis(ctx, {} if a1.get("error") else a1, event)}
     base, pf = _last_daily(ctx), ctx.services.get("portfolio") or {}
     if "calc" not in base or "rules" not in base or not pf.get("positions"):
         return out
     ctx.outputs.update(calc={"": base["calc"]}, rules={"": base["rules"]},
                        fetch={"": {"sources": {}, "portfolio": pf, "stale": []}})
-    event = "שינוי בתמונת המקרו (סריקה לילית): " + " · ".join(c["macro"])
+    th = out["theses"]
+    on_old = set(th.get("due_symbols") or [])
+    known = set(th.get("known_symbols") or []) if th.get("version") else set()    # no new version: ask every one
     q = Queue(ctx.db)
     for p in pf["positions"]:
         sym = p["symbol"]
-        if _decided_today(ctx, sym):
+        # the chain: a position whose thesis rests on the old stance is asked; one whose thesis was already written
+        # on tonight's stance is not; one with no thesis in the store is asked, as before the store
+        if _decided_today(ctx, sym) or (sym in known and sym not in on_old):
             continue
         try:
             d = event_card(ctx, runner, p, event, "code:scan", step="cascade")
@@ -223,6 +232,35 @@ def cascade(ctx: RunContext, _: str) -> dict:
             if iid:
                 out["added"].append(iid)
     return out
+
+
+def macro_thesis(ctx: RunContext, a1: dict, event: str) -> dict:
+    """Tonight's stance as a new version of the macro thesis (qt.theses, phase C), with A1's cards when they ran;
+    the theses still resting on the old version are marked due. Returns the new version, what is due, and which
+    symbols' company or idea theses rest on the old stance (directly or through their sector). Never fails the
+    cascade."""
+    from qt.theses import MACRO, Store, macro_thesis as build
+    try:
+        s = Store(ctx.db)
+        cur = s.get("macro", MACRO)
+        st = ctx.out("macro")["stance"]
+        cards = {k: a1[k] for k in ("DC-01", "DC-02", "DC-03", "DC-04") if a1.get(k)}
+        body, pillars = build({"macro": {"stage2": {"stance": st}}, "judgments": {"A1": cards},
+                               "sectors": {"phase": ctx.out("macro").get("phase")}})
+        v = s.put("macro", MACRO, body, pillars, as_of=ctx.as_of, author="agents" if cards else "code",
+                  source=f"scan:{ctx.as_of.isoformat()}", change=event)
+        due: list[dict] = []
+        if v and cur is not None:
+            due = s.mark_due("macro", MACRO, cur["version"], ctx.as_of)
+            for t in [t for t in due if t["kind"] == "sector"]:        # a sector on the old stance: its companies
+                due += [x for x in s.dependents("sector", t["subject"]) if x not in due]
+        def syms(ts):
+            return sorted({t["subject"].split(":")[0] for t in ts if t["kind"] in ("company", "idea")})
+        return {"version": v, "due": [f"{t['kind']}:{t['subject']}" for t in due], "due_symbols": syms(due),
+                "known_symbols": syms(s.all("company") + s.all("idea"))}
+    except Exception as ex:                                          # noqa: BLE001 - the store is a reader's aid
+        ctx.event(f"macro thesis not updated: {type(ex).__name__}: {ex}", "warn", "cascade")
+        return {}
 
 
 def _name(r: dict) -> str:
@@ -243,6 +281,10 @@ def message(as_of: date, u: dict, m: dict, s: dict, c: dict, k: dict | None = No
         lines.append(f"A1 על המקרו של הלילה: {a1}")
         for sym, d in (k.get("decisions") or {}).items():
             lines.append(f"A7 על {sym}: {d['option']}. {d['reasoning'][:200]}")
+    th = (k or {}).get("theses") or {}
+    if th.get("version"):
+        lines.append(f"🧱 תזת המקרו עודכנה לגרסה {th['version']}"
+                     + (f" · {len(th['due'])} תזות שנשענו על הקודמת מסומנות למבט חדש" if th.get("due") else ""))
     if c["sectors"]:
         lines.append("⚠️ שינוי בצד של סקטור: " + " · ".join(c["sectors"]))
     lines.append(f"סריקה לילית {as_of.isoformat()} · {u['n']:,} מניות · {s['screened']} עברו סינון S06 בכל 11 הסקטורים")

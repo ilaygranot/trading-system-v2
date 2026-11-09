@@ -196,7 +196,15 @@ def weekly_notify(ctx: RunContext, _: str) -> dict:
         _send(ctx, "תפעול\n" + "\n".join(lines))
     else:
         _send(ctx, text)
-    return {"text": text}
+    bot, sent = ctx.services.get("telegram"), 0
+    if bot is not None:                              # the thesis changes on open positions, with their buttons
+        from qt.telegram import send_item
+        q = Queue(ctx.db)
+        for it in q.for_day(ctx.as_of):
+            if it["kind"] == "thesis" and it["status"] == "pending" and not it.get("tg_message_id"):
+                send_item(bot, q, it)
+                sent += 1
+    return {"text": text, "items_sent": sent}
 
 
 # ---------------------------------------------------------------- monthly

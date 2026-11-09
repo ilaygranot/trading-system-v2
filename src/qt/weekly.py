@@ -287,6 +287,8 @@ def research(ctx: RunContext, _: str) -> dict:
                   for e in entries if e["symbol"] not in cover]
         n = lim.get("max_backfill", len(wanted))                   # the dry run: fewer (qt.dryrun)
         judge.backfill_wanted = wanted[:n]
+        from qt.theses import Store
+        judge.theses = Store(ctx.db)                   # A4 updates the standing theses (qt.theses, phase C)
         d = (ctx.services.get("research_run") or _run_research)(ctx.as_of, judge, manual["content"], fred)
     finally:
         runner.limit_usd = prev
@@ -318,11 +320,21 @@ def research(ctx: RunContext, _: str) -> dict:
 
 
 def _sync_theses(ctx: RunContext, d: dict) -> dict | None:
-    """The week's research into the thesis store (qt.theses, phase A: read by the dashboard only). A failure here
-    is logged and never fails the research: nothing downstream reads the store yet."""
-    from qt.theses import Store, sync_dossier
+    """The week's research into the thesis store (qt.theses). A material change to an open position's thesis waits
+    for Ilay: one approval item per thesis (kind "thesis", qt.approvals). A failure here is logged and never fails
+    the research."""
+    from qt.theses import KIND_HE, Store, sync_dossier
     try:
-        return sync_dossier(Store(ctx.db), d)
+        held = [p["symbol"] for p in _pf(ctx).get("positions", [])]
+        out = sync_dossier(Store(ctx.db), d, held=held)
+        q = Queue(ctx.db)
+        for p in out["pending"]:
+            q.add(ctx.run_id, ctx.as_of, dict(
+                kind="thesis", rule_id="DC-12", symbol=p["symbol"], qty=None, price=None, preapproved=False,
+                pending_id=p["id"], thesis=f"{p['kind']}:{p['subject']}",
+                detail=f"עדכון תזת ה{KIND_HE[p['kind']]} {p['subject']} מהמחקר השבועי, בפוזיציה פתוחה. "
+                       f"מה משתנה: {p['what']}" + (f". לפי A4: {p['change']}" if p.get("change") else "")))
+        return out
     except Exception as e:                                     # noqa: BLE001 - the store is a reader's aid
         ctx.event(f"thesis store not updated: {type(e).__name__}: {e}", "warn", "research")
         return None
@@ -389,6 +401,12 @@ def summary(ctx: RunContext) -> str:
         for x in rs["ideas"]:
             if x["bucket"] in ("enter", "conditional"):
                 lines.append(f"• {x['symbol']} {BUCKET_HE[x['bucket']]} · יחס {_f(x['rr'], sign=False)} · {x['line']}")
+        th = rs.get("theses") or {}
+        if th.get("pending"):
+            lines.append(f"🧱 {len(th['pending'])} עדכוני תזה בפוזיציות פתוחות מחכים לאישורך: "
+                         + ", ".join(sorted({p['symbol'] for p in th['pending']})))
+        if th.get("due"):
+            lines.append(f"תזות שהתזה שמעליהן השתנתה ומחכות למבט חדש: {len(th['due'])}")
         watch = [x["symbol"] for x in rs["ideas"] if x["bucket"] == "watch"]
         if watch:
             lines.append("למעקב: " + ", ".join(watch))
