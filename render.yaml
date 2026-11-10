@@ -108,7 +108,7 @@ services:
     name: qt-scan                         # 17:30 New York, trading days: the nightly scan of the whole market (qt.scan, Ilay 08.11)
     runtime: python
     region: virginia
-    plan: starter
+    plan: standard                        # 2 GB: the scan holds the whole universe in memory; starter (512 MB) ran out on 09.11
     schedule: "30 21,22 * * 1-5"          # 17:30 New York is 21:30 UTC in summer, 22:30 in winter; qt.schedule picks one
     buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: qt run scan --scheduled
