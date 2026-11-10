@@ -368,3 +368,28 @@ def test_services_start_from_an_empty_book_only_when_nothing_was_sent(db, monkey
     assert A.portfolio(db)["cash"] == 100000.0                       # the positions screen reads the same book
     Queue(db).upload("portfolio", "portfolio.yaml", "cash: 5\npositions: []\n")
     assert A.services(db)["portfolio"] == {"cash": 5, "positions": []}
+
+
+def test_every_cron_firing_reports_a_killed_run_and_the_next_one_resumes_it(db):
+    """The scan was killed at 22:31 UTC on 09.11.2026: the 23:30 firing (never due) finds it, says so, resumes it."""
+    bot = Bot()
+    A._schema(db)
+    db.insert("runs", dict(id="scan-2026-11-09-dead", kind="scan", as_of="2026-11-09", status="running",
+                           started_at="2026-11-09T22:31:05+00:00"), returning=None)
+    db.insert("run_locks", dict(kind="scan", run_id="scan-2026-11-09-dead", acquired_at="2026-11-09T22:31:05+00:00"),
+              returning=None)
+    resumed = []
+
+    class R:
+        def resume(self, rid):
+            resumed.append(rid)
+            return rid
+    import qt.app as app_mod
+    orig = app_mod.runner
+    app_mod.runner = lambda db_, svc_=None: R()
+    try:
+        out = A.scheduled("scan", db, {"telegram": bot}, datetime(2026, 11, 9, 23, 30, tzinfo=UTC))
+    finally:
+        app_mod.runner = orig
+    assert out == "resumed scan-2026-11-09-dead" and resumed == ["scan-2026-11-09-dead"]
+    assert "נעצרה באמצע" in bot.sent[-1][1] and bot.sent[-1][2] is None     # no button: qt-web is too small for a scan

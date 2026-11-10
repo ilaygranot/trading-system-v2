@@ -561,3 +561,56 @@ def test_no_count_cap_on_daily_cards():
     import qt.daily as D
     import qt.news as N
     assert not hasattr(D, "MAX_HEAT") and not hasattr(D, "MAX_TECH") and not hasattr(N, "MAX_CLASSIFY")
+
+
+def test_a_killed_run_is_marked_failed_once_and_resumed(db):
+    """09.11.2026: Render killed the scan (out of memory); no except clause ran, so it stayed "running" for good."""
+    from datetime import datetime, timezone
+    from qt.runs import DEAD_AFTER, KILLED, reap_dead
+    r = _runner(db)
+    db.insert("runs", dict(id="daily-dead", kind="daily", as_of=AS_OF.isoformat(), status="running",
+                           started_at="2026-11-09T22:31:05+00:00"), returning=None)
+    db.insert("run_locks", dict(kind="daily", run_id="daily-dead", acquired_at="2026-11-09T22:31:05+00:00"),
+              returning=None)
+    db.insert("run_steps", dict(run_id="daily-dead", step="fetch", subject="", seq=0, status="running"),
+              returning=None)
+    beat = datetime(2026, 11, 9, 22, 31, 5, tzinfo=timezone.utc)
+    assert reap_dead(db, beat + DEAD_AFTER / 2) == []                 # the heartbeat is recent: still alive
+    dead = reap_dead(db, beat + DEAD_AFTER)
+    assert [d["id"] for d in dead] == ["daily-dead"]
+    assert reap_dead(db, beat + DEAD_AFTER * 2) == []                 # reported once
+    run = db.one("SELECT status, error FROM runs WHERE id = 'daily-dead'")
+    assert run == {"status": "failed", "error": KILLED}
+    assert db.one("SELECT status FROM run_steps WHERE run_id = 'daily-dead'")["status"] == "failed"
+    assert db.one("SELECT * FROM run_locks WHERE kind = 'daily'") is None
+    assert r.resume("daily-dead") == "daily-dead"
+    assert db.one("SELECT status, resumes FROM runs WHERE id = 'daily-dead'") == {"status": "done", "resumes": 1}
+
+
+def test_a_stale_lock_frees_the_kind_and_fails_the_dead_run(db):
+    r = _runner(db)
+    db.insert("runs", dict(id="daily-dead", kind="daily", as_of="2023-05-30", status="running",
+                           started_at="2020-01-01T00:00:00+00:00"), returning=None)
+    db.insert("run_locks", dict(kind="daily", run_id="daily-dead", acquired_at="2020-01-01T00:00:00+00:00"),
+              returning=None)
+    rid = r.start("daily", AS_OF)
+    assert db.one("SELECT status FROM runs WHERE id = ?", (rid,))["status"] == "done"
+    assert db.one("SELECT status FROM runs WHERE id = 'daily-dead'")["status"] == "failed"
+
+
+def test_the_heartbeat_moves_the_lock_of_a_long_step(tmp_path, monkeypatch):
+    import time as _time
+    from qt import runs as R
+    from qt.db import DB
+    monkeypatch.setattr(R, "HEARTBEAT", 0.05)
+    db = DB(str(tmp_path / "qt.db"))
+    seen = []
+
+    def slow(ctx, _):
+        first = db.one("SELECT acquired_at FROM run_locks WHERE kind = 'slow'")["acquired_at"]
+        db.execute("UPDATE run_locks SET acquired_at = '2020-01-01T00:00:00+00:00' WHERE kind = 'slow'")
+        _time.sleep(0.4)
+        seen.append((first, db.one("SELECT acquired_at FROM run_locks WHERE kind = 'slow'")["acquired_at"]))
+        return {}
+    Runner(db, {"slow": [Step("slow", slow)]}).start("slow", AS_OF)
+    assert seen and seen[0][1] != "2020-01-01T00:00:00+00:00"

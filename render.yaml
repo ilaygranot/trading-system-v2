@@ -108,8 +108,9 @@ services:
     name: qt-scan                         # 17:30 New York, trading days: the nightly scan of the whole market (qt.scan, Ilay 08.11)
     runtime: python
     region: virginia
-    plan: starter
-    schedule: "30 21,22 * * 1-5"          # 17:30 New York is 21:30 UTC in summer, 22:30 in winter; qt.schedule picks one
+    plan: standard                        # 2 GB: the scan holds the whole universe in memory; starter (512 MB) ran out on 09.11
+    schedule: "30 21,22,23 * * 1-5"       # 17:30 New York is 21:30 UTC in summer, 22:30 in winter; qt.schedule picks one.
+                                          # 23:30 is never due: it marks a killed scan failed and resumes it (09.11)
     buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: qt run scan --scheduled
     envVars:
@@ -145,7 +146,8 @@ services:
     runtime: python
     region: virginia
     plan: starter
-    schedule: "30 22,23 * * 1-5"
+    schedule: "30 0,22,23 * * 1-6"        # 22:30 / 23:30 UTC as above; 00:30 is never due: it marks a killed daily run
+                                          # failed and resumes it before the premarket run (Friday's on Saturday 00:30)
     buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: qt run daily --scheduled
     envVars:
