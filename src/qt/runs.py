@@ -10,6 +10,7 @@ Only one run of each kind at a time: a second start exits at once (the lock).
 from __future__ import annotations
 
 import json
+import threading
 import time
 import traceback
 import uuid
@@ -77,7 +78,13 @@ CREATE TABLE IF NOT EXISTS run_locks (
 );
 """
 
-LOCK_STALE = timedelta(hours=6)       # a lock older than this is a crashed run (not from course)
+# A live run beats its lock every HEARTBEAT seconds from a thread of its own; a lock that has not moved for DEAD_AFTER
+# belongs to a process that is gone (Render killed it: out of memory, a restart, a timeout), which no except clause
+# sees. 09.11.2026: the first nightly scan was killed 33 s in, stayed "running" with no alert and no retry. Not from
+# the course.
+HEARTBEAT = 60
+DEAD_AFTER = timedelta(minutes=10)
+KILLED = "the process ended without finishing (killed: out of memory, a restart or a timeout)"
 
 
 def _now() -> str:
@@ -86,6 +93,66 @@ def _now() -> str:
 
 class AlreadyRunning(RuntimeError):
     pass
+
+
+def _ts(v: str) -> datetime:
+    t = datetime.fromisoformat(v)
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def mark_killed(db: DB, run_id: str, kind: str) -> bool:
+    """A run whose process is gone: failed, with its running step, and its lock freed. True if this call did it
+    (two crons firing at once never report the same run twice)."""
+    if db.execute("UPDATE runs SET status='failed', error=? WHERE id = ? AND status = 'running'",
+                  (KILLED, run_id)).rowcount != 1:
+        return False
+    db.execute("UPDATE run_steps SET status='failed', error=? WHERE run_id = ? AND status = 'running'", (KILLED, run_id))
+    db.execute("DELETE FROM run_locks WHERE kind = ? AND run_id = ?", (kind, run_id))
+    db.insert("run_events", dict(run_id=run_id, at=_now(), level="error", step=None, message=f"run failed: {KILLED}",
+                                 data=None))
+    return True
+
+
+def reap_dead(db: DB, now: datetime | None = None) -> list[dict]:
+    """Every run still "running" whose heartbeat stopped DEAD_AFTER ago (or that has no lock at all): marked failed.
+    Returns those runs (id, kind, started_at), for the alert; a failed run is then resumed by the cron's next firing."""
+    now = now or datetime.now(timezone.utc)
+    beats = {r["run_id"]: r["acquired_at"] for r in db.all("SELECT run_id, acquired_at FROM run_locks")}
+    out = []
+    for r in db.all("SELECT id, kind, started_at FROM runs WHERE status = 'running' ORDER BY started_at"):
+        if now - _ts(beats.get(r["id"]) or r["started_at"]) < DEAD_AFTER:
+            continue
+        if mark_killed(db, r["id"], r["kind"]):
+            out.append(r)
+    return out
+
+
+class _Heartbeat:
+    """Moves the run's lock forward every HEARTBEAT seconds while the process lives, on a connection of its own. An
+    in-memory SQLite database (tests) cannot be shared with a thread and gets none: its runs end in milliseconds."""
+    def __init__(self, db: DB, kind: str, run_id: str):
+        self.db, self.kind, self.run_id = db, kind, run_id
+        self.stop_ = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def __enter__(self) -> "_Heartbeat":
+        if self.db.pg or ":memory:" not in self.db.url:
+            self.thread = threading.Thread(target=self._beat, daemon=True, name=f"heartbeat-{self.run_id}")
+            self.thread.start()
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self.stop_.set()
+
+    def _beat(self) -> None:
+        conn = None
+        while not self.stop_.wait(HEARTBEAT):
+            try:
+                conn = conn or DB(self.db.url, self.db.schema)
+                conn.execute("UPDATE run_locks SET acquired_at = ? WHERE kind = ? AND run_id = ?",
+                             (_now(), self.kind, self.run_id))
+            except Exception:                                         # noqa: BLE001 - try again on the next beat
+                conn = None
 
 
 @dataclass
@@ -123,9 +190,11 @@ class Runner:
     def _lock(self, kind: str, run_id: str) -> None:
         row = self.db.one("SELECT run_id, acquired_at FROM run_locks WHERE kind = ?", (kind,))
         if row:
-            age = datetime.now(timezone.utc) - datetime.fromisoformat(row["acquired_at"])
-            if age < LOCK_STALE and row["run_id"] != run_id:
+            age = datetime.now(timezone.utc) - _ts(row["acquired_at"])
+            if age < DEAD_AFTER and row["run_id"] != run_id:
                 raise AlreadyRunning(f"{kind} run {row['run_id']} is still running")
+            if row["run_id"] != run_id:
+                mark_killed(self.db, row["run_id"], kind)             # its heartbeat stopped: the process is gone
             self.db.execute("DELETE FROM run_locks WHERE kind = ?", (kind,))
         if not self.db.insert_new("run_locks", dict(kind=kind, run_id=run_id, acquired_at=_now()), ["kind"]):
             raise AlreadyRunning(f"{kind} run started concurrently")
@@ -167,12 +236,13 @@ class Runner:
                              (run_id,), ["output"]):
             ctx.outputs.setdefault(r["step"], {})[r["subject"]] = r["output"]
         try:
-            for seq, step in enumerate(self.pipelines[run["kind"]]):
-                subjects = list(step.subjects(ctx)) if step.subjects else [""]
-                for subject in subjects:
-                    if subject in ctx.outputs.get(step.name, {}):
-                        continue                                      # rule 1: done steps never run again
-                    self._run_step(ctx, seq, step, subject)
+            with _Heartbeat(self.db, run["kind"], run_id):
+                for seq, step in enumerate(self.pipelines[run["kind"]]):
+                    subjects = list(step.subjects(ctx)) if step.subjects else [""]
+                    for subject in subjects:
+                        if subject in ctx.outputs.get(step.name, {}):
+                            continue                                  # rule 1: done steps never run again
+                        self._run_step(ctx, seq, step, subject)
         except Exception as e:
             self.db.execute("UPDATE runs SET status='failed', error=? WHERE id = ?", (f"{type(e).__name__}: {e}", run_id))
             ctx.event(f"run failed: {e}", "error")

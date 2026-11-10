@@ -110,10 +110,40 @@ def ping(kind: str) -> None:
             pass
 
 
+# resumed by their own cron (2 GB): the bot's resume button runs in qt-web (512 MB), where they run out of memory
+HEAVY = {"scan", "weekly", "midweek"}
+
+
+def reap_and_alert(db: DB, svc: dict[str, Any] | None = None, now: datetime | None = None) -> list[str]:
+    """Every cron firing first looks for runs whose process died without a word (qt.runs.reap_dead): they are marked
+    failed and Ilay hears of each one that started in the last day. The cron's next firing resumes it once."""
+    from qt.runs import _ts, reap_dead
+    dead = reap_dead(db, now)
+    if not dead:
+        return []
+    from qt.telegram import Telegram
+    bot = (svc or {}).get("telegram") or Telegram.from_env()
+    t = now or datetime.now(timezone.utc)
+    for r in dead:
+        if bot is None or t - _ts(r["started_at"]) > timedelta(days=1):
+            continue
+        text = (f"⚠️ ריצה {r['id']} נעצרה באמצע בלי לסיים (כנראה חוסר זיכרון או אתחול של השרת) וסומנה כנכשלה. "
+                "ההפעלה הבאה של ה-cron תנסה להמשיך אותה פעם אחת.")
+        try:
+            bot.send(text, None if r["kind"] in HEAVY else
+                     [[{"text": "▶️ המשך ריצה", "callback_data": f"resume:{r['id']}"}]])
+        except Exception:                                           # noqa: BLE001 - the run itself still goes on
+            pass
+    return [r["id"] for r in dead]
+
+
 def scheduled(kind: str, db: DB, svc: dict[str, Any] | None = None, now: datetime | None = None) -> str:
     """The cron entry point. Each cron fires at both UTC candidates (daylight saving); the New York guard lets
-    one through. The other firing resumes a failed run of the day once (5.2: one automatic resume)."""
+    one through. The other firing resumes a failed run of the day once (5.2: one automatic resume). Every firing
+    first marks runs whose process died as failed (reap_and_alert), so a killed run is retried like a failed one."""
     from qt.schedule import due
+    _schema(db)
+    reap_and_alert(db, svc, now)
     ok, as_of = due(kind, now)
     if not ok:
         return _auto_resume(kind, db, svc, now)
