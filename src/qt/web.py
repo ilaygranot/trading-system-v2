@@ -721,7 +721,7 @@ class App:
         rt = _r()
         texts = self.status_doc().get("runs", {})
         ny_at = {"daily": rt.daily_at, "premarket": rt.premarket_at, "open": rt.open_at, "weekly": f"שבת {rt.weekly_at}",
-                 "monthly": f"שבת בימים {rt.monthly_days[0]}–{rt.monthly_days[1]}, {rt.weekly_at}"}
+                 "monthly": f"שבת בימים {rt.monthly_days[0]}–{rt.monthly_days[1]}, {rt.get('monthly_at', rt.weekly_at)}"}
         runs = (st or {}).get("runs") or {}
         if not runs:
             from qt.schedule import next_run

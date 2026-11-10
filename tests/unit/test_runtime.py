@@ -62,8 +62,8 @@ def test_schedule_new_york_time_dst_and_holidays():
     assert not due("open", datetime(2026, 10, 23, 14, 40, tzinfo=UTC))[0]
     ok, as_of = due("weekly", datetime(2026, 10, 24, 14, 5, tzinfo=UTC))
     assert ok and as_of == date(2026, 10, 23)                                 # Saturday, as of Friday
-    assert due("monthly", datetime(2026, 10, 10, 14, 5, tzinfo=UTC))[0]
-    assert not due("monthly", datetime(2026, 10, 17, 14, 5, tzinfo=UTC))[0]   # only the second week
+    assert due("monthly", datetime(2026, 10, 10, 11, 35, tzinfo=UTC))[0]
+    assert not due("monthly", datetime(2026, 10, 17, 11, 35, tzinfo=UTC))[0]   # only the second week
     assert next_open(date(2026, 7, 2)).date() == date(2026, 7, 6)             # over the July 3 holiday
     assert not is_trading_day(date(2026, 12, 25))
 
@@ -338,11 +338,11 @@ def test_scheduled_runs_once_skips_done_and_auto_resumes_a_failure(db):
     assert A.scheduled("weekly", db, svc, sat).startswith("skip")
     # a monthly run without FRED fails after the manual file: alerted with a resume button, resumed once later
     Queue(db).upload("manual_macro", "m.yaml", "ism_pmi: {'2026-09': 49}\n")
-    out = A.scheduled("monthly", db, svc, datetime(2026, 10, 10, 14, 5, tzinfo=UTC))
+    out = A.scheduled("monthly", db, svc, datetime(2026, 10, 10, 11, 35, tzinfo=UTC))
     assert out.startswith("failed") and bot.sent[-1][2][0][0]["callback_data"].startswith("resume:monthly-")
-    out = A.scheduled("monthly", db, svc, datetime(2026, 10, 10, 15, 5, tzinfo=UTC))
+    out = A.scheduled("monthly", db, svc, datetime(2026, 10, 10, 12, 35, tzinfo=UTC))
     assert out.startswith("failed again")
-    assert A.scheduled("monthly", db, svc, datetime(2026, 10, 10, 15, 6, tzinfo=UTC)) == "not due: monthly"
+    assert A.scheduled("monthly", db, svc, datetime(2026, 10, 10, 12, 36, tzinfo=UTC)) == "not due: monthly"
 
 
 def test_webhook_token_is_telegram_safe_and_matches_the_web_route(db):

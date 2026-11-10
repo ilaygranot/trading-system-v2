@@ -35,6 +35,7 @@ from qt.approvals import Queue
 from qt.runs import RunContext, Step
 
 LIGHTS = ("green", "orange")
+SCAN_KEEP_DAYS = 4                     # scan universes kept in the database (Friday's lasts to Saturday's research)
 NEW_SHOWN = 12                         # new stocks named in the message (not from course: length)
 SECTORS_HE = {"long": "לונג", "short": "שורט", "neutral": "נייטרלי"}
 FIT_HE = {"aligned": "בכיוון הסקטור", "watch_only": "מעקב בלבד (סקטור נייטרלי)"}
@@ -64,10 +65,18 @@ def _universe(ctx: RunContext) -> dict:
     if fetched is not None:
         return fetched
     from qt.research import universe as U
+    from qt.research.state import SCAN_TAG, UNIVERSE, State, universe_ok
     f = _work(ctx.as_of) / "universe.pkl"
     if f.exists():
         return pickle.loads(f.read_bytes())
-    u = U.fetch(_yahoo(ctx))
+    state = State(ctx.db, ctx.as_of, tag=SCAN_TAG)
+    u = state.get_blob(UNIVERSE)                    # a resume in a new container
+    if u is None:
+        u = U.fetch(_yahoo(ctx))
+        if universe_ok(u):                          # the evening's research runs take it from here (state.universe_from_scan)
+            ctx.db.execute("DELETE FROM research_state WHERE as_of LIKE ? AND as_of < ?",   # tens of MB a night:
+                           (f"%:{SCAN_TAG}", (ctx.as_of - timedelta(days=SCAN_KEEP_DAYS)).isoformat()))  # keep a few
+            state.put_blob(UNIVERSE, u)
     f.write_bytes(pickle.dumps(u))
     return u
 

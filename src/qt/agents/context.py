@@ -7,7 +7,6 @@ from __future__ import annotations
 import hashlib
 import json
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from qt.agents.blind import blind as _blind

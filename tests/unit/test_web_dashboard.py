@@ -103,7 +103,7 @@ def test_next_run_follows_new_york_time():
     now = datetime(2026, 10, 22, 19, 40, tzinfo=timezone.utc)          # Thursday
     assert next_run("daily", now).isoformat() == "2026-10-22T18:30:00-04:00"
     assert next_run("weekly", now).isoformat() == "2026-10-24T10:00:00-04:00"
-    assert next_run("monthly", now).isoformat() == "2026-11-14T10:00:00-05:00"
+    assert next_run("monthly", now).isoformat() == "2026-11-14T07:30:00-05:00"   # before the weekly run
 
 
 def test_the_research_tab_is_the_report_and_today_keeps_its_card(web, db):

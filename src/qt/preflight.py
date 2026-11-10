@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 STAGES = [f"S{n:02d}" for n in range(1, 14)]
 WEEKLY_KEYS = ("QT_DATABASE_URL", "FRED_API_KEY", "SEC_CONTACT", "ROIC_API_KEY", "FMP_API_KEY", "TELEGRAM_BOT_TOKEN",
@@ -76,10 +76,19 @@ def cards() -> str:
     return f"{n} כרטיסים נבנים עם פרקי ה-Playbook"
 
 
-def policy() -> str:
+HOLIDAYS_AHEAD_DAYS = 90         # the NYSE holiday list must reach this far (audit 09.11; not from course)
+
+
+def policy(today: date | None = None) -> str:
+    """The policy loads, and its NYSE holidays reach 90 days ahead: past the list's end every holiday would count as a
+    trading day and the runs would fire on a closed market."""
     from qt.policy import load_policy
     p = load_policy()
-    return f"policy {p.playbook_version}"
+    last = max(date.fromisoformat(str(h)) for h in p.runtime.nyse_holidays)
+    today = today or date.today()
+    if last < today + timedelta(days=HOLIDAYS_AHEAD_DAYS):
+        raise RuntimeError(f"חגי NYSE ב-policy.yaml נגמרים ב-{last.isoformat()}: להוסיף את השנה הבאה")
+    return f"policy {p.playbook_version}, חגי NYSE עד {last.isoformat()}"
 
 
 # ---------------------------------------------------------------- this server
@@ -299,7 +308,3 @@ def main(offline: bool = False, notify: bool = False) -> int:
         if bot is not None:
             bot.send(out)
     return 0 if all(r.ok for r in results) else 1
-
-
-def as_dict(results: list[Result]) -> list[dict[str, Any]]:
-    return [vars(r) for r in results]

@@ -378,7 +378,8 @@ services:
     runtime: python
     region: virginia
     plan: standard                        # 2 GB: the research run holds the whole universe (~100 MB pickled) in memory
-    schedule: "0 22 * * 5"                # 18:00 New York in summer, 17:00 in winter: after the close either way
+    schedule: "0 0 * * 6"                 # Friday 20:00 New York in summer, 19:00 in winter: after the 17:30 scan, whose
+                                          # universe it takes (audit 09.11: it used to start before or beside the scan)
     buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: qt dry-run                # qt.dryrun: pre-flight, then the weekly run in schema qt_dry with two deep
                                           # dives; one verdict to Telegram; hands a clean universe to Saturday's run
@@ -417,11 +418,11 @@ services:
         fromService: {type: web, name: qt-web, envVarKey: ROIC_API_KEY}
 
   - type: cron
-    name: qt-monthly                      # the Saturday in days 8-14 (after the first week, S13), 10:00 New York
+    name: qt-monthly                      # the Saturday in days 8-14 (after the first week, S13), 07:30 New York, before the weekly run
     runtime: python
     region: virginia
     plan: starter
-    schedule: "0 14,15 * * 6"
+    schedule: "30 11,12 * * 6"            # 07:30 New York is 11:30 UTC in summer, 12:30 in winter; qt.schedule picks one
     buildCommand: pip install '.[postgres,agents]' && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.308 && mkdir -p bin && cp -L $HOME/.local/bin/claude bin/claude
     startCommand: qt run monthly --scheduled
     envVars:

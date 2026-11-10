@@ -1,7 +1,6 @@
 """The lecturer's trades under the 20.10 rules (audit-rerun.md section 6). Expected:
 SYM and ACMR pass only at k=3 (high ADR); TSLA, META, ZS, BA-stock blocked by 1:3 at any k;
 the BA and BLDR put spreads pass; SPOT/AEO blocked by process; APPS depends on the revenue date."""
-from datetime import date
 
 import pytest
 

@@ -72,11 +72,12 @@ def test_every_service_that_runs_agents_installs_the_pinned_claude_cli():
 
 
 def test_the_dry_run_is_the_weekly_job_a_day_before():
-    """Same build, plan and keys as qt-weekly (a rehearsal on another machine proves nothing), Friday after the close."""
+    """Same build, plan and keys as qt-weekly (a rehearsal on another machine proves nothing), Friday evening after the
+    17:30 scan (Saturday 00:00 UTC = Friday 20:00 / 19:00 New York), whose universe it takes (audit 09.11)."""
     s = _services()
     dry, weekly = s["qt-dryrun"], s["qt-weekly"]
     assert dry["startCommand"].split("#")[0].strip() == "qt dry-run"
-    assert dry["schedule"].split()[-1] == "5" and int(dry["schedule"].split()[1]) >= 21     # after 16:00 New York
+    assert dry["schedule"].split()[1:] == ["0", "*", "*", "6"]                              # after the scan, both seasons
     for k in ("buildCommand", "plan", "runtime", "region", "envVars"):
         assert dry[k] == weekly[k], k
 
