@@ -39,7 +39,7 @@ MACRO_PER_QUERY, MACRO_MAX = 2, 8
 INDEX, VIX = "^GSPC", "^VIX"
 
 STATUS_HE = {"opportunity": "🟢 הזדמנות", "ready": "🟢 מוכנה לכניסה", "waiting": "⏳ ממתינה",
-             "recheck": "🔎 לבדוק רמזור", "expired": "⌛ פג", "invalidated": "✗ בוטל", "stale": "⚠️ אין נתונים",
+             "recheck": "🔎 לבדוק רמזור", "expired": "⌛ פג", "invalidated": "✗ מושהה (מעבר לרמת הביטול)", "stale": "⚠️ אין נתונים",
              "frozen": "🧊 קפואה"}
 DIR_HE = {"for_idea": "בעד", "against_idea": "נגד"}
 SHOW_NEWS = 2                            # headlines shown per stock; the rest and the agent's reasons in a fold

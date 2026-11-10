@@ -32,7 +32,8 @@ SHOCK_ADR = 2.0                       # a move against a position this many ADRs
 NEAR_STOP_ADR = 1.0                   # within one ADR of the stop (not from course)
 ADR_DAYS = 120                        # daily bars read for ADR60 (the policy's period, with margin)
 KIND_HE = {"stop_breach": "🔴 מעבר לסטופ במהלך היום", "near_stop": "🟠 קרובה לסטופ", "shock": "⚡ תנועה חדה נגד הפוזיציה",
-           "target": "🎯 הגיעה ליעד", "trigger": "🔔 חצתה את הטריגר במהלך היום"}
+           "target": "🎯 הגיעה ליעד", "trigger": "🔔 חצתה את הטריגר במהלך היום",
+           "no_data": "⚠️ אין נתונים"}
 
 
 # ---------------------------------------------------------------- the background: the last daily run
@@ -72,12 +73,18 @@ def fetch(ctx: RunContext, _: str) -> dict:
     for s in syms:
         try:
             q = (ctx.services.get("live") or prov.live)(s)
-            bars, _src = prov.daily_bars(s, ctx.as_of - timedelta(days=ADR_DAYS), ctx.as_of)
-            q["adr"] = adr([b for b in bars if b.day < ctx.as_of])
         except Exception as e:                                       # noqa: BLE001 - one stock, never the run
             ctx.event(f"{s}: live {type(e).__name__}: {e}", "warn", "fetch")
             out["missing"].append(s)
             continue
+        q["adr"] = None
+        for p in filter(None, (prov, ctx.services.get("prices_fallback"))):   # the range refines; the look goes on without
+            try:
+                bars, _src = p.daily_bars(s, ctx.as_of - timedelta(days=ADR_DAYS), ctx.as_of)
+                q["adr"] = adr([b for b in bars if b.day < ctx.as_of])
+                break
+            except Exception as e:                                   # noqa: BLE001 - next provider
+                ctx.event(f"{s}: bars {type(e).__name__}: {e}", "warn", "fetch")
         if not q.get("price"):
             out["missing"].append(s)
             continue
@@ -151,6 +158,10 @@ def checks(ctx: RunContext, _: str) -> dict:
     for e in W.load(ctx.services.get("watchlist")):
         if e.symbol not in held and live.get(e.symbol):
             alerts += [{"symbol": e.symbol, "held": False, **a} for a in watch_alerts(e, live[e.symbol])]
+    for s in f.get("missing") or []:                                 # a look that saw nothing is said, once a day
+        alerts.append({"symbol": s, "held": s in held, "kind": "no_data",
+                       "detail": "אין מחיר חי מהספק: " + ("הסטופ והיעד לא נבדקו במבט הזה" if s in held
+                                                           else "הטריגר לא נבדק במבט הזה")})
     new = [a for a in alerts if (a["symbol"], a["kind"]) not in done]
     return {"alerts": new, "repeated": len(alerts) - len(new)}
 

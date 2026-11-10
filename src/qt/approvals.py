@@ -67,6 +67,17 @@ OPEN_STATUSES = ("pending", "postponed", "changed")          # still waiting for
 CHOICES = {"approve": ("approved", "approved"), "reject": ("rejected", "rejected"), "postpone": ("postponed", None)}
 
 
+def _one_adr_pct(payload: dict | None) -> float:
+    """One average daily range of the stock, read back from an entry's own stop (k x ADR under the price): a move
+    smaller than the stock's ordinary day is not news. A flat 2% sent RGLD's entry back as "changed" on a 2.6% gap
+    (09.11.2026) when its ADR was 2.7%. 0 when the item carries no stop. Not from the course (operations)."""
+    p = payload or {}
+    price, stop = p.get("price"), p.get("stop")
+    if not price or not stop:
+        return 0.0
+    return abs(price - stop) / price * 100 / float(p.get("k") or load_policy().stop.k_default)
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -187,7 +198,7 @@ class Queue:
                            ["payload"])
         for r in rows:
             p, ref = prices.get(r["symbol"]), r["ref_price"]
-            moved = p is not None and ref and abs(p / ref - 1) * 100 > thr
+            moved = p is not None and ref and abs(p / ref - 1) * 100 > max(thr, _one_adr_pct(r["payload"]))
             if not moved and r["symbol"] not in hard_blocked:
                 continue
             why = (f"price {ref:g} -> {p:g} ({(p / ref - 1) * 100:+.1f}%)" if moved else "a hard rule fails now")

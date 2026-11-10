@@ -79,18 +79,32 @@ def recheck(ctx: RunContext, _: str) -> dict:
 
 
 def premarket_notify(ctx: RunContext, _: str) -> dict:
+    """What changed, what expired, and a reminder of every order still waiting for an answer before the open: an
+    entry sent on a Friday night has one window, and it used to close in silence (RGLD, 09.11.2026)."""
     changed = ctx.out("recheck")["changed"]
-    if not changed and not ctx.out("expire")["expired"]:
-        return {"sent": False}                                       # nothing new: no message before the open
     q = Queue(ctx.db)
-    _send(ctx, f"לפני פתיחה {ctx.as_of.isoformat()} · {len(changed)} פריטים השתנו · "
-               f"{len(ctx.out('expire')['expired'])} פגו")
+    now = _now(ctx)
+    from qt.approvals import ORDER_KINDS
+    waiting = [i for i in q.open_items() if i["kind"] in ORDER_KINDS and i["id"] not in changed
+               and now < datetime.fromisoformat(i["valid_until"]) <= now + timedelta(hours=24)]
+    if not changed and not waiting and not ctx.out("expire")["expired"]:
+        return {"sent": False}                                       # nothing new: no message before the open
+    text = (f"לפני פתיחה {ctx.as_of.isoformat()} · {len(changed)} פריטים השתנו · "
+            f"{len(ctx.out('expire')['expired'])} פגו")
+    if waiting:
+        from zoneinfo import ZoneInfo
+        until = min(datetime.fromisoformat(i["valid_until"]) for i in waiting).astimezone(ZoneInfo("Asia/Jerusalem"))
+        text += (f"\n⏰ {len(waiting)} ממתינים לתשובה שלך עד הפתיחה ({until:%H:%M} שעון ישראל), ואז פגים: "
+                 + ", ".join(f"{i['symbol'] or 'תיק'} #{i['id']}" for i in waiting))
+    _send(ctx, text)
     bot = ctx.services.get("telegram")
     if bot is not None:
         from qt.telegram import send_item
         for iid in changed:
             send_item(bot, q, q.get(iid))
-    return {"sent": True}
+        for i in waiting:                                            # the buttons again, at the bottom of the chat
+            send_item(bot, q, i)
+    return {"sent": True, "waiting": [i["id"] for i in waiting]}
 
 
 # ---------------------------------------------------------------- open

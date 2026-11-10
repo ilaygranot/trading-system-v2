@@ -170,6 +170,58 @@ class Nasdaq:
             out[f"{y}-{m}-{d}"] = float(r["close"].replace("$", "").replace(",", ""))
         return out, "nasdaq:quote/historical"
 
+    def daily_bars(self, symbol: str, start: date, end: date) -> tuple[list[Bar], str]:
+        """Daily bars (stocks and ETFs, not indexes), oldest first: the price source of last resort when Yahoo refuses
+        (HTTP 429) and FMP's plan does not cover the symbol (RGLD on 05.11.2026, the day its trigger fired)."""
+        if symbol.startswith("^"):
+            raise ProviderError(f"nasdaq {symbol}: no indexes")
+        days = (end - start).days + 5
+        url = self.URL.format(sym=symbol.replace("-", "."), start=start, end=end).replace("limit=60", f"limit={days}")
+        body = get_json(url, self.store, max_age_s=1800, headers={"User-Agent": BROWSER_UA, "Accept": "application/json"})
+        rows = (((body or {}).get("data") or {}).get("tradesTable") or {}).get("rows") or []
+        if not rows:
+            raise ProviderError(f"nasdaq {symbol}: no rows")
+
+        def num(v: str) -> float:
+            return float(str(v).replace("$", "").replace(",", ""))
+        bars = []
+        for r in rows:
+            m, d, y = r["date"].split("/")
+            try:
+                bars.append(Bar(date(int(y), int(m), int(d)), num(r["open"]), num(r["high"]), num(r["low"]),
+                                num(r["close"]), num(r.get("volume") or 0)))
+            except (KeyError, ValueError):
+                continue                                             # a row without prices ("N/A")
+        if not bars:
+            raise ProviderError(f"nasdaq {symbol}: no priced rows")
+        return sorted(bars, key=lambda b: b.day), "nasdaq:quote/historical"
+
+
+class Chain:
+    """Several price providers behind one `daily_bars`: each is asked in turn, and the first whose bars reach `end`
+    wins; when none does, the bars that reach furthest are returned (the caller decides what stale means)."""
+
+    def __init__(self, *providers: Any):
+        self.providers = [p for p in providers if p is not None]
+
+    def daily_bars(self, symbol: str, start: date, end: date) -> tuple[list[Bar], str]:
+        best: tuple[list[Bar], str] | None = None
+        errors = []
+        for p in self.providers:
+            try:
+                bars, src = p.daily_bars(symbol, start, end)
+            except Exception as e:                                   # noqa: BLE001 - the next provider
+                errors.append(f"{type(p).__name__}: {type(e).__name__}: {str(e)[:120]}")
+                continue
+            bars = [b for b in bars if b.day <= end]
+            if bars and bars[-1].day >= end:
+                return bars, src
+            if bars and (best is None or bars[-1].day > best[0][-1].day):
+                best = (bars, src)
+        if best is not None:
+            return best
+        raise ProviderError(f"{symbol}: no provider answered ({'; '.join(errors)})")
+
 
 class AlphaVantage:
     BASE = "https://www.alphavantage.co/query"
