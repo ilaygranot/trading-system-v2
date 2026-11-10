@@ -44,8 +44,9 @@ class Collector:
         pass
 
 
-def prepare(prod: DB, dry: DB) -> list[str]:
-    """Empty the dry schema and copy in what the weekly run reads from production."""
+def prepare(prod: DB, dry: DB, as_of: date | None = None) -> list[str]:
+    """Empty the dry schema and copy in what the weekly run reads from production, and the universe of the evening's
+    scan for `as_of` when it kept one (the dry run then asks Yahoo for no stock list of its own)."""
     if not dry.schema or dry.schema == prod.schema:
         raise ValueError("the dry run needs a schema of its own")
     dry.drop_schema()
@@ -61,6 +62,11 @@ def prepare(prod: DB, dry: DB) -> list[str]:
         dst.upload("dossier", up["name"], up["content"])
     if olds:
         copied.append(f"dossier: {len(olds)} דוחות קודמים")
+    if as_of is not None:
+        from qt.research.state import SCAN_TAG, copy_universe
+        parts = copy_universe(prod, f"{as_of.isoformat()}:{SCAN_TAG}", dry, as_of.isoformat())
+        if parts is not None:
+            copied.append(f"היקום מהסריקה של {as_of.isoformat()} ({parts} חלקים)")
     return copied
 
 
@@ -72,16 +78,11 @@ def share_universe(dry: DB, prod: DB, as_of: date, dossier: dict | None) -> str:
     bad = {s: e for s, e in (u.get("errors") or {}).items() if "HTTP 404" not in str(e)}
     if bad:
         return f"היקום לא הועבר: {len(bad)} מניות לא ענו"
-    from qt.research.state import SCHEMA
-    prod.ddl(SCHEMA)
-    rows = dry.all("SELECT key, content, updated_at FROM research_state WHERE as_of = ? AND (key = ? OR key LIKE ?)",
-                   (as_of.isoformat(), UNIVERSE, UNIVERSE + "#%"))
-    if not any(r["key"] == UNIVERSE for r in rows):
+    from qt.research.state import copy_universe
+    parts = copy_universe(dry, as_of.isoformat(), prod, as_of.isoformat())
+    if parts is None:
         return "היקום לא הועבר: לא נשמר"
-    head = next(r for r in rows if r["key"] == UNIVERSE)
-    for r in sorted(rows, key=lambda r: r["key"] == UNIVERSE):         # the head row last, as State.put_blob
-        prod.upsert("research_state", dict(as_of=as_of.isoformat(), **r), ["as_of", "key"])
-    return f"היקום ({u.get('n')} מניות) הועבר למחקר של {as_of.isoformat()} ({json.loads(head['content'])['parts']} חלקים)"
+    return f"היקום ({u.get('n')} מניות) הועבר למחקר של {as_of.isoformat()} ({parts} חלקים)"
 
 
 def run(prod: DB, as_of: date, dry: DB | None = None, services: Callable[[DB], dict[str, Any]] | None = None,
@@ -91,7 +92,7 @@ def run(prod: DB, as_of: date, dry: DB | None = None, services: Callable[[DB], d
     from qt.runs import AlreadyRunning
     pre = (checks or preflight.run)()
     dry = dry or DB(prod.url, schema=DRY_SCHEMA)
-    copied = prepare(prod, dry)
+    copied = prepare(prod, dry, as_of)
     before = (dry.one("SELECT MAX(id) AS m FROM uploads") or {}).get("m") or 0
     svc = (services or app.services)(dry)
     bot = Collector()

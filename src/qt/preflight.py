@@ -76,10 +76,19 @@ def cards() -> str:
     return f"{n} כרטיסים נבנים עם פרקי ה-Playbook"
 
 
-def policy() -> str:
+HOLIDAYS_AHEAD_DAYS = 90         # the NYSE holiday list must reach this far (audit 09.11; not from course)
+
+
+def policy(today: date | None = None) -> str:
+    """The policy loads, and its NYSE holidays reach 90 days ahead: past the list's end every holiday would count as a
+    trading day and the runs would fire on a closed market."""
     from qt.policy import load_policy
     p = load_policy()
-    return f"policy {p.playbook_version}"
+    last = max(date.fromisoformat(str(h)) for h in p.runtime.nyse_holidays)
+    today = today or date.today()
+    if last < today + timedelta(days=HOLIDAYS_AHEAD_DAYS):
+        raise RuntimeError(f"חגי NYSE ב-policy.yaml נגמרים ב-{last.isoformat()}: להוסיף את השנה הבאה")
+    return f"policy {p.playbook_version}, חגי NYSE עד {last.isoformat()}"
 
 
 # ---------------------------------------------------------------- this server

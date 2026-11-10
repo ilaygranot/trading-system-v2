@@ -249,10 +249,13 @@ runtime:                           # runtime plan 4-7; not from course (operatio
   intraday_at: ["10:30", "12:30", "14:30"]   # the intraday watch (qt.intraday; Ilay 08.11), three looks a session
   open_at: "09:35"                 # approved paper orders fill at the open (Ilay 23.10)
   weekly_at: "10:00"               # Saturday
+  monthly_at: "07:30"              # the monthly Saturday, before the weekly run: two runs on the agents at once was
+                                   # the busiest moment of the month (audit 09.11)
   midweek_at: "20:00"              # Wednesday night, after the scan: deep dives on its new greens (qt.midweek; Ilay 09.11)
   monthly_days: [8, 14]            # the Saturday after the first week of the month (S13)
   window_minutes: 30               # cron fires at both UTC hours (DST); the NY-time guard picks one
   recheck_move_pct: 2.0            # premarket: an item whose price moved more than this comes back as "changed"
   nyse_holidays: [2026-01-01, 2026-01-19, 2026-02-16, 2026-04-03, 2026-05-25, 2026-06-19, 2026-07-03, 2026-09-07,
                   2026-11-26, 2026-12-25, 2027-01-01, 2027-01-18, 2027-02-15, 2027-03-26, 2027-05-31, 2027-06-18,
-                  2027-07-05, 2027-09-06, 2027-11-25, 2027-12-24]
+                  2027-07-05, 2027-09-06, 2027-11-25, 2027-12-24, 2028-01-17, 2028-02-21, 2028-04-14, 2028-05-29,
+                  2028-06-19, 2028-07-04, 2028-09-04, 2028-11-23, 2028-12-25]   # extend each year: preflight warns at 90 days

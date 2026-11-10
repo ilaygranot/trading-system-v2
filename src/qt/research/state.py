@@ -76,6 +76,40 @@ class State:
         self.db.execute("DELETE FROM research_state WHERE as_of = ?", (self.as_of,))
 
 
+UNIVERSE = "stage:universe.pkl"
+SCAN_TAG = "scan"                                  # the nightly scan keeps its universe under "<date>:scan" (qt.scan)
+
+
+def universe_ok(u: dict | None) -> bool:
+    """Every stock answered (a 404 is a delisted symbol, not a failure): only then is a universe handed on."""
+    return bool(u) and not any(isinstance(x, dict) and "error" in x and "HTTP 404" not in str(x["error"])
+                               for x in (u.get("summaries") or {}).values())
+
+
+def copy_universe(src_db, src_as_of: str, dst_db, dst_as_of: str) -> int | None:
+    """The universe rows of one state into another (another date, tag or schema), the head row last as in put_blob.
+    Returns the number of parts copied, or None when the source has none."""
+    src_db.ddl(SCHEMA)
+    rows = src_db.all("SELECT key, content, updated_at FROM research_state WHERE as_of = ? AND (key = ? OR key LIKE ?)",
+                      (src_as_of, UNIVERSE, UNIVERSE + "#%"))
+    head = next((r for r in rows if r["key"] == UNIVERSE), None)
+    if head is None:
+        return None
+    dst_db.ddl(SCHEMA)
+    for r in sorted(rows, key=lambda r: r["key"] == UNIVERSE):
+        dst_db.upsert("research_state", dict(as_of=dst_as_of, **r), ["as_of", "key"])
+    return int(json.loads(head["content"])["parts"])
+
+
+def universe_from_scan(db, as_of: date, state: "State") -> bool:
+    """A research run on the evening of a scan (the midweek run, the dry run, Saturday's research on Friday's scan)
+    takes the scan's universe instead of asking Yahoo for every stock again (audit 09.11: up to seven full fetches a
+    week, two of them within an hour). Nothing is copied when the state already has a universe or the scan kept none."""
+    if state.get(UNIVERSE) is not None:
+        return False
+    return copy_universe(db, f"{as_of.isoformat()}:{SCAN_TAG}", state.db, state.as_of) is not None
+
+
 def fresh() -> bool:
     return os.environ.get("QT_RESEARCH_FRESH", "").strip().lower() in ("1", "true", "yes")
 

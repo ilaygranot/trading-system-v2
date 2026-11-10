@@ -123,9 +123,11 @@ def research(ctx: RunContext, _: str) -> dict:
     from qt.research.judge import Judge
     from qt.research.state import State, fresh
     from qt.theses import Store
+    from qt.research.state import universe_from_scan
     state = State(ctx.db, ctx.as_of, tag="midweek")
     if fresh():
         state.clear()
+    universe_from_scan(ctx.db, ctx.as_of, state)    # tonight's scan already fetched it
     prior = _dossier(ctx.db, ctx.as_of)
     prev, runner.limit_usd = runner.limit_usd, config()["budget"]["midweek_research_usd"]
     try:

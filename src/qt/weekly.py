@@ -273,7 +273,7 @@ def research(ctx: RunContext, _: str) -> dict:
     from qt.agents.runner import config
     from qt.research import report
     from qt.research.judge import Judge
-    from qt.research.state import State, fresh, seed_from_dossier
+    from qt.research.state import State, fresh, seed_from_dossier, universe_from_scan
     state = State(ctx.db, ctx.as_of)
     if fresh():
         state.clear()
@@ -283,6 +283,7 @@ def research(ctx: RunContext, _: str) -> dict:
             seed_from_dossier(state, json.loads(last["content"]) if last else None)
         except ValueError:
             pass
+    universe_from_scan(ctx.db, ctx.as_of, state)   # after the seed (it needs an empty state): the dry run's, else Friday's scan
     prev, runner.limit_usd = runner.limit_usd, config()["budget"]["weekly_research_usd"]
     try:
         lim = ctx.services.get("research_limits") or {}            # the dry run: fewer deep dives (qt.dryrun)

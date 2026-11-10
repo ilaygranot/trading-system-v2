@@ -63,7 +63,7 @@ def due(kind: str, now_utc: datetime | None = None) -> tuple[bool, date]:
         return t.weekday() == 5 and _in_window(t, r.weekly_at), as_of
     if kind == "monthly":
         lo, hi = r.monthly_days
-        return t.weekday() == 5 and lo <= t.day <= hi and _in_window(t, r.weekly_at), as_of
+        return t.weekday() == 5 and lo <= t.day <= hi and _in_window(t, r.get("monthly_at", r.weekly_at)), as_of
     raise ValueError(kind)
 
 
@@ -72,7 +72,7 @@ def next_run(kind: str, now_utc: datetime | None = None) -> datetime | None:
     r = _r()
     ats = list(r.intraday_at) if kind == "intraday" else \
         [{"scan": r.scan_at, "daily": r.daily_at, "premarket": r.premarket_at, "open": r.open_at, "weekly": r.weekly_at,
-          "monthly": r.weekly_at, "midweek": r.midweek_at}[kind]]
+          "monthly": r.get("monthly_at", r.weekly_at), "midweek": r.midweek_at}[kind]]
     t = ny(now_utc)
     for i in range(45):
         for at in ats:
