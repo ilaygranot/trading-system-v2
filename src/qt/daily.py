@@ -9,6 +9,7 @@ proposals and the standing orders approved with each trade, and approvals become
 """
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, fields
 from datetime import date, timedelta
 from pathlib import Path
@@ -50,8 +51,39 @@ def _bars(rows: list[list]) -> list[Bar]:
 
 # ---------------------------------------------------------------- steps
 
+RETRY_PAUSE_S = 90                     # before the second pass over the symbols no provider answered (not from course)
+
+
+def _due_day(as_of: date) -> date:
+    """The session whose close the run stands on: `as_of` itself on a trading day, else the last one before it."""
+    from qt.schedule import is_trading_day, previous_trading_day
+    return as_of if is_trading_day(as_of) else previous_trading_day(as_of)
+
+
+def _bars_for(ctx: RunContext, s: str, start: date, due: date) -> tuple[list[Bar], str] | None:
+    """The first provider whose bars reach the due session; else the bars that reach furthest (the caller marks them
+    stale); None when no provider answered. A provider that answers with yesterday's bars is not an answer for today:
+    the trigger and the stop are decided on today's close."""
+    best = None
+    for prov in (ctx.services.get("prices"), ctx.services.get("prices_fallback")):
+        if prov is None:
+            continue
+        try:
+            bars, src = prov.daily_bars(s, start, ctx.as_of)
+        except Exception as e:                                       # noqa: BLE001 - next provider
+            ctx.event(f"{s}: {type(e).__name__}: {e}", "warn", "fetch")
+            continue
+        bars = [b for b in bars if b.day <= ctx.as_of]
+        if bars and bars[-1].day >= due:
+            return bars, src
+        if bars and (best is None or bars[-1].day > best[0][-1].day):
+            best = (bars, src)
+    return best
+
+
 def fetch(ctx: RunContext, _: str) -> dict:
-    """Rule 2: the only step that reads providers. Primary, then fallback; missing data marks the run stale."""
+    """Rule 2: the only step that reads providers. Primary, then the fallbacks; a symbol whose bars do not reach the
+    session of the run is asked once more after a pause (a provider's rate limit passes), and is stale after that."""
     pf = ctx.services.get("portfolio")
     if pf is None:
         raise RuntimeError("no portfolio: send portfolio.yaml to the bot (or set QT_PORTFOLIO)")
@@ -59,24 +91,27 @@ def fetch(ctx: RunContext, _: str) -> dict:
                      | {o["symbol"] for o in Queue(ctx.db).open_orders()} | {INDEX, VIX}
                      | {e.symbol for e in W.load(ctx.services.get("watchlist"))})
     start = ctx.as_of - timedelta(days=HISTORY_DAYS)
-    out: dict[str, Any] = {"bars": {}, "sources": {}, "stale": []}
-    for s in symbols:
-        for prov in (ctx.services.get("prices"), ctx.services.get("prices_fallback")):
-            if prov is None:
+    due = _due_day(ctx.as_of)
+    out: dict[str, Any] = {"bars": {}, "sources": {}, "stale": [], "retried": []}
+    todo = symbols
+    for attempt in (1, 2):
+        again = []
+        for s in todo:
+            got = _bars_for(ctx, s, start, due)
+            if got is not None and got[0][-1].day >= due:
+                out["bars"][s], out["sources"][s] = _bars_json(got[0]), got[1]
                 continue
-            try:
-                bars, src = prov.daily_bars(s, start, ctx.as_of)
-            except Exception as e:                                   # noqa: BLE001 - next provider
-                ctx.event(f"{s}: {type(e).__name__}: {e}", "warn", "fetch")
-                continue
-            bars = [b for b in bars if b.day <= ctx.as_of]
-            if bars:
-                out["bars"][s], out["sources"][s] = _bars_json(bars), src
-                if bars[-1].day < ctx.as_of - timedelta(days=4):
-                    out["stale"].append(s)
-                break
-        else:
-            out["stale"].append(s)
+            if got is not None:                                      # old bars: kept for the summary, never for a decision
+                out["bars"][s], out["sources"][s] = _bars_json(got[0]), got[1]
+            again.append(s)
+        if not again or attempt == 2:
+            out["stale"] = again
+            break
+        out["retried"] = list(again)
+        ctx.event(f"no bars for the session of {due.isoformat()}: {', '.join(again)}; second pass in "
+                  f"{RETRY_PAUSE_S}s", "warn", "fetch")
+        ctx.services.get("sleep", time.sleep)(RETRY_PAUSE_S)
+        todo = again
     out["crosscheck"], out["mismatch"] = crosscheck(ctx, out)
     out["portfolio"] = pf
     return out
@@ -229,7 +264,7 @@ def watch(ctx: RunContext, _: str) -> dict:
     for e in entries:
         rows = snap["bars"].get(e.symbol)
         if not rows or e.symbol in snap["stale"]:
-            checks.append({"symbol": e.symbol, "status": "stale", "notes": ["אין נתונים עדכניים"]})
+            checks.append(_blind_check(ctx, e, rows))
             continue
         c = W.check(e, _bars(rows), ctx.as_of, approved_heat(ctx, e.symbol, e.added),
                     reviewed=day61_reviewed(ctx, e.symbol, e.added))
@@ -243,6 +278,42 @@ def watch(ctx: RunContext, _: str) -> dict:
             if not seen:
                 actions.append(W.entry_action(e, c, r["equity"]))
     return {"checks": checks, "actions": actions, "n": len(entries)}
+
+
+NEAR_TRIGGER_ADR = 2.0                 # a stock this close to its trigger and without data is its own alert (not from course)
+
+
+def _blind_check(ctx: RunContext, e: W.WatchEntry, rows: list[list] | None) -> dict:
+    """A watchlist stock without today's bar: what was last known (the old bars the fetch kept, else the last daily
+    run that saw it), and whether it sat close enough to its trigger that today may be the day it fired. RGLD closed
+    0.9% under its trigger on 04.11.2026, had no data on 05.11 and broke out that day: the summary said only "no data"."""
+    out: dict[str, Any] = {"symbol": e.symbol, "status": "stale", "notes": ["אין נתונים עדכניים"], "near_trigger": False}
+    last_day, last_close, a = None, None, None
+    if rows:
+        bars = _bars(rows)
+        last_day, last_close, a = bars[-1].day.isoformat(), bars[-1].close, W.adr(bars)
+    else:
+        prev = ctx.db.all("SELECT r.as_of, s.output FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE r.kind = 'daily' "
+                          "AND s.step = 'watch' AND s.status = 'done' AND r.as_of < ? ORDER BY r.as_of DESC, "
+                          "r.started_at DESC LIMIT 5", (ctx.as_of.isoformat(),), ["output"])
+        for r in prev:
+            c = next((x for x in (r["output"] or {}).get("checks") or []
+                      if x.get("symbol") == e.symbol and x.get("close")), None)
+            if c:
+                last_day, last_close = r["as_of"], c["close"]
+                break
+    if last_close:
+        out.update(last_close=last_close, last_day=last_day)
+        if e.trigger_kind != "now" and e.trigger_level:
+            sg = 1 if e.direction == "long" else -1
+            dist = sg * (e.trigger_level / last_close - 1) * 100
+            a = a or (e.risk_pct_at_add / e.k if e.risk_pct_at_add and e.k else W.DEFAULT_ADR_PCT)
+            near = dist <= NEAR_TRIGGER_ADR * a
+            out.update(trigger_level=e.trigger_level, dist_to_trigger_pct=dist, near_trigger=bool(near))
+            if near:
+                out["notes"].append(f"הייתה {max(dist, 0):.1f}% מהטריגר {e.trigger_level:.2f} בסגירה האחרונה הידועה "
+                                    f"({last_day}): ייתכן שהטריגר הופעל היום ולא ראינו")
+    return out
 
 
 def approved_heat(ctx: RunContext, symbol: str, since: str) -> str | None:
@@ -546,6 +617,10 @@ def journal(ctx: RunContext, _: str) -> dict:
     for a in _actions(ctx):
         done = ctx.db.one("SELECT id FROM decisions WHERE run_id=? AND card_id=? AND subject=? AND action=?",
                           (ctx.run_id, a["rule_id"], a["symbol"] or "portfolio", a["kind"]))
+        if not done:                          # a second run of the day (the morning catch-up): the item is queued already
+            key = f"{ctx.as_of.isoformat()}|{a.get('symbol') or '-'}|{a['rule_id']}|{a['kind']}"
+            it = ctx.db.one("SELECT decision_id FROM approval_queue WHERE item_key = ?", (key,))
+            done = {"id": it["decision_id"]} if it and it["decision_id"] else None
         if done:
             ids.append(done["id"])
             continue
@@ -614,7 +689,10 @@ def notify(ctx: RunContext, _: str) -> dict:
     mism = ctx.out("fetch").get("mismatch") or []
     filled = ctx.out("fill")["filled"] if ctx.out("fill") else []
     cost = ctx.db.one("SELECT COALESCE(SUM(cost_usd), 0) AS c FROM agent_calls WHERE run_id = ?", (ctx.run_id,))
-    text = (f"יומית {ctx.as_of.isoformat()} · ריצה תקינה · משטר {r['regime']} · {len(pending)} פריטים לאישור · "
+    blind = data_gaps(ctx)
+    text = (("🔁 השלמת נתונים · " if ctx.services.get("catch_up") else "")
+            + f"יומית {ctx.as_of.isoformat()} · {'ריצה תקינה' if not stale else '⚠️ ריצה עם חוסר בנתונים'} · "
+            f"משטר {r['regime']} · {len(pending)} פריטים לאישור · "
             f"{len(items) - len(pending)} פקודות עומדות/דגלים · "
             + ("נתונים עדכניים" if not stale else f"נתונים ישנים: {', '.join(stale)}")
             + (f" · מקור שני: {sum(v['status'] == 'ok' for v in cc.values())}/{len(cc)} תואמים" if cc else "")
@@ -624,6 +702,8 @@ def notify(ctx: RunContext, _: str) -> dict:
     cut = list((ctx.out("agents") or {}).get("budget_cut") or []) + list((ctx.out("news") or {}).get("budget_cut") or [])
     if cut:                                   # gap 34: the budget's cut used to stay in the run log
         text += f"\n⚠️ תקציב הסוכנים היומי נגמר: {len(cut)} בדיקות לא רצו ({', '.join(cut[:8])}{'…' if len(cut) > 8 else ''})"
+    if blind:
+        text += "\n" + "\n".join(blind)
     text += "\n\n" + day_summary(ctx)
     digest = chunks(digest_lines(ctx.out("news") or {}))
     sent = 0
@@ -645,8 +725,33 @@ def notify(ctx: RunContext, _: str) -> dict:
     return {"text": text, "digest": digest, "items_sent": sent}
 
 
+def data_gaps(ctx: RunContext) -> list[str]:
+    """What the run could not see today, said at the top of the message and not inside a list (05.11.2026: 19 symbols
+    had no data, a held stock among them, and the headline read "a normal run"): a position whose stop was not
+    checked, the index or VIX (every new entry waits), a watchlist stock that was near its trigger. The morning run
+    tries the day again (qt.app.catch_up)."""
+    snap = ctx.out("fetch")
+    stale = set(snap["stale"])
+    if not stale:
+        return []
+    out = []
+    held = [p["symbol"] for p in _pf(ctx).get("positions", []) if p["symbol"] in stale]
+    if held:
+        out.append(f"🔴 בתיק בלי נתוני היום: {', '.join(held)}. הסטופ לא נבדק על הסגירה של היום, לבדוק ידנית")
+    idx = [s for s in (INDEX, VIX) if s in stale]
+    if idx:
+        out.append(f"🔴 אין נתוני שוק ({', '.join(idx)}): המשטר לא חושב מחדש ואין כניסות חדשות היום")
+    for c in (ctx.out("watch") or {}).get("checks") or []:
+        if c.get("status") == "stale" and c.get("near_trigger"):
+            out.append(f"🟠 {c['symbol']} בלי נתונים, והייתה {max(c['dist_to_trigger_pct'], 0):.1f}% מהטריגר "
+                       f"{c['trigger_level']:.2f}: ייתכן שהטריגר הופעל היום. לבדוק ידנית")
+    out.append("זו כבר הריצה החוזרת: הנתונים עדיין חסרים." if ctx.services.get("catch_up")
+               else "הריצה של לפני הפתיחה תנסה להשלים את היום.")
+    return out
+
+
 STATUS_HE = {"opportunity": "🟢 הזדמנות: הטריגר הופעל", "ready": "🟢 מוכנה לכניסה", "waiting": "⏳ ממתינה", "recheck": "🔎 היחס חזר מעל 3: לבדוק רמזור",
-             "expired": "⌛ הטריגר פג: חוזרת למעקב", "invalidated": "✗ הטריגר בוטל (סגירה מעבר לרמת הביטול)",
+             "expired": "⌛ הטריגר פג: חוזרת למעקב", "invalidated": "✗ סגרה מעבר לרמת הביטול: הטריגר מושהה עד שתחזור",
              "stale": "⚠️ אין נתונים", "frozen": "🧊 קפואה: אין כניסה (S08-R27)"}
 
 
@@ -689,7 +794,8 @@ def day_summary(ctx: RunContext) -> str:
         lines.append("רשימת מעקב:")
         for x in w["checks"]:
             if x["status"] == "stale":
-                lines.append(f"• {x['symbol']}: {STATUS_HE['stale']}")
+                lines.append(f"• {x['symbol']}: {STATUS_HE['stale']}"
+                             + (f" · סגירה אחרונה ידועה {x['last_close']:.2f} ({x['last_day']})" if x.get("last_close") else ""))
                 continue
             head = STATUS_HE.get(x["status"], x["status"]) if not x.get("held") else "בתיק"
             dist = (f" · {_f(x['dist_to_trigger_pct'], 1)}% לטריגר {x['trigger_level']:.2f}"

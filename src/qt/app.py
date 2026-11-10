@@ -52,14 +52,14 @@ def watchlist(db: DB, path: str | None = None) -> dict | None:
 
 
 def services(db: DB, portfolio_path: str | None = None) -> dict[str, Any]:
-    from qt.data.providers import CFTC, FMP, FRED, Yahoo
+    from qt.data.providers import CFTC, FMP, FRED, Chain, Nasdaq, Yahoo
     from qt.data.store import Store
     from qt.telegram import Telegram
     store = Store(db)
     yahoo = Yahoo(store)
     from qt.data.macro_auto import Sources
     from qt.research.verify import make_second_close
-    s: dict[str, Any] = {"prices": yahoo, "prices_fallback": FMP(store), "quote": yahoo.quote, "cftc": CFTC(),
+    s: dict[str, Any] = {"prices": yahoo, "prices_fallback": Chain(FMP(store), Nasdaq(store)), "quote": yahoo.quote, "cftc": CFTC(),
                          "second_close": make_second_close(store, alphavantage=False),   # the daily cross-check
                          "macro_auto": Sources}      # ISM / NFIB / NAAIM fetched by the runs (no manual file)
     pf = portfolio(db, portfolio_path)
@@ -110,6 +110,38 @@ def ping(kind: str) -> None:
             pass
 
 
+def catch_up(db: DB, svc: dict[str, Any], today: date) -> str | None:
+    """Before the premarket run: when the last session's daily run could not see every symbol (or never finished), the
+    day is run once more, hours later, when a provider's rate limit has passed. Its entry proposals and standing exits
+    are valid until this morning's open, so a trigger that fired on a blind evening still fills at the same open it
+    would have (RGLD, 05.11.2026: Yahoo answered HTTP 429 on the day of the breakout and the proposal went out a day
+    late, 2.9% higher). One catch-up per day; items already queued are not queued twice. Not from the course."""
+    from qt.schedule import previous_trading_day
+    day = previous_trading_day(today).isoformat()
+    runs = db.all("SELECT id, status FROM runs WHERE kind = 'daily' AND as_of = ? ORDER BY started_at", (day,))
+    done = [r for r in runs if r["status"] == "done"]
+    if len(runs) > 1 or any(r["status"] == "running" for r in runs):
+        return None                                                  # already tried again, or still at it
+    if done:
+        row = db.one("SELECT output FROM run_steps WHERE run_id = ? AND step = 'fetch' AND status = 'done'",
+                     (done[0]["id"],), ["output"])
+        if not ((row or {}).get("output") or {}).get("stale"):
+            return None
+    elif not db.one("SELECT id FROM runs WHERE kind = 'daily' LIMIT 1"):
+        return None                                                  # a new deployment: nothing to catch up on
+    svc["catch_up"] = True
+    try:
+        return runner(db, svc).start("daily", date.fromisoformat(day))
+    except AlreadyRunning:
+        return None
+    except Exception as e:                                           # noqa: BLE001 - the premarket run still goes on
+        row = db.one("SELECT id FROM runs WHERE kind = 'daily' AND as_of = ? ORDER BY started_at DESC LIMIT 1", (day,))
+        alert_failure(svc, row["id"] if row else "daily", e)
+        return None
+    finally:
+        svc.pop("catch_up", None)
+
+
 def scheduled(kind: str, db: DB, svc: dict[str, Any] | None = None, now: datetime | None = None) -> str:
     """The cron entry point. Each cron fires at both UTC candidates (daylight saving); the New York guard lets
     one through. The other firing resumes a failed run of the day once (5.2: one automatic resume)."""
@@ -125,6 +157,8 @@ def scheduled(kind: str, db: DB, svc: dict[str, Any] | None = None, now: datetim
     elif db.one("SELECT id FROM runs WHERE kind = ? AND as_of = ? AND status = 'done'", (kind, as_of.isoformat())):
         return f"skip: {kind} {as_of} already done"
     svc = svc if svc is not None else services(db)
+    if kind == "premarket":
+        catch_up(db, svc, as_of)
     r = runner(db, svc)
     try:
         rid = r.start(kind, as_of)

@@ -25,6 +25,8 @@ from qt.calc.volatility import Bar, adr
 from qt.policy import load_policy
 from qt.watchlist import boiling_hint
 
+DEFAULT_ADR_PCT = 2.5                  # when a stock's own range is unknown (no bars): a typical large cap (not from course)
+
 EARNINGS_SOON_DAYS = 7                      # not from course: how early the summary warns
 DC16_ADR_MULT = 3                           # DC-16 trigger: a move against the idea of more than 3 x ADR60 (card text)
 REVIEW_AFTER_DAYS = 60                      # S08-R29 / D-S08-1: the review once the entry is more than 60 days on the list
@@ -44,7 +46,7 @@ class WatchEntry:
     k: float
     target: float | None
     target_source: str | None
-    invalidate_level: float | None = None   # a close beyond it cancels a conditional trigger
+    invalidate_level: float | None = None   # a close beyond it pauses a conditional trigger for that day (qt.watch.check)
     time_stop: str | None = None
     next_earnings: str | None = None
     first_size_pct: float = 6.0
@@ -150,7 +152,7 @@ def from_dossier(d: dict) -> dict[str, Any]:
         inval = None
         if bucket == "conditional":
             sup = (i.get("levels") or {}).get("nearest_support" if i["direction"] == "long" else "nearest_resistance")
-            inval = round(sup, 2) if sup else None
+            inval = _invalidation(sup, p.get("entry"), p.get("stop"), p.get("k"), i["direction"])
         out.append(asdict(WatchEntry(
             symbol=sym, direction=i["direction"], etf=i["etf"], bucket=bucket, added=as_of,
             trigger_kind=kind, trigger_level=round(level, 2) if level else None, k=p["k"],
@@ -192,6 +194,22 @@ def from_dossier(d: dict) -> dict[str, Any]:
             risk_pct_at_add=round(k * t["adr"], 2) if t.get("adr") else None, green_at_add=t.get("combined") == "green",
             why_not=why, tldr=why, watch_sector=True)))
     return {"as_of": as_of, "source": "research " + as_of, "entries": out}
+
+
+INVALIDATE_MIN_ADR = 1.0               # the invalidation level sits at least this many ADRs from the price (not from course)
+
+
+def _invalidation(level: float | None, entry: float | None, stop: float | None, k: float | None,
+                  direction: str) -> float | None:
+    """The level whose break pauses a conditional trigger: the nearest support (resistance for a short), but never
+    closer to the price than one average daily range. RGLD's sat 1.2% under the price with an ADR of 2.6%, and an
+    ordinary day crossed it five times in ten sessions (10.2026). The ADR is read back from the plan's stop (k x ADR)."""
+    if not level:
+        return None
+    if entry and stop and k:
+        one_adr = abs(entry - stop) / k * INVALIDATE_MIN_ADR
+        level = min(level, entry - one_adr) if direction == "long" else max(level, entry + one_adr)
+    return round(level, 2)
 
 
 def hindsight(e: WatchEntry, close: float) -> str | None:
@@ -326,7 +344,7 @@ def entry_action(e: WatchEntry, c: WatchCheck, equity: float) -> dict[str, Any]:
               f"{e.tldr}" + (f" ⚠️ {'; '.join(c.notes)}" if c.notes else ""))
     return dict(kind="enter", rule_id="S10-R4", symbol=e.symbol, qty=qty, price=c.close, preapproved=False,
                 detail=detail, direction=e.direction, sector=e.etf, stop=round(c.stop, 2), target=c.target,
-                size_pct=e.first_size_pct, equity=round(equity, 2))
+                size_pct=e.first_size_pct, equity=round(equity, 2), k=e.k)
 
 
 def load(raw: dict | None) -> list[WatchEntry]:

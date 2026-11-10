@@ -21,6 +21,18 @@ class ProviderError(RuntimeError):
     pass
 
 
+MAX_RETRY_AFTER_S = 30.0              # how long one request waits on a server's Retry-After (not from course)
+
+
+def _wait(r: Any, attempt: int) -> float:
+    """The pause before the next try: the server's Retry-After when it sends one (capped), else 2, 4, 8 seconds."""
+    try:
+        ra = float((getattr(r, "headers", None) or {}).get("Retry-After") or 0)
+    except (TypeError, ValueError):
+        ra = 0.0
+    return min(max(ra, 2 ** (attempt + 1)), MAX_RETRY_AFTER_S)
+
+
 def get_json(url: str, store: Store | None = None, max_age_s: float = 6 * 3600, headers: dict | None = None,
              session: requests.Session | None = None, retries: int = 3) -> Any:
     safe = redact(url)
@@ -35,7 +47,7 @@ def get_json(url: str, store: Store | None = None, max_age_s: float = 6 * 3600, 
             r = s.get(url, headers={"User-Agent": UA, **(headers or {})}, timeout=30)
             if r.status_code == 429 or r.status_code >= 500:
                 last = f"HTTP {r.status_code}"
-                time.sleep(2 ** (attempt + 1))
+                time.sleep(_wait(r, attempt))
                 continue
             if r.status_code != 200:
                 raise ProviderError(f"{safe}: HTTP {r.status_code} {redact(r.text[:200])}")

@@ -25,6 +25,13 @@ def _offline_transcripts(monkeypatch):
     monkeypatch.delenv("ROIC_API_KEY", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_fetch_pause(monkeypatch):
+    """The daily fetch waits before its second pass over the symbols that did not answer: not in tests."""
+    import qt.daily
+    monkeypatch.setattr(qt.daily, "RETRY_PAUSE_S", 0)
+
+
 PG_URL = os.environ.get("QT_TEST_DATABASE_URL")
 
 

@@ -32,13 +32,22 @@ def apply_fill(pf: dict, kind: str, symbol: str, qty: float | None, price: float
         pf["cash"] = pf.get("cash", 0.0) - sg * qty * price
         if pos is None:
             stop = payload.get("stop")
+            ref, moved = payload.get("price"), ""
+            if stop and ref and price:
+                # the stop was sized on the proposal's price (k x ADR beyond it). A fill more than one ADR further in
+                # the trade's direction (a gap, or an item approved after it came back "changed") keeps the same
+                # width from the fill: otherwise the position starts with more risk than the rule sizes (S11-R11)
+                one_adr = abs(ref - stop) / float(payload.get("k") or 4.0)
+                if sg * (price - ref) > one_adr:
+                    stop = round(price * stop / ref, 2)
+                    moved = f", stop moved with the fill to {stop:.2f}"
             plan = {k: payload[k] for k in PLAN_FIELDS if payload.get(k) is not None} or None
             pf["positions"].append({k: v for k, v in dict(
                 symbol=symbol, direction=direction, sector=payload.get("sector") or "?", qty=qty, entry=price,
                 entry_stop=stop, stop=stop, target=payload.get("target"), opened=payload.get("as_of"),
                 max_qty=qty, plan=plan).items()
                 if v is not None})
-            return pf, f"{symbol}: opened {qty:g} @ {price:.2f}"
+            return pf, f"{symbol}: opened {qty:g} @ {price:.2f}{moved}"
         total = pos["qty"] + qty
         pos["entry"] = (pos["entry"] * pos["qty"] + price * qty) / total
         pos["qty"] = total
